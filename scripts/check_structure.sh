@@ -47,6 +47,8 @@ fi
 if [[ $entrypoint_has_gosu == yes ]]; then
   ensure_pattern "docker/claude-runner/Dockerfile" "gosu" || pattern_errors=$((pattern_errors+1))
 fi
+ensure_pattern "docker/claude-runner/Dockerfile" "claude-bootstrap.sh" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "docker/claude-runner/entrypoint.sh" "/usr/local/bin/claude-bootstrap.sh" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/docker-compose.yml" "mem_limit" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/docker-compose.yml" "CLAUDE_CONFIG_DIR" || pattern_errors=$((pattern_errors+1))
 

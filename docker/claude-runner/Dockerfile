@@ -39,6 +39,7 @@ mkdir -p /workspace /state/claude
 chown claude:claude /workspace
 chown claude:claude /state/claude
 touch /state/claude/.keep
+chown claude:claude /state
 EOF
 RUN chmod +x /usr/local/bin/claude-bootstrap.sh
 RUN printf 'claude ALL=(root) NOPASSWD: /usr/local/bin/claude-bootstrap.sh\n' \
