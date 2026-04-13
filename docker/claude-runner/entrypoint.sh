@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mkdir -p /state/claude /workspace
+mkdir -p /workspace /state/claude
+chown -R claude:claude /workspace /state
 touch /state/claude/.keep
 
-exec sleep infinity
+exec gosu claude sleep infinity

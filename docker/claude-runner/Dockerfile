@@ -11,6 +11,7 @@ RUN apt-get update \
     gnupg \
     bash \
     tini \
+    gosu \
   && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /etc/apt/keyrings \

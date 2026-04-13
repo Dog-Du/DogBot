@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   claude-runner:
-    container_name: ${CLAUDE_CONTAINER_NAME:-claude-runner}
+    container_name: ${CLAUDE_CONTAINER_NAME:-claude-runner} # default name expected by agent-runner
     build:
       context: ..
       dockerfile: docker/claude-runner/Dockerfile
