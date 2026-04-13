@@ -77,3 +77,31 @@ pub struct ErrorResponse {
     pub message: String,
     pub timed_out: bool,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MessageRequest {
+    pub session_id: String,
+    pub text: String,
+    pub reply_to_message_id: Option<String>,
+    pub mention_user_id: Option<String>,
+}
+
+impl MessageRequest {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.session_id.trim().is_empty() {
+            return Err("session_id must be provided".into());
+        }
+
+        if self.text.trim().is_empty() {
+            return Err("text must be provided".into());
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct MessageResponse {
+    pub status: String,
+    pub message_id: Option<String>,
+}

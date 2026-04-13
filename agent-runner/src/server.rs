@@ -5,12 +5,12 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use axum::{
+    Json, Router,
     body::Bytes,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
 use serde_json::json;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -19,7 +19,12 @@ use crate::{
     config::Settings,
     docker_client::DockerRuntime,
     exec::{DockerRunner, ExecutionBackend},
-    models::{ErrorResponse, RunRequest, RunResponse, ValidatedRunRequest},
+    messenger::{MessageDelivery, NapCatMessenger},
+    models::{
+        ErrorResponse, MessageRequest, MessageResponse, RunRequest, RunResponse,
+        ValidatedRunRequest,
+    },
+    session_store::SessionStore,
 };
 
 #[async_trait]
@@ -29,6 +34,15 @@ pub trait Runner: Send + Sync {
         request: RunRequest,
         validated: ValidatedRunRequest,
     ) -> Result<RunResponse, ErrorResponse>;
+}
+
+#[async_trait]
+pub trait Messenger: Send + Sync {
+    async fn send(
+        &self,
+        request: MessageRequest,
+        session: crate::session_store::SessionRecord,
+    ) -> Result<MessageResponse, ErrorResponse>;
 }
 
 #[async_trait]
@@ -42,10 +56,23 @@ impl Runner for DockerRunner {
     }
 }
 
+#[async_trait]
+impl Messenger for NapCatMessenger {
+    async fn send(
+        &self,
+        request: MessageRequest,
+        session: crate::session_store::SessionRecord,
+    ) -> Result<MessageResponse, ErrorResponse> {
+        MessageDelivery::send(self, request, session).await
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     settings: Settings,
     queue_tx: mpsc::Sender<QueuedRun>,
+    session_store: SessionStore,
+    messenger: Arc<dyn Messenger>,
 }
 
 struct QueuedRun {
@@ -130,13 +157,44 @@ impl InMemoryRateLimiter {
 }
 
 pub fn build_test_app(runner: Arc<dyn Runner>) -> Router {
-    let settings = Settings::from_env_map(HashMap::new()).expect("default settings");
+    let mut settings = Settings::from_env_map(HashMap::new()).expect("default settings");
+    let temp_state_dir = std::env::temp_dir().join(format!(
+        "agent-runner-tests-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    settings.workspace_dir = temp_state_dir.join("workdir").display().to_string();
+    settings.state_dir = temp_state_dir.join("state").display().to_string();
+    settings.session_db_path = temp_state_dir.join("state/runner.db").display().to_string();
     build_test_app_with_settings(runner, settings)
 }
 
 pub fn build_test_app_with_settings(runner: Arc<dyn Runner>, settings: Settings) -> Router {
+    let session_store = SessionStore::open(&settings.session_db_path).expect("session store");
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
-    router(AppState { settings, queue_tx })
+    let messenger =
+        Arc::new(NapCatMessenger::from_settings(&settings).expect("default NapCat messenger"));
+    router(AppState {
+        settings,
+        queue_tx,
+        session_store,
+        messenger,
+    })
+}
+
+pub fn build_test_app_with_message_support(
+    runner: Arc<dyn Runner>,
+    messenger: Arc<dyn Messenger>,
+    settings: Settings,
+) -> Router {
+    let session_store = SessionStore::open(&settings.session_db_path).expect("session store");
+    let queue_tx = spawn_dispatcher(settings.clone(), runner);
+    router(AppState {
+        settings,
+        queue_tx,
+        session_store,
+        messenger,
+    })
 }
 
 pub fn build_app(settings: Settings) -> io::Result<Router> {
@@ -145,14 +203,25 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
         DockerRunner::new(runtime, settings.clone())
             .map_err(|err| io::Error::other(err.message))?,
     );
+    let session_store = SessionStore::open(&settings.session_db_path)
+        .map_err(|err| io::Error::other(err.to_string()))?;
+    let messenger = Arc::new(
+        NapCatMessenger::from_settings(&settings).map_err(|err| io::Error::other(err.message))?,
+    );
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
-    Ok(router(AppState { settings, queue_tx }))
+    Ok(router(AppState {
+        settings,
+        queue_tx,
+        session_store,
+        messenger,
+    }))
 }
 
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/v1/runs", post(run))
+        .route("/v1/messages", post(send_message))
         .with_state(state)
 }
 
@@ -261,7 +330,9 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
 
     match receiver.await {
         Ok(Ok(response)) => (StatusCode::OK, Json(response)).into_response(),
-        Ok(Err(error)) if error.timed_out => (StatusCode::REQUEST_TIMEOUT, Json(error)).into_response(),
+        Ok(Err(error)) if error.timed_out => {
+            (StatusCode::REQUEST_TIMEOUT, Json(error)).into_response()
+        }
         Ok(Err(error)) if error.error_code == "rate_limited" => {
             (StatusCode::TOO_MANY_REQUESTS, Json(error)).into_response()
         }
@@ -274,6 +345,53 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
             Json(to_internal_error_message("dispatcher dropped run result")),
         )
             .into_response(),
+    }
+}
+
+async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
+    let request: MessageRequest = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(err) => {
+            return error_response(StatusCode::BAD_REQUEST, "invalid_json", &err.to_string())
+                .into_response();
+        }
+    };
+
+    if let Err(message) = request.validate() {
+        return error_response(StatusCode::BAD_REQUEST, "invalid_request", &message)
+            .into_response();
+    }
+
+    let session = match state.session_store.get_session(&request.session_id) {
+        Ok(Some(session)) => session,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                "session_not_found",
+                "session_id is unknown",
+            )
+            .into_response();
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(to_internal_error_message(&format!(
+                    "session store failure: {err}"
+                ))),
+            )
+                .into_response();
+        }
+    };
+
+    match state.messenger.send(request, session).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) if error.error_code == "unsupported_platform" => {
+            (StatusCode::BAD_REQUEST, Json(error)).into_response()
+        }
+        Err(error) if error.error_code.starts_with("delivery_") => {
+            (StatusCode::BAD_GATEWAY, Json(error)).into_response()
+        }
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response(),
     }
 }
 
@@ -307,4 +425,20 @@ fn to_internal_error_message(message: &str) -> ErrorResponse {
         message: message.into(),
         timed_out: false,
     }
+}
+
+fn error_response(
+    status: StatusCode,
+    error_code: &str,
+    message: &str,
+) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        status,
+        Json(ErrorResponse {
+            status: "error".into(),
+            error_code: error_code.into(),
+            message: message.into(),
+            timed_out: false,
+        }),
+    )
 }

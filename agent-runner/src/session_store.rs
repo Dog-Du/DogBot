@@ -118,6 +118,14 @@ impl SessionStore {
         })
     }
 
+    pub fn get_session(
+        &self,
+        external_session_id: &str,
+    ) -> Result<Option<SessionRecord>, SessionStoreError> {
+        let conn = self.open_connection()?;
+        self.fetch_session(&conn, external_session_id)
+    }
+
     fn initialize(&self) -> Result<(), SessionStoreError> {
         let conn = self.open_connection()?;
         conn.execute_batch(

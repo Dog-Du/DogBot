@@ -13,6 +13,8 @@ pub struct Settings {
     pub workspace_dir: String,
     pub state_dir: String,
     pub anthropic_base_url: String,
+    pub napcat_api_base_url: String,
+    pub napcat_access_token: Option<String>,
     pub max_concurrent_runs: usize,
     pub max_queue_depth: usize,
     pub global_rate_limit_per_minute: usize,
@@ -67,11 +69,25 @@ impl Settings {
             .cloned()
             .unwrap_or_else(|| "http://host.docker.internal:9000".to_string());
         let max_concurrent_runs = parse_usize(&env_map, "MAX_CONCURRENT_RUNS", 10)?;
+        let napcat_api_base_url = env_map
+            .get("NAPCAT_API_BASE_URL")
+            .cloned()
+            .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
+        let napcat_access_token = env_map
+            .get("NAPCAT_ACCESS_TOKEN")
+            .cloned()
+            .and_then(|value| {
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            });
         let max_queue_depth = parse_usize(&env_map, "MAX_QUEUE_DEPTH", 20)?;
         let global_rate_limit_per_minute =
             parse_usize(&env_map, "GLOBAL_RATE_LIMIT_PER_MINUTE", 10)?;
-        let user_rate_limit_per_minute =
-            parse_usize(&env_map, "USER_RATE_LIMIT_PER_MINUTE", 3)?;
+        let user_rate_limit_per_minute = parse_usize(&env_map, "USER_RATE_LIMIT_PER_MINUTE", 3)?;
         let conversation_rate_limit_per_minute =
             parse_usize(&env_map, "CONVERSATION_RATE_LIMIT_PER_MINUTE", 5)?;
         let session_db_path = env_map
@@ -81,8 +97,7 @@ impl Settings {
         let container_cpu_cores = parse_u64(&env_map, "CLAUDE_CONTAINER_CPU_CORES", 4)?;
         let container_memory_mb = parse_u64(&env_map, "CLAUDE_CONTAINER_MEMORY_MB", 4096)?;
         let container_disk_gb = parse_u64(&env_map, "CLAUDE_CONTAINER_DISK_GB", 50)?;
-        let container_pids_limit =
-            parse_i64(&env_map, "CLAUDE_CONTAINER_PIDS_LIMIT", 256)?;
+        let container_pids_limit = parse_i64(&env_map, "CLAUDE_CONTAINER_PIDS_LIMIT", 256)?;
 
         if default_timeout_secs > max_timeout_secs {
             return Err(ConfigError::InvalidTimeoutBounds);
@@ -97,6 +112,8 @@ impl Settings {
             workspace_dir,
             state_dir,
             anthropic_base_url,
+            napcat_api_base_url,
+            napcat_access_token,
             max_concurrent_runs,
             max_queue_depth,
             global_rate_limit_per_minute,

@@ -27,14 +27,13 @@ pub struct DockerRunner {
 impl DockerRunner {
     pub fn new(runtime: DockerRuntime, settings: Settings) -> Result<Self, ErrorResponse> {
         let container_spec = ContainerSpec::from_settings(&settings);
-        let session_store = SessionStore::open(&settings.session_db_path).map_err(|err| {
-            ErrorResponse {
+        let session_store =
+            SessionStore::open(&settings.session_db_path).map_err(|err| ErrorResponse {
                 status: "error".into(),
                 error_code: "session_store_unavailable".into(),
                 message: err.to_string(),
                 timed_out: false,
-            }
-        })?;
+            })?;
 
         Ok(Self {
             runtime,

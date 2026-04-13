@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
+use bollard::Docker;
 use bollard::container::{
     Config, CreateContainerOptions, InspectContainerOptions, LogOutput, StartContainerOptions,
 };
 use bollard::errors::Error as BollardError;
 use bollard::exec::{CreateExecOptions, CreateExecResults, StartExecResults};
 use bollard::models::HostConfig;
-use bollard::Docker;
 use futures_util::StreamExt;
 
 use crate::config::Settings;
@@ -111,7 +111,9 @@ impl DockerRuntime {
 
                 Ok(())
             }
-            Err(BollardError::DockerResponseServerError { status_code: 404, .. }) => {
+            Err(BollardError::DockerResponseServerError {
+                status_code: 404, ..
+            }) => {
                 match self
                     .docker
                     .create_container(
@@ -124,7 +126,9 @@ impl DockerRuntime {
                     .await
                 {
                     Ok(_) => {}
-                    Err(BollardError::DockerResponseServerError { status_code: 409, .. }) => {}
+                    Err(BollardError::DockerResponseServerError {
+                        status_code: 409, ..
+                    }) => {}
                     Err(err) => return Err(err),
                 }
                 self.docker
