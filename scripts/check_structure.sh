@@ -27,3 +27,26 @@ if [[ ${#missing[@]} -gt 0 ]]; then
 fi
 
 echo "Structure check passed. All required files are present."
+
+ensure_pattern() {
+  local file="$1"
+  local pattern="$2"
+  if ! grep -q -- "$pattern" "$repo_root/$file"; then
+    echo "Pattern '$pattern' missing from $file" >&2
+    return 1
+  fi
+  return 0
+}
+
+pattern_errors=0
+ensure_pattern "docker/claude-runner/Dockerfile" "@anthropic-ai/claude-code" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "docker/claude-runner/Dockerfile" "tini" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "docker/claude-runner/Dockerfile" "gosu" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "docker/claude-runner/entrypoint.sh" "gosu claude" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "compose/docker-compose.yml" "mem_limit" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "compose/docker-compose.yml" "CLAUDE_CONFIG_DIR" || pattern_errors=$((pattern_errors+1))
+
+if [[ $pattern_errors -gt 0 ]]; then
+  echo "Structure check failed due to missing scaffold markers." >&2
+  exit 1
+fi
