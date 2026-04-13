@@ -11,6 +11,7 @@ RUN apt-get update \
     gnupg \
     bash \
     tini \
+    gosu \
     sudo \
   && rm -rf /var/lib/apt/lists/*
 
