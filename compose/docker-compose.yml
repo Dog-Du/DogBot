@@ -2,10 +2,12 @@ version: "3.9"
 
 services:
   claude-runner:
-    container_name: claude-runner
+    container_name: ${CLAUDE_CONTAINER_NAME:-claude-runner}
     build:
       context: ..
       dockerfile: docker/claude-runner/Dockerfile
+      args:
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.104}
     restart: unless-stopped
     stdin_open: false
     tty: false

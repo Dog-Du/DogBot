@@ -7,9 +7,13 @@ files=(
   "docker/claude-runner/entrypoint.sh"
 )
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+
 missing=()
 for file in "${files[@]}"; do
-  if [[ ! -f $file ]]; then
+  full_path="$repo_root/$file"
+  if [[ ! -f $full_path ]]; then
     missing+=("$file")
   fi
 done
