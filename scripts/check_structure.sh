@@ -9,6 +9,11 @@ files=(
   "astrbot/plugins/claude_runner_bridge/_conf_schema.json"
   "astrbot/plugins/claude_runner_bridge/README.md"
   "astrbot/plugins/claude_runner_bridge/requirements.txt"
+  "compose/platform-stack.yml"
+  "deploy/myqqbot.env.example"
+  "scripts/deploy_stack.sh"
+  "scripts/stop_stack.sh"
+  "scripts/start_agent_runner.sh"
   "scripts/apply_runner_network_policy.sh"
   "scripts/remove_runner_network_policy.sh"
   "scripts/smoke_test_claude_runner.sh"
@@ -60,6 +65,11 @@ ensure_pattern "compose/docker-compose.yml" "mem_limit" || pattern_errors=$((pat
 ensure_pattern "compose/docker-compose.yml" "CLAUDE_CONFIG_DIR" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "astrbot/plugins/claude_runner_bridge/main.py" "@register" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "astrbot/plugins/claude_runner_bridge/main.py" "agent-runner" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "compose/platform-stack.yml" "soulter/astrbot:latest" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "compose/platform-stack.yml" "mlikiowa/napcat-docker:latest" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "deploy/myqqbot.env.example" "AGENT_RUNNER_BIND_ADDR" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/deploy_stack.sh" "docker compose --env-file" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/start_agent_runner.sh" "cargo build --release" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/apply_runner_network_policy.sh" "INPUT" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/smoke_test_claude_runner.sh" "resolve_uv_bin" || pattern_errors=$((pattern_errors+1))
 
@@ -70,6 +80,9 @@ fi
 
 bash -n "$repo_root/scripts/apply_runner_network_policy.sh"
 bash -n "$repo_root/scripts/remove_runner_network_policy.sh"
+bash -n "$repo_root/scripts/deploy_stack.sh"
+bash -n "$repo_root/scripts/stop_stack.sh"
+bash -n "$repo_root/scripts/start_agent_runner.sh"
 bash -n "$repo_root/scripts/smoke_test_claude_runner.sh"
 uv run python -m py_compile "$repo_root/astrbot/plugins/claude_runner_bridge/main.py"
 

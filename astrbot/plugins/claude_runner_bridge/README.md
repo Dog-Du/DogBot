@@ -17,6 +17,14 @@ Configured through AstrBot plugin settings:
 - `command_name`
 - `status_command_name`
 
+The plugin also supports these environment variable overrides, which are useful for Docker deployment without manual WebUI edits:
+
+- `AGENT_RUNNER_BASE_URL`
+- `CLAUDE_BRIDGE_DEFAULT_CWD`
+- `CLAUDE_BRIDGE_TIMEOUT_SECS`
+- `CLAUDE_BRIDGE_COMMAND_NAME`
+- `CLAUDE_BRIDGE_STATUS_COMMAND_NAME`
+
 ## Session Mapping
 
 - private chat: `<platform>:private:<user_id>`

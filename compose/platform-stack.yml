@@ -1,0 +1,37 @@
+version: "3.9"
+
+services:
+  napcat:
+    image: ${NAPCAT_IMAGE:-mlikiowa/napcat-docker:latest}
+    container_name: ${NAPCAT_CONTAINER_NAME:-napcat}
+    restart: unless-stopped
+    ports:
+      - "${NAPCAT_WEBUI_PORT:-6099}:6099"
+      - "${NAPCAT_ONEBOT_PORT:-3001}:3001"
+    environment:
+      NAPCAT_UID: ${NAPCAT_UID:-1000}
+      NAPCAT_GID: ${NAPCAT_GID:-1000}
+    volumes:
+      - "${NAPCAT_QQ_DIR:-/srv/napcat/qq}:/app/.config/QQ"
+      - "${NAPCAT_CONFIG_DIR:-/srv/napcat/config}:/app/napcat/config"
+
+  astrbot:
+    image: ${ASTRBOT_IMAGE:-soulter/astrbot:latest}
+    container_name: ${ASTRBOT_CONTAINER_NAME:-astrbot}
+    restart: unless-stopped
+    depends_on:
+      - napcat
+    ports:
+      - "${ASTRBOT_WEBUI_PORT:-6185}:6185"
+      - "${ASTRBOT_QQ_BRIDGE_PORT:-6199}:6199"
+    environment:
+      AGENT_RUNNER_BASE_URL: ${AGENT_RUNNER_BASE_URL:-http://host.docker.internal:8787}
+      CLAUDE_BRIDGE_DEFAULT_CWD: ${CLAUDE_BRIDGE_DEFAULT_CWD:-/workspace}
+      CLAUDE_BRIDGE_TIMEOUT_SECS: ${CLAUDE_BRIDGE_TIMEOUT_SECS:-120}
+      CLAUDE_BRIDGE_COMMAND_NAME: ${CLAUDE_BRIDGE_COMMAND_NAME:-agent}
+      CLAUDE_BRIDGE_STATUS_COMMAND_NAME: ${CLAUDE_BRIDGE_STATUS_COMMAND_NAME:-agent-status}
+    volumes:
+      - "${ASTRBOT_DATA_DIR:-/srv/astrbot/data}:/AstrBot/data"
+      - "${ASTRBOT_PLUGIN_DIR:-../astrbot/plugins/claude_runner_bridge}:/AstrBot/data/plugins/claude_runner_bridge"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

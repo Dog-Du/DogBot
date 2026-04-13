@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
@@ -19,13 +20,26 @@ class ClaudeRunnerBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
         super().__init__(context)
         self.config = config
-        self.agent_runner_base_url = config.get(
-            "agent_runner_base_url", "http://127.0.0.1:8787"
+        self.agent_runner_base_url = os.getenv(
+            "AGENT_RUNNER_BASE_URL",
+            config.get("agent_runner_base_url", "http://127.0.0.1:8787"),
         ).rstrip("/")
-        self.default_cwd = config.get("default_cwd", "/workspace")
-        self.default_timeout_secs = int(config.get("default_timeout_secs", 120))
-        self.command_name = config.get("command_name", "agent")
-        self.status_command_name = config.get("status_command_name", "agent-status")
+        self.default_cwd = os.getenv(
+            "CLAUDE_BRIDGE_DEFAULT_CWD", config.get("default_cwd", "/workspace")
+        )
+        self.default_timeout_secs = int(
+            os.getenv(
+                "CLAUDE_BRIDGE_TIMEOUT_SECS",
+                str(config.get("default_timeout_secs", 120)),
+            )
+        )
+        self.command_name = os.getenv(
+            "CLAUDE_BRIDGE_COMMAND_NAME", config.get("command_name", "agent")
+        )
+        self.status_command_name = os.getenv(
+            "CLAUDE_BRIDGE_STATUS_COMMAND_NAME",
+            config.get("status_command_name", "agent-status"),
+        )
 
     @filter.command("agent")
     async def run_agent(self, event: AstrMessageEvent) -> MessageEventResult:
