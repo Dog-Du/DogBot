@@ -2,3 +2,6 @@
 target/
 agent-runner/target/
 .env
+
+__pycache__/
+*.pyc

@@ -5,6 +5,13 @@ files=(
   "compose/docker-compose.yml"
   "docker/claude-runner/Dockerfile"
   "docker/claude-runner/entrypoint.sh"
+  "astrbot/plugins/claude_runner_bridge/main.py"
+  "astrbot/plugins/claude_runner_bridge/_conf_schema.json"
+  "astrbot/plugins/claude_runner_bridge/README.md"
+  "astrbot/plugins/claude_runner_bridge/requirements.txt"
+  "scripts/apply_runner_network_policy.sh"
+  "scripts/remove_runner_network_policy.sh"
+  "scripts/smoke_test_claude_runner.sh"
 )
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,10 +58,19 @@ ensure_pattern "docker/claude-runner/Dockerfile" "claude-bootstrap.sh" || patter
 ensure_pattern "docker/claude-runner/entrypoint.sh" "/usr/local/bin/claude-bootstrap.sh" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/docker-compose.yml" "mem_limit" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/docker-compose.yml" "CLAUDE_CONFIG_DIR" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "astrbot/plugins/claude_runner_bridge/main.py" "@register" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "astrbot/plugins/claude_runner_bridge/main.py" "agent-runner" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/apply_runner_network_policy.sh" "INPUT" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/smoke_test_claude_runner.sh" "resolve_uv_bin" || pattern_errors=$((pattern_errors+1))
 
 if [[ $pattern_errors -gt 0 ]]; then
   echo "Structure check failed due to missing scaffold markers." >&2
   exit 1
 fi
+
+bash -n "$repo_root/scripts/apply_runner_network_policy.sh"
+bash -n "$repo_root/scripts/remove_runner_network_policy.sh"
+bash -n "$repo_root/scripts/smoke_test_claude_runner.sh"
+uv run python -m py_compile "$repo_root/astrbot/plugins/claude_runner_bridge/main.py"
 
 echo "Structure check passed. All required files are present."

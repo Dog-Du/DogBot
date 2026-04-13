@@ -85,7 +85,7 @@ This service is the policy boundary for execution safety.
 - can later expose an OpenAI-compatible endpoint for other clients
 
 This prevents prompt injection from directly reading the real key from the CLI runtime.
-The first-pass network boundary is: the Claude container may reach the host `api-proxy` and arbitrary outbound internet, but must not rely on any other host-local service.
+The first-pass network boundary is: the Claude container may reach the host `api-proxy` and arbitrary outbound internet, but must not rely on any other host-local service. On Linux hosts this is enforced with host firewall rules that match the Claude container source IP and reject traffic to other host-local addresses.
 
 ## Execution Flow
 

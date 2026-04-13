@@ -73,14 +73,14 @@ QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> local api-
 - [x] switch from one-shot `claude -p` execution to session-aware resume flow
 - [x] persist platform-neutral session metadata in SQLite under the host state directory, separate from the mounted Claude runtime state
 - [x] define `session_id` to Claude internal session mapping and resume lifecycle rules
-- [ ] restrict Claude container access to host `api-proxy` only, while still allowing arbitrary outbound internet access
-- [ ] document the host-side network assumptions so no other host service is exposed to the Claude container
+- [x] restrict Claude container access to host `api-proxy` only, while still allowing arbitrary outbound internet access
+- [x] document the host-side network assumptions so no other host service is exposed to the Claude container
 - [x] add bounded concurrency control for active CLI runs
 - [x] add bounded queue length and overflow behavior
 - [x] add global per-minute reply rate limiting
 - [x] add per-user and per-conversation rate limiting
-- [ ] add AstrBot plugin that calls `agent-runner`
-- [ ] define session mapping strategy for private chat
+- [x] add AstrBot plugin that calls `agent-runner`
+- [x] define session mapping strategy for private chat
 - [ ] define error responses for queue saturation, rate limit, and container creation failure
 - [ ] add bootstrap script for local setup
 - [ ] add versioned Claude upgrade and rollback workflow
@@ -92,3 +92,5 @@ QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> local api-
 - Default container targets are `4 CPU`, `4GB` memory, and `50GB` writable storage where the Docker storage driver supports service-level size limits.
 - First-pass network policy is: allow outbound internet plus host `api-proxy`, but deny reliance on any other host-local service.
 - `disk` limits still depend on Docker storage-driver support; if `storage_opt.size` is ignored on the host, host-side quota remains the fallback control.
+- Python-based AstrBot integration and smoke-test helpers should be run with `uv run ...`, not bare `python`.
+- Host firewall enforcement is implemented via `scripts/apply_runner_network_policy.sh` and `scripts/remove_runner_network_policy.sh`, and the full smoke path is in `scripts/smoke_test_claude_runner.sh`.
