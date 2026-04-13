@@ -53,7 +53,7 @@ QQ Personal Account
 ### AstrBot Plugin
 
 - extracts the effective user prompt
-- maps QQ user or group context to a stable `session_id`
+- maps QQ user or group context into platform-neutral request fields
 - calls `agent-runner` over HTTP
 - handles timeout and error replies in a user-friendly way
 
@@ -91,6 +91,8 @@ This prevents prompt injection from directly reading the real key from the CLI r
 1. QQ user sends a message.
 2. NapCat forwards the event to AstrBot.
 3. AstrBot plugin extracts the message and builds a request:
+   - `platform`
+   - `conversation_id`
    - `session_id`
    - `user_id`
    - `chat_type`
@@ -174,6 +176,23 @@ Disallowed pattern:
 - storing keys in `/workspace`
 - passing keys through prompts
 
+## Platform Neutral Core Contract
+
+Even though v1 only targets personal QQ, the `agent-runner` API must stay platform-neutral.
+
+Required fields for the core request model:
+
+- `platform`
+- `conversation_id`
+- `session_id`
+- `user_id`
+- `chat_type`
+- `cwd`
+- `prompt`
+- `timeout_secs`
+
+QQ-specific IDs and naming must stay in the AstrBot or connector layer, not in Rust core types.
+
 ## Code Structure
 
 ```text
@@ -217,6 +236,8 @@ Request body:
 
 ```json
 {
+  "platform": "qq",
+  "conversation_id": "private:123",
   "session_id": "qq-user-123",
   "user_id": "123",
   "chat_type": "private",

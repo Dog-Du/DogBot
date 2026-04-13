@@ -46,6 +46,7 @@ QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> local api-
 - host-local API proxy for secret isolation
 - one approved writable workspace mount
 - strict timeout and resource controls
+- platform-neutral core request model, even though v1 only targets QQ
 
 ## TODO
 
@@ -61,6 +62,7 @@ QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> local api-
 - [ ] scaffold Rust `agent-runner`
 - [ ] implement container existence and startup checks
 - [ ] implement `POST /v1/runs`
+- [ ] keep the core `agent-runner` request schema platform-neutral with fields such as `platform`, `conversation_id`, `user_id`, and `session_id`
 - [ ] implement command timeout enforcement in Rust
 - [ ] implement forced termination on timeout
 - [ ] capture and normalize stdout, stderr, exit code, and duration
