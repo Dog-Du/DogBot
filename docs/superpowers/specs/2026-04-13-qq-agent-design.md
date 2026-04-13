@@ -53,7 +53,7 @@ QQ Personal Account
 ### AstrBot Plugin
 
 - extracts the effective user prompt
-- maps QQ user or group context to a stable `session_id`
+- maps QQ user or group context into platform-neutral request fields
 - calls `agent-runner` over HTTP
 - handles timeout and error replies in a user-friendly way
 
@@ -85,12 +85,15 @@ This service is the policy boundary for execution safety.
 - can later expose an OpenAI-compatible endpoint for other clients
 
 This prevents prompt injection from directly reading the real key from the CLI runtime.
+The first-pass network boundary is: the Claude container may reach the host `api-proxy` and arbitrary outbound internet, but must not rely on any other host-local service.
 
 ## Execution Flow
 
 1. QQ user sends a message.
 2. NapCat forwards the event to AstrBot.
 3. AstrBot plugin extracts the message and builds a request:
+   - `platform`
+   - `conversation_id`
    - `session_id`
    - `user_id`
    - `chat_type`
@@ -120,8 +123,9 @@ The Claude container must define these controls in Compose from day one:
 
 Recommended initial defaults:
 
-- CPU: `2.0`
+- CPU: `4.0`
 - memory: `4g`
+- disk: `50G` writable storage target where the Docker storage driver supports service-level quotas
 - pids: `256`
 
 These values should live in configuration and not be hard-coded in Rust.
@@ -143,6 +147,19 @@ Recommended initial defaults:
 - default timeout: `120s`
 - max timeout: `300s`
 
+### Concurrency and Rate Limits
+
+The first implementation must keep the CLI from being saturated.
+
+Required follow-up controls:
+
+- bounded active run concurrency
+- bounded queue depth with explicit overflow responses
+- global reply rate limits per time window
+- per-user and per-conversation rate limits
+
+The exact numbers can stay configurable, but the runner must reject excess work instead of allowing unbounded backlog.
+
 ### Workspace Isolation
 
 Only these writable mounts should exist for the CLI container:
@@ -156,6 +173,17 @@ Do not mount:
 - host SSH directories
 - host home directory
 - secrets directories
+
+### Session Persistence
+
+The core request stays platform-neutral, but session continuity must not depend on stateless `claude -p` prompts forever.
+
+Follow-up implementation requirements:
+
+- persist session metadata in SQLite under the host state directory used by `agent-runner`
+- map external `session_id` values to Claude-internal session identifiers
+- support resume-style execution instead of one-shot prompts once the session layer is in place
+- keep the database on a host-backed mount so container recreation does not lose session state
 
 ## Secrets Design
 
@@ -173,6 +201,23 @@ Disallowed pattern:
 - putting `PACKYAPI_KEY` or `MINIMAX_API_KEY` in the Claude container environment
 - storing keys in `/workspace`
 - passing keys through prompts
+
+## Platform Neutral Core Contract
+
+Even though v1 only targets personal QQ, the `agent-runner` API must stay platform-neutral.
+
+Required fields for the core request model:
+
+- `platform`
+- `conversation_id`
+- `session_id`
+- `user_id`
+- `chat_type`
+- `cwd`
+- `prompt`
+- `timeout_secs`
+
+QQ-specific IDs and naming must stay in the AstrBot or connector layer, not in Rust core types.
 
 ## Code Structure
 
@@ -217,6 +262,8 @@ Request body:
 
 ```json
 {
+  "platform": "qq",
+  "conversation_id": "private:123",
   "session_id": "qq-user-123",
   "user_id": "123",
   "chat_type": "private",
@@ -265,7 +312,7 @@ Error shape:
 ### Phase 2
 
 - better retry and restart handling
-- session persistence in `/state`
+- session persistence in the host state directory, with Claude CLI runtime state still mounted at `/state` inside the container
 - response truncation and formatting
 - host proxy hardening and audit logging
 

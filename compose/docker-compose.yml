@@ -1,0 +1,34 @@
+version: "3.9"
+
+services:
+  claude-runner:
+    container_name: ${CLAUDE_CONTAINER_NAME:-claude-runner} # default name expected by agent-runner
+    image: ${CLAUDE_IMAGE_NAME:-myqqbot/claude-runner:local}
+    build:
+      context: ..
+      dockerfile: docker/claude-runner/Dockerfile
+      args:
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.104}
+    restart: unless-stopped
+    stdin_open: false
+    tty: false
+    cpus: "4.0"
+    mem_limit: 4g
+    memswap_limit: 4g
+    pids_limit: 256
+    storage_opt:
+      size: 50G
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /run:size=64m
+    environment:
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-http://host.docker.internal:9000}
+      CLAUDE_CONFIG_DIR: /state/claude
+    volumes:
+      - "${AGENT_WORKSPACE_DIR:-/srv/agent-workdir}:/workspace"
+      - "${AGENT_STATE_DIR:-/srv/agent-state}:/state"
+    working_dir: /workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["/usr/local/bin/entrypoint.sh"]
