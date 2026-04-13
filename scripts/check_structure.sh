@@ -26,8 +26,6 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   exit 1
 fi
 
-echo "Structure check passed. All required files are present."
-
 ensure_pattern() {
   local file="$1"
   local pattern="$2"
@@ -56,3 +54,5 @@ if [[ $pattern_errors -gt 0 ]]; then
   echo "Structure check failed due to missing scaffold markers." >&2
   exit 1
 fi
+
+echo "Structure check passed. All required files are present."
