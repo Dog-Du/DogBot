@@ -24,7 +24,10 @@ QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> local api-
 .
 ├── README.md
 ├── compose/
-│   └── docker-compose.yml
+│   ├── docker-compose.yml
+│   └── platform-stack.yml
+├── deploy/
+│   └── myqqbot.env.example
 ├── docker/
 │   └── claude-runner/
 │       ├── Dockerfile
@@ -82,7 +85,7 @@ QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> local api-
 - [x] add AstrBot plugin that calls `agent-runner`
 - [x] define session mapping strategy for private chat
 - [ ] define error responses for queue saturation, rate limit, and container creation failure
-- [ ] add bootstrap script for local setup
+- [x] add bootstrap-style shell scripts for local startup and deployment
 - [ ] add versioned Claude upgrade and rollback workflow
 
 ## Notes
