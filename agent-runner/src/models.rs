@@ -1,6 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::path::{Component, Path};
-
 #[derive(Debug, Deserialize)]
 pub struct RunRequest {
     pub platform: String,
@@ -14,7 +12,7 @@ pub struct RunRequest {
 }
 
 impl RunRequest {
-    const ALLOWED_PREFIXES: [&'static str; 2] = ["workspace", "state"];
+    const ALLOWED_PREFIXES: [&'static str; 2] = ["/workspace", "/state"];
 
     pub fn effective_timeout(&self, default_timeout: u64, max_timeout: u64) -> Result<u64, String> {
         let timeout = self.timeout_secs.unwrap_or(default_timeout);
@@ -39,47 +37,20 @@ impl RunRequest {
             return Err("cwd must be provided".into());
         }
 
-        let path = Path::new(cwd);
-        if !path.is_absolute() {
+        if !cwd.starts_with('/') {
             return Err(format!("cwd {cwd} must be absolute"));
         }
 
-        let mut components = path.components();
-        match components.next() {
-            Some(Component::RootDir) => {}
-            _ => return Err(format!("cwd {cwd} must start with a root '/'.", cwd = cwd)),
-        }
-
-        let prefix = match components.next() {
-            Some(Component::Normal(seg)) => seg,
-            Some(Component::ParentDir) => {
-                return Err(format!("cwd {cwd} contains traversal segments."));
-            }
-            _ => {
-                return Err(format!(
-                    "cwd {cwd} does not contain a valid workspace/state prefix."
-                ));
-            }
-        };
-
-        let prefix_str = prefix
-            .to_str()
-            .ok_or_else(|| format!("cwd {cwd} contains invalid characters."))?;
-
-        if !Self::ALLOWED_PREFIXES.contains(&prefix_str) {
-            return Err(format!(
-                "cwd {cwd} is not within allowed prefixes: {}",
-                Self::ALLOWED_PREFIXES.join(", ")
-            ));
-        }
-
-        for component in components {
-            if matches!(component, Component::ParentDir) {
-                return Err(format!("cwd {cwd} contains traversal segments."));
+        for allowed in Self::ALLOWED_PREFIXES {
+            if cwd == allowed {
+                return Ok(cwd.to_string());
             }
         }
 
-        Ok(cwd.to_string())
+        Err(format!(
+            "cwd {cwd} is not an approved root; allowed values are {}",
+            Self::ALLOWED_PREFIXES.join(", ")
+        ))
     }
 }
 

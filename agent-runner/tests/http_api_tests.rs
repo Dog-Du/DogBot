@@ -32,8 +32,8 @@ fn run_request_rejects_timeout_over_max() {
 }
 
 #[test]
-fn run_request_validation_accepts_allowed_cwds() {
-    for cwd in ["/workspace", "/workspace/subdir", "/state", "/state/abc"] {
+fn run_request_validation_accepts_exact_allowed_cwds() {
+    for cwd in ["/workspace", "/state"] {
         let mut request = base_request();
         request.cwd = cwd.into();
 
