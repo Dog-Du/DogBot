@@ -87,6 +87,11 @@ QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> local api-
 - [ ] define error responses for queue saturation, rate limit, and container creation failure
 - [x] add bootstrap-style shell scripts for local startup and deployment
 - [ ] add versioned Claude upgrade and rollback workflow
+- [ ] add a minimal host-local shell entrypoint for proactive message sending, so cron jobs, webhooks, or manual scripts can send into an existing `session_id`
+- [ ] define the first-pass proactive message contract around `session_id`, `conversation_id`, and optional `reply_to_message_id`
+- [ ] document the MVP rule that proactive sending stays outside the Claude container and is triggered by a host-local script or controlled tool entrypoint
+- [ ] package the proactive send entrypoint as an Agent skill or tool wrapper after the shell path is proven useful
+- [ ] later split proactive outbound delivery into a dedicated outbox service when retries, scheduling, or cross-platform fan-out become necessary
 
 ## Notes
 
@@ -97,3 +102,4 @@ QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> local api-
 - `disk` limits still depend on Docker storage-driver support; if `storage_opt.size` is ignored on the host, host-side quota remains the fallback control.
 - Python-based AstrBot integration and smoke-test helpers should be run with `uv run ...`, not bare `python`.
 - Host firewall enforcement is implemented via `scripts/apply_runner_network_policy.sh` and `scripts/remove_runner_network_policy.sh`, and the full smoke path is in `scripts/smoke_test_claude_runner.sh`.
+- Proactive message sending is intentionally deferred as an improvement item. The near-term path is a small host-local script that targets an existing `session_id`, not a full outbox service inside the current runtime.

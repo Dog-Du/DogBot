@@ -321,6 +321,63 @@ Error shape:
 - optional Codex support
 - per-user policy controls
 - richer observability and metrics
+- proactive outbound messaging beyond direct request-response mode
+
+## Deferred Proactive Messaging Design
+
+The current stack is response-driven:
+
+```text
+platform event -> AstrBot -> agent-runner -> Claude -> platform reply
+```
+
+That is enough for normal chat replies, but it does not yet provide a formal outbound path for:
+
+- async follow-up messages in an existing session
+- scheduled reminders
+- webhook-triggered notifications
+- explicit reply-to-a-specific-message delivery
+
+For v1, this should stay a deferred improvement rather than a new service.
+
+### MVP Direction
+
+The first pragmatic path is a host-local shell entrypoint:
+
+```text
+cron / webhook / manual script / future Agent skill
+  -> local shell script
+  -> controlled send endpoint
+  -> AstrBot / NapCat
+  -> QQ
+```
+
+Key rules:
+
+- do not run the scheduling or outbound-delivery control loop inside the Claude container
+- allow the Claude runtime to reference `session_id`, but keep actual proactive delivery outside the container
+- keep the first implementation simple enough to prove usefulness before introducing a dedicated outbox service
+
+### Minimum Contract For The Future Entry Point
+
+The first proactive-send contract should be platform-neutral and support:
+
+- `platform`
+- `conversation_id`
+- `session_id`
+- `text`
+- optional `reply_to_message_id`
+- optional `mention_user_id`
+
+`session_id` is useful for routing back to the correct conversation, but it is not sufficient on its own for all outbound delivery cases. The send path still needs enough information to target a platform conversation and optionally reply to a specific message.
+
+### Planned Evolution
+
+Recommended staged path:
+
+1. add a small host-local script that sends to an existing session
+2. wrap that script as a controlled skill or tool entrypoint
+3. later promote outbound delivery into a dedicated outbox service only if retries, scheduling, or multi-platform fan-out justify the extra complexity
 
 ## Risks and Mitigations
 
