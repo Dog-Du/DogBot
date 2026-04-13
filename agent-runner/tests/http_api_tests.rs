@@ -1,9 +1,8 @@
 use agent_runner::models::{RunRequest, RunResponse};
 use serde_json::Value;
 
-#[test]
-fn run_request_uses_default_timeout_when_missing() {
-    let request = RunRequest {
+fn base_request() -> RunRequest {
+    RunRequest {
         platform: "qq".into(),
         conversation_id: "conv-1".into(),
         session_id: "qq-user-1".into(),
@@ -12,48 +11,46 @@ fn run_request_uses_default_timeout_when_missing() {
         cwd: "/workspace".into(),
         prompt: "hello".into(),
         timeout_secs: None,
-    };
+    }
+}
 
-    assert_eq!(request.effective_timeout(120, 300).unwrap(), 120);
+#[test]
+fn run_request_validation_returns_timeout_and_cwd() {
+    let request = base_request();
+    let validated = request.validate(120, 300).unwrap();
+    assert_eq!(validated.timeout_secs, 120);
+    assert_eq!(validated.cwd, "/workspace");
 }
 
 #[test]
 fn run_request_rejects_timeout_over_max() {
-    let request = RunRequest {
-        platform: "qq".into(),
-        conversation_id: "conv-1".into(),
-        session_id: "qq-user-1".into(),
-        user_id: "1".into(),
-        chat_type: "private".into(),
-        cwd: "/workspace".into(),
-        prompt: "hello".into(),
-        timeout_secs: Some(500),
-    };
+    let mut request = base_request();
+    request.timeout_secs = Some(500);
 
-    let err = request.effective_timeout(120, 300).unwrap_err();
+    let err = request.validate(120, 300).unwrap_err();
     assert!(err.contains("timeout exceeds configured max"));
 }
 
 #[test]
-fn run_request_validates_cwd_prefix() {
-    let mut request = RunRequest {
-        platform: "qq".into(),
-        conversation_id: "conv-1".into(),
-        session_id: "qq-user-1".into(),
-        user_id: "1".into(),
-        chat_type: "private".into(),
-        cwd: "/workspace".into(),
-        prompt: "hello".into(),
-        timeout_secs: None,
-    };
+fn run_request_validation_accepts_allowed_cwds() {
+    for cwd in ["/workspace", "/workspace/subdir", "/state", "/state/abc"] {
+        let mut request = base_request();
+        request.cwd = cwd.into();
 
-    assert!(request.validate_cwd().is_ok());
+        let validated = request.validate(120, 300).unwrap();
+        assert_eq!(validated.cwd, cwd);
+    }
+}
 
-    request.cwd = "/etc".into();
-    let err = request.validate_cwd().unwrap_err();
-    assert!(err.contains("cwd"));
-    assert!(err.contains("/workspace"));
-    assert!(err.contains("/state"));
+#[test]
+fn run_request_validation_rejects_disallowed_cwds() {
+    for cwd in ["/workspace-evil", "/stateful", "/workspace/../etc"] {
+        let mut request = base_request();
+        request.cwd = cwd.into();
+
+        let err = request.validate(120, 300).unwrap_err();
+        assert!(err.contains(cwd), "error should mention {cwd}: {err}");
+    }
 }
 
 #[test]
