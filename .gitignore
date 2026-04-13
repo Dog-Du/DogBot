@@ -1,1 +1,4 @@
 .worktrees/
+target/
+agent-runner/target/
+.env

@@ -18,9 +18,10 @@ fn settings_reject_default_timeout_above_max() {
     ]);
 
     let err = Settings::from_env_map(env).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("DEFAULT_TIMEOUT_SECS must be <= MAX_TIMEOUT_SECS"));
+    assert!(
+        err.to_string()
+            .contains("DEFAULT_TIMEOUT_SECS must be <= MAX_TIMEOUT_SECS")
+    );
 }
 
 #[test]

@@ -1,5 +1,12 @@
-use agent_runner::models::{RunRequest, RunResponse};
+use std::sync::Arc;
+
+use agent_runner::models::{ErrorResponse, RunRequest, RunResponse};
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
 use serde_json::Value;
+use tower::ServiceExt;
 
 fn base_request() -> RunRequest {
     RunRequest {
@@ -69,4 +76,124 @@ fn run_response_serializes_expected_fields() {
     assert_eq!(json["stdout"], "hello");
     assert_eq!(json["exit_code"], 0);
     assert_eq!(json["duration_ms"], 123);
+}
+
+#[tokio::test]
+async fn health_endpoint_returns_ok() {
+    let app = agent_runner::server::build_test_app(Arc::new(MockRunner::success()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn run_endpoint_returns_success_body() {
+    let app = agent_runner::server::build_test_app(Arc::new(MockRunner::success()));
+    let payload = serde_json::to_vec(&base_request()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/runs")
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn run_endpoint_returns_bad_request_for_invalid_cwd() {
+    let app = agent_runner::server::build_test_app(Arc::new(MockRunner::success()));
+    let mut request = base_request();
+    request.cwd = "/workspace/child".into();
+    let payload = serde_json::to_vec(&request).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/runs")
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn run_endpoint_returns_timeout_status_for_runner_timeout() {
+    let app = agent_runner::server::build_test_app(Arc::new(MockRunner::timeout()));
+    let payload = serde_json::to_vec(&base_request()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/runs")
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+}
+
+struct MockRunner {
+    outcome: Result<RunResponse, ErrorResponse>,
+}
+
+impl MockRunner {
+    fn success() -> Self {
+        Self {
+            outcome: Ok(RunResponse {
+                status: "ok".into(),
+                stdout: "done".into(),
+                stderr: String::new(),
+                exit_code: 0,
+                timed_out: false,
+                duration_ms: 1,
+            }),
+        }
+    }
+
+    fn timeout() -> Self {
+        Self {
+            outcome: Err(ErrorResponse {
+                status: "error".into(),
+                error_code: "timeout".into(),
+                message: "command exceeded timeout".into(),
+                timed_out: true,
+            }),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl agent_runner::server::Runner for MockRunner {
+    async fn run(
+        &self,
+        _request: RunRequest,
+        _validated: agent_runner::models::ValidatedRunRequest,
+    ) -> Result<RunResponse, ErrorResponse> {
+        self.outcome.clone()
+    }
 }

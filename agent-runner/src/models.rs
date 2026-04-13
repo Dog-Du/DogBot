@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RunRequest {
     pub platform: String,
     pub conversation_id: String,
@@ -54,13 +54,13 @@ impl RunRequest {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ValidatedRunRequest {
     pub timeout_secs: u64,
     pub cwd: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RunResponse {
     pub status: String,
     pub stdout: String,
@@ -70,7 +70,7 @@ pub struct RunResponse {
     pub duration_ms: u128,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ErrorResponse {
     pub status: String,
     pub error_code: String,
