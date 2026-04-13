@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  claude-runner:
+    build:
+      context: ../
+      dockerfile: docker/claude-runner/Dockerfile
+    container_name: claude-runner
+    cpus: "${CLAUDE_CPUS:-2.0}"
+    mem_limit: "${CLAUDE_MEM_LIMIT:-4g}"
+    memswap_limit: "${CLAUDE_MEMSWAP_LIMIT:-4g}"
+    pids_limit: ${CLAUDE_PIDS_LIMIT:-256}
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    working_dir: /workspace
+    volumes:
+      - "${CLAUDE_WORKSPACE:-./workspace}:/workspace:rw"
+      - "${CLAUDE_STATE:-./state}:/state:rw"
+    environment:
+      CLAUDE_PROXY_URL: "${CLAUDE_PROXY_URL:-http://localhost:8080}"
+      CLAUDE_MODEL: "${CLAUDE_MODEL:-claude-3.5}"
+      CLAUDE_WORK_DIR: /workspace
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+    restart: unless-stopped
