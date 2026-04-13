@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CLAUDE_PROXY_URL="${CLAUDE_PROXY_URL:-http://localhost:8080}"
-CLAUDE_MODEL="${CLAUDE_MODEL:-claude-2.1}"
+mkdir -p /state/claude /workspace
+touch /state/claude/.keep
 
-export CLAUDE_PROXY_URL
-export CLAUDE_MODEL
-
-exec claude "$@"
+exec sleep infinity
