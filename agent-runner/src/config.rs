@@ -33,7 +33,7 @@ impl Settings {
         let default_timeout_secs = parse_u64(&env_map, "DEFAULT_TIMEOUT_SECS", 120)?;
         let max_timeout_secs = parse_u64(&env_map, "MAX_TIMEOUT_SECS", 300)?;
         let container_name = env_map
-            .get("CONTAINER_NAME")
+            .get("CLAUDE_CONTAINER_NAME")
             .cloned()
             .unwrap_or_else(|| "claude-runner".to_string());
 

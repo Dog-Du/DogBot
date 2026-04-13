@@ -22,3 +22,14 @@ fn settings_reject_default_timeout_above_max() {
         .to_string()
         .contains("DEFAULT_TIMEOUT_SECS must be <= MAX_TIMEOUT_SECS"));
 }
+
+#[test]
+fn settings_use_claude_container_name_override() {
+    let env = std::collections::HashMap::from([(
+        "CLAUDE_CONTAINER_NAME".to_string(),
+        "custom-claude".to_string(),
+    )]);
+
+    let settings = Settings::from_env_map(env).unwrap();
+    assert_eq!(settings.container_name, "custom-claude");
+}

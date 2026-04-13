@@ -20,4 +20,19 @@ fn compose_defines_required_claude_runner_limits() {
             "missing compose contract entry: {item}"
         );
     }
+
+    let forbidden = [
+        "/var/run/docker.sock",
+        "/root",
+        "/home",
+        "PACKYAPI_KEY",
+        "MINIMAX_API_KEY",
+    ];
+
+    for item in forbidden {
+        assert!(
+            !compose.contains(item),
+            "compose should not expose forbidden entry: {item}"
+        );
+    }
 }
