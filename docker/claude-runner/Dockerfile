@@ -11,7 +11,7 @@ RUN apt-get update \
     gnupg \
     bash \
     tini \
-    gosu \
+    sudo \
   && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /etc/apt/keyrings \
@@ -30,6 +30,10 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 RUN useradd --system --create-home --home-dir /workspace claude \
   && mkdir -p /workspace /state/claude \
   && chown -R claude:claude /workspace /state
+
+RUN printf 'claude ALL=(root) NOPASSWD: /usr/bin/mkdir, /usr/bin/chown, /bin/touch\n' \
+    > /etc/sudoers.d/claude \
+  && chmod 0440 /etc/sudoers.d/claude
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/bin/tini", "--"]
