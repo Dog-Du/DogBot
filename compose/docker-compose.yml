@@ -11,6 +11,7 @@ services:
     tty: false
     cpus: "2.0"
     mem_limit: 4g
+    memswap_limit: 4g
     pids_limit: 256
     read_only: true
     tmpfs:
