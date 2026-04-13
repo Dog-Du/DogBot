@@ -349,7 +349,7 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
 }
 
 async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
-    let request: MessageRequest = match serde_json::from_slice(&body) {
+    let mut request: MessageRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
         Err(err) => {
             return error_response(StatusCode::BAD_REQUEST, "invalid_json", &err.to_string())
@@ -383,6 +383,10 @@ async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
         }
     };
 
+    if request.mention_user_id.is_none() && is_group_conversation(&session.conversation_id) {
+        request.mention_user_id = Some(session.user_id.clone());
+    }
+
     match state.messenger.send(request, session).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) if error.error_code == "unsupported_platform" => {
@@ -397,6 +401,12 @@ async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
 
 fn is_limit_exhausted(limit: usize, current_len: usize) -> bool {
     limit > 0 && current_len >= limit
+}
+
+fn is_group_conversation(conversation_id: &str) -> bool {
+    let mut parts = conversation_id.splitn(3, ':');
+    let _platform = parts.next();
+    matches!(parts.next(), Some("group" | "GroupMessage"))
 }
 
 fn prune_window(events: &mut VecDeque<Instant>, now: Instant, window: Duration) {

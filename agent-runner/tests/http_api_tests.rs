@@ -45,6 +45,7 @@ fn test_settings() -> agent_runner::config::Settings {
         workspace_dir: "/tmp/agent-runner-tests/workdir".into(),
         state_dir: "/tmp/agent-runner-tests/state".into(),
         anthropic_base_url: "http://host.docker.internal:9000".into(),
+        api_proxy_auth_token: "local-proxy-token".into(),
         napcat_api_base_url: "http://127.0.0.1:3001".into(),
         napcat_access_token: None,
         max_concurrent_runs: 1,
@@ -514,6 +515,46 @@ async fn message_endpoint_passes_reply_and_mention_metadata() {
     let sent = messenger.last_request().unwrap();
     assert_eq!(sent.reply_to_message_id.as_deref(), Some("42"));
     assert_eq!(sent.mention_user_id.as_deref(), Some("99"));
+}
+
+#[tokio::test]
+async fn message_endpoint_defaults_group_mention_to_session_user() {
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("runner.db");
+    let store = SessionStore::open(&db_path).unwrap();
+    store
+        .get_or_create_session("qq-group-user-1", "qq", "qq:group:100", "88")
+        .unwrap();
+
+    let messenger = Arc::new(MockMessenger::success());
+    let app = agent_runner::server::build_test_app_with_message_support(
+        Arc::new(MockRunner::success()),
+        messenger.clone(),
+        test_settings_with_session_db(&db_path),
+    );
+
+    let request = MessageRequest {
+        session_id: "qq-group-user-1".into(),
+        text: "follow-up".into(),
+        reply_to_message_id: None,
+        mention_user_id: None,
+    };
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let sent = messenger.last_request().unwrap();
+    assert_eq!(sent.mention_user_id.as_deref(), Some("88"));
 }
 
 struct MockRunner {

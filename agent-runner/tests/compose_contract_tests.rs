@@ -10,8 +10,6 @@ fn compose_defines_required_claude_runner_limits() {
         "mem_limit: 4g",
         "memswap_limit: 4g",
         "pids_limit: 256",
-        "storage_opt:",
-        "size: 50G",
         "read_only: true",
         "- /tmp:size=256m,mode=1777",
         "/workspace",

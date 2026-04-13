@@ -5,6 +5,20 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 env_file="${1:-$repo_root/deploy/myqqbot.env}"
 
+resolve_compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    echo "docker compose"
+    return 0
+  fi
+
+  if command -v docker-compose >/dev/null 2>&1; then
+    echo "docker-compose"
+    return 0
+  fi
+
+  return 1
+}
+
 if [[ ! -f "$env_file" ]]; then
   echo "Missing env file: $env_file" >&2
   echo "Copy deploy/myqqbot.env.example to deploy/myqqbot.env and edit it first." >&2
@@ -14,6 +28,12 @@ fi
 set -a
 source "$env_file"
 set +a
+
+if ! compose_cmd="$(resolve_compose_cmd)"; then
+  echo "Docker Compose is not available." >&2
+  echo "Install 'docker compose' plugin or 'docker-compose' first." >&2
+  exit 1
+fi
 
 mkdir -p \
   "${AGENT_WORKSPACE_DIR:-/srv/agent-workdir}" \
@@ -25,8 +45,13 @@ mkdir -p \
 
 "$repo_root/scripts/start_agent_runner.sh" "$env_file"
 
-docker compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" up -d claude-runner
-docker compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" up -d napcat astrbot
+if [[ "$compose_cmd" == "docker compose" ]]; then
+  docker compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" up -d claude-runner
+  docker compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" up -d napcat astrbot
+else
+  docker-compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" up -d claude-runner
+  docker-compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" up -d napcat astrbot
+fi
 
 if [[ "${APPLY_NETWORK_POLICY:-1}" == "1" ]]; then
   if [[ ${EUID:-$(id -u)} -eq 0 ]]; then

@@ -23,6 +23,7 @@ pub struct ContainerSpec {
     pub workspace_dir: String,
     pub state_dir: String,
     pub anthropic_base_url: String,
+    pub api_proxy_auth_token: String,
     pub cpu_cores: u64,
     pub memory_mb: u64,
     pub disk_gb: u64,
@@ -37,6 +38,7 @@ impl ContainerSpec {
             workspace_dir: settings.workspace_dir.clone(),
             state_dir: settings.state_dir.clone(),
             anthropic_base_url: settings.anthropic_base_url.clone(),
+            api_proxy_auth_token: settings.api_proxy_auth_token.clone(),
             cpu_cores: settings.container_cpu_cores,
             memory_mb: settings.container_memory_mb,
             disk_gb: settings.container_disk_gb,
@@ -51,15 +53,18 @@ impl ContainerSpec {
         tmpfs.insert("/tmp".to_string(), "size=256m,mode=1777".to_string());
         tmpfs.insert("/run".to_string(), "size=64m".to_string());
 
-        let mut storage_opt = HashMap::new();
-        storage_opt.insert("size".to_string(), format!("{}G", self.disk_gb));
+        let env = vec![
+            format!("ANTHROPIC_BASE_URL={}", self.anthropic_base_url),
+            format!("ANTHROPIC_AUTH_TOKEN={}", self.api_proxy_auth_token),
+            "CLAUDE_CONFIG_DIR=/state/claude".to_string(),
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1".to_string(),
+            "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1".to_string(),
+            "CLAUDE_CODE_ATTRIBUTION_HEADER=0".to_string(),
+        ];
 
         Config {
             image: Some(self.image_name.clone()),
-            env: Some(vec![
-                format!("ANTHROPIC_BASE_URL={}", self.anthropic_base_url),
-                "CLAUDE_CONFIG_DIR=/state/claude".to_string(),
-            ]),
+            env: Some(env),
             working_dir: Some("/workspace".to_string()),
             host_config: Some(HostConfig {
                 nano_cpus: Some(nano_cpus),
@@ -73,7 +78,6 @@ impl ContainerSpec {
                 ]),
                 tmpfs: Some(tmpfs),
                 extra_hosts: Some(vec!["host.docker.internal:host-gateway".to_string()]),
-                storage_opt: Some(storage_opt),
                 ..Default::default()
             }),
             ..Default::default()

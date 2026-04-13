@@ -10,32 +10,44 @@ fn container_spec_matches_runner_defaults() {
     assert_eq!(spec.workspace_dir, "/srv/agent-workdir");
     assert_eq!(spec.state_dir, "/srv/agent-state");
     assert_eq!(spec.anthropic_base_url, "http://host.docker.internal:9000");
+    assert_eq!(spec.api_proxy_auth_token, "local-proxy-token");
 }
 
 #[test]
 fn create_container_config_carries_runtime_limits_and_mounts() {
-    let settings = Settings::from_env_map(std::collections::HashMap::new()).unwrap();
+    let settings = Settings::from_env_map(std::collections::HashMap::from([
+        (
+            "API_PROXY_AUTH_TOKEN".to_string(),
+            "local-proxy-token-2".to_string(),
+        ),
+    ]))
+    .unwrap();
     let spec = agent_runner::docker_client::ContainerSpec::from_settings(&settings);
     let config = spec.create_config();
     let host_config = config.host_config.expect("host config");
 
     assert_eq!(config.image.as_deref(), Some("myqqbot/claude-runner:local"));
     assert_eq!(config.working_dir.as_deref(), Some("/workspace"));
-    assert_eq!(
-        config.env.as_ref().expect("env"),
-        &vec![
-            "ANTHROPIC_BASE_URL=http://host.docker.internal:9000".to_string(),
-            "CLAUDE_CONFIG_DIR=/state/claude".to_string(),
-        ]
-    );
+    let env = config.env.as_ref().expect("env");
+    let required_env = [
+        "ANTHROPIC_BASE_URL=http://host.docker.internal:9000",
+        "ANTHROPIC_AUTH_TOKEN=local-proxy-token-2",
+        "CLAUDE_CONFIG_DIR=/state/claude",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+        "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1",
+        "CLAUDE_CODE_ATTRIBUTION_HEADER=0",
+    ];
+
+    for required in required_env {
+        assert!(
+            env.iter().any(|value| value == required),
+            "missing required env: {required}"
+        );
+    }
     assert_eq!(host_config.nano_cpus, Some(4_000_000_000));
     assert_eq!(host_config.memory, Some(4 * 1024 * 1024 * 1024));
     assert_eq!(host_config.memory_swap, Some(4 * 1024 * 1024 * 1024));
     assert_eq!(host_config.pids_limit, Some(256));
-    assert_eq!(
-        host_config.storage_opt.expect("storage opt").get("size"),
-        Some(&"50G".to_string())
-    );
     assert!(host_config.readonly_rootfs.unwrap_or(false));
     assert_eq!(
         host_config.binds.expect("binds"),

@@ -12,7 +12,7 @@
     "default": "/workspace"
   },
   "default_timeout_secs": {
-    "type": "integer",
+    "type": "int",
     "title": "Default Timeout Seconds",
     "description": "Per-request timeout forwarded to agent-runner.",
     "default": 120,

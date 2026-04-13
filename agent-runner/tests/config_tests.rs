@@ -15,6 +15,7 @@ fn settings_use_expected_defaults() {
         settings.anthropic_base_url,
         "http://host.docker.internal:9000"
     );
+    assert_eq!(settings.api_proxy_auth_token, "local-proxy-token");
     assert_eq!(settings.napcat_api_base_url, "http://127.0.0.1:3001");
     assert_eq!(settings.napcat_access_token, None);
     assert_eq!(settings.max_concurrent_runs, 10);
@@ -60,6 +61,16 @@ fn settings_treat_empty_napcat_token_as_absent() {
 }
 
 #[test]
+fn settings_treat_empty_proxy_token_as_default() {
+    let env = std::collections::HashMap::from([
+        ("API_PROXY_AUTH_TOKEN".to_string(), "   ".to_string()),
+    ]);
+
+    let settings = Settings::from_env_map(env).unwrap();
+    assert_eq!(settings.api_proxy_auth_token, "local-proxy-token");
+}
+
+#[test]
 fn settings_allow_runner_limit_overrides() {
     let env = std::collections::HashMap::from([
         (
@@ -72,6 +83,7 @@ fn settings_allow_runner_limit_overrides() {
             "ANTHROPIC_BASE_URL".to_string(),
             "http://proxy.internal:9000".to_string(),
         ),
+        ("API_PROXY_AUTH_TOKEN".to_string(), "local-proxy-token-2".to_string()),
         (
             "NAPCAT_API_BASE_URL".to_string(),
             "http://127.0.0.1:3100".to_string(),
@@ -99,6 +111,7 @@ fn settings_allow_runner_limit_overrides() {
     assert_eq!(settings.workspace_dir, "/tmp/work");
     assert_eq!(settings.state_dir, "/tmp/state");
     assert_eq!(settings.anthropic_base_url, "http://proxy.internal:9000");
+    assert_eq!(settings.api_proxy_auth_token, "local-proxy-token-2");
     assert_eq!(settings.napcat_api_base_url, "http://127.0.0.1:3100");
     assert_eq!(
         settings.napcat_access_token.as_deref(),

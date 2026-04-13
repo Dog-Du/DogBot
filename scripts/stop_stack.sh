@@ -5,6 +5,20 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 env_file="${1:-$repo_root/deploy/myqqbot.env}"
 
+resolve_compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    echo "docker compose"
+    return 0
+  fi
+
+  if command -v docker-compose >/dev/null 2>&1; then
+    echo "docker-compose"
+    return 0
+  fi
+
+  return 1
+}
+
 if [[ ! -f "$env_file" ]]; then
   echo "Missing env file: $env_file" >&2
   exit 1
@@ -14,8 +28,19 @@ set -a
 source "$env_file"
 set +a
 
-docker compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" down
-docker compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" down
+if ! compose_cmd="$(resolve_compose_cmd)"; then
+  echo "Docker Compose is not available." >&2
+  echo "Install 'docker compose' plugin or 'docker-compose' first." >&2
+  exit 1
+fi
+
+if [[ "$compose_cmd" == "docker compose" ]]; then
+  docker compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" down
+  docker compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" down
+else
+  docker-compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" down
+  docker-compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" down
+fi
 
 pid_file="${AGENT_RUNNER_PID_FILE:-${AGENT_STATE_DIR:-/srv/agent-state}/agent-runner.pid}"
 if [[ -f "$pid_file" ]]; then

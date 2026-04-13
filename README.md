@@ -5,7 +5,7 @@ Personal QQ bot stack built around:
 - `NapCat` for personal QQ access
 - `AstrBot` for bot platform integration
 - `agent-runner` in Rust for Docker-managed Claude CLI execution
-- host-local `api-proxy` for PackyAPI or MiniMax access
+- host-local Anthropic-compatible proxy, built into `agent-runner`, for PackyAPI or MiniMax access
 
 The top priorities of this repository are:
 
@@ -15,7 +15,7 @@ The top priorities of this repository are:
 ## Planned Architecture
 
 ```text
-QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> local api-proxy -> PackyAPI / MiniMax
+QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> agent-runner local proxy -> PackyAPI / MiniMax
 ```
 
 ## Planned Repository Layout
@@ -41,12 +41,16 @@ QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> local api-
 └── docs/
 ```
 
+Detailed deployment instructions are in:
+
+- `deploy/README.md`
+
 ## v1 Scope
 
 - personal QQ account only
 - Claude CLI only
 - MiniMax as the primary upstream model path
-- host-local API proxy for secret isolation
+- host-local API proxy for secret isolation, served by the same `agent-runner` process
 - one approved writable workspace mount
 - strict timeout and resource controls
 - platform-neutral core request model, even though v1 only targets QQ
@@ -95,10 +99,10 @@ QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> local api-
 
 ## Notes
 
-- Real upstream API keys must stay on the host, not in the CLI container.
+- Real upstream API keys must stay on the host, not in the CLI container. The container only receives a local proxy token and a host-local proxy base URL.
 - `agent-runner` is the policy boundary for timeout and execution behavior.
 - Default container targets are `4 CPU`, `4GB` memory, and `50GB` writable storage where the Docker storage driver supports service-level size limits.
-- First-pass network policy is: allow outbound internet plus host `api-proxy`, but deny reliance on any other host-local service.
+- First-pass network policy is: allow outbound internet plus the host-local proxy port served by `agent-runner`, but deny reliance on any other host-local service.
 - `disk` limits still depend on Docker storage-driver support; if `storage_opt.size` is ignored on the host, host-side quota remains the fallback control.
 - Python-based AstrBot integration and smoke-test helpers should be run with `uv run ...`, not bare `python`.
 - Host firewall enforcement is implemented via `scripts/apply_runner_network_policy.sh` and `scripts/remove_runner_network_policy.sh`, and the full smoke path is in `scripts/smoke_test_claude_runner.sh`.

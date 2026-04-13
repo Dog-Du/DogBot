@@ -139,7 +139,14 @@ fn build_claude_command(
     claude_session_id: &str,
     is_new_session: bool,
 ) -> Vec<String> {
-    let mut command = vec!["claude".to_string(), "--print".to_string()];
+    let mut command = vec![
+        "claude".to_string(),
+        "--print".to_string(),
+        "--dangerously-skip-permissions".to_string(),
+        "--add-dir".to_string(),
+        "/workspace".to_string(),
+        "/state".to_string(),
+    ];
 
     if is_new_session {
         command.push("--session-id".to_string());
@@ -178,6 +185,10 @@ mod tests {
             vec![
                 "claude".to_string(),
                 "--print".to_string(),
+                "--dangerously-skip-permissions".to_string(),
+                "--add-dir".to_string(),
+                "/workspace".to_string(),
+                "/state".to_string(),
                 "--session-id".to_string(),
                 "uuid-1".to_string(),
                 "hello".to_string(),
@@ -193,6 +204,10 @@ mod tests {
             vec![
                 "claude".to_string(),
                 "--print".to_string(),
+                "--dangerously-skip-permissions".to_string(),
+                "--add-dir".to_string(),
+                "/workspace".to_string(),
+                "/state".to_string(),
                 "--resume".to_string(),
                 "uuid-1".to_string(),
                 "hello".to_string(),

@@ -13,6 +13,7 @@ pub struct Settings {
     pub workspace_dir: String,
     pub state_dir: String,
     pub anthropic_base_url: String,
+    pub api_proxy_auth_token: String,
     pub napcat_api_base_url: String,
     pub napcat_access_token: Option<String>,
     pub max_concurrent_runs: usize,
@@ -68,6 +69,11 @@ impl Settings {
             .get("ANTHROPIC_BASE_URL")
             .cloned()
             .unwrap_or_else(|| "http://host.docker.internal:9000".to_string());
+        let api_proxy_auth_token = env_map
+            .get("API_PROXY_AUTH_TOKEN")
+            .cloned()
+            .and_then(normalize_optional_env)
+            .unwrap_or_else(|| "local-proxy-token".to_string());
         let max_concurrent_runs = parse_usize(&env_map, "MAX_CONCURRENT_RUNS", 10)?;
         let napcat_api_base_url = env_map
             .get("NAPCAT_API_BASE_URL")
@@ -112,6 +118,7 @@ impl Settings {
             workspace_dir,
             state_dir,
             anthropic_base_url,
+            api_proxy_auth_token,
             napcat_api_base_url,
             napcat_access_token,
             max_concurrent_runs,
@@ -158,5 +165,14 @@ fn parse_i64(
     match env_map.get(key) {
         Some(raw) => raw.parse().map_err(|_| ConfigError::InvalidInt(key)),
         None => Ok(default),
+    }
+}
+
+fn normalize_optional_env(value: String) -> Option<String> {
+    let trimmed = value.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
     }
 }

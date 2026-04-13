@@ -58,7 +58,7 @@ impl NapCatMessenger {
         };
 
         match (session.platform.as_str(), scope) {
-            ("qq", "private") => Ok((
+            ("qq", "private" | "FriendMessage") => Ok((
                 "/send_private_msg",
                 json!({
                     "user_id": target_id,
@@ -66,7 +66,7 @@ impl NapCatMessenger {
                     "auto_escape": false
                 }),
             )),
-            ("qq", "group") => Ok((
+            ("qq", "group" | "GroupMessage") => Ok((
                 "/send_group_msg",
                 json!({
                     "group_id": target_id,

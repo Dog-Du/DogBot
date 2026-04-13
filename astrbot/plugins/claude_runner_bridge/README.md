@@ -1,11 +1,14 @@
 # claude_runner_bridge
 
-AstrBot plugin that forwards chat commands to the local Rust `agent-runner`.
+AstrBot plugin that forwards normal chat messages to the local Rust `agent-runner`.
 
 ## Commands
 
-- `/agent <prompt>`: send a prompt to `agent-runner`
+- Plain messages: routed to `agent-runner` by default
+- `/agent <prompt>`: optional compatibility alias for explicit routing
 - `/agent-status`: check the runner health endpoint
+
+Other slash-prefixed commands are ignored so they can be handled elsewhere.
 
 ## Config
 
@@ -27,8 +30,10 @@ The plugin also supports these environment variable overrides, which are useful 
 
 ## Session Mapping
 
-- private chat: `<platform>:private:<user_id>`
-- group chat conversation: `<platform>:group:<group_id>`
-- group chat session: `<platform>:group:<group_id>:user:<user_id>`
+- private chat conversation: prefer AstrBot's native `unified_msg_origin`
+- private chat fallback: `<platform>:private:<session_id or user_id>`
+- group chat conversation: prefer AstrBot's native `unified_msg_origin`
+- group chat fallback: `<platform>:group:<group_id or session_id>`
+- group chat session: `<conversation_id>:user:<user_id>`
 
-This keeps the Rust runner platform-neutral while letting AstrBot choose the chat-specific session model.
+This keeps the Rust runner platform-neutral while letting AstrBot choose the chat-specific session model. QQ group replies also prepend `@sender` automatically so the response is explicitly addressed to the triggering user.
