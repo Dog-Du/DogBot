@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use axum::{
+    body::Bytes,
     Json, Router,
     extract::State,
     http::StatusCode,
@@ -10,6 +11,7 @@ use axum::{
 };
 use bollard::errors::Error as BollardError;
 use serde_json::json;
+use tokio::sync::Semaphore;
 
 use crate::{
     config::Settings,
@@ -42,17 +44,26 @@ impl Runner for DockerRunner {
 struct AppState {
     settings: Settings,
     runner: Arc<dyn Runner>,
+    run_slots: Arc<Semaphore>,
 }
 
 pub fn build_test_app(runner: Arc<dyn Runner>) -> Router {
     let settings = Settings::from_env_map(HashMap::new()).expect("default settings");
-    router(AppState { settings, runner })
+    router(AppState {
+        settings,
+        runner,
+        run_slots: Arc::new(Semaphore::new(1)),
+    })
 }
 
 pub fn build_app(settings: Settings) -> Result<Router, BollardError> {
     let runtime = DockerRuntime::connect()?;
     let runner = Arc::new(DockerRunner::new(runtime, settings.container_name.clone()));
-    Ok(router(AppState { settings, runner }))
+    Ok(router(AppState {
+        settings,
+        runner,
+        run_slots: Arc::new(Semaphore::new(1)),
+    }))
 }
 
 fn router(state: AppState) -> Router {
@@ -66,7 +77,39 @@ async fn healthz() -> Json<serde_json::Value> {
     Json(json!({ "status": "ok" }))
 }
 
-async fn run(State(state): State<AppState>, Json(request): Json<RunRequest>) -> Response {
+async fn run(State(state): State<AppState>, body: Bytes) -> Response {
+    let request: RunRequest = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    status: "error".into(),
+                    error_code: "invalid_json".into(),
+                    message: err.to_string(),
+                    timed_out: false,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let _permit = match state.run_slots.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(ErrorResponse {
+                    status: "error".into(),
+                    error_code: "busy".into(),
+                    message: "another run is already in progress".into(),
+                    timed_out: false,
+                }),
+            )
+                .into_response();
+        }
+    };
+
     let validated = match request.validate(
         state.settings.default_timeout_secs,
         state.settings.max_timeout_secs,

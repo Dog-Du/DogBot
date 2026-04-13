@@ -1,7 +1,9 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use agent_runner::models::{ErrorResponse, RunRequest, RunResponse};
 use axum::{
+    body::to_bytes,
     body::Body,
     http::{Request, StatusCode},
 };
@@ -157,6 +159,67 @@ async fn run_endpoint_returns_timeout_status_for_runner_timeout() {
     assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
 }
 
+#[tokio::test]
+async fn run_endpoint_normalizes_invalid_json_errors() {
+    let app = agent_runner::server::build_test_app(Arc::new(MockRunner::success()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/runs")
+                .header("content-type", "application/json")
+                .body(Body::from("{not-json"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error_code"], "invalid_json");
+}
+
+#[tokio::test]
+async fn run_endpoint_rejects_concurrent_runs() {
+    let app = agent_runner::server::build_test_app(Arc::new(MockRunner::sleeping()));
+    let payload = serde_json::to_vec(&base_request()).unwrap();
+
+    let first_app = app.clone();
+    let first_payload = payload.clone();
+    let first = tokio::spawn(async move {
+        first_app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/runs")
+                    .header("content-type", "application/json")
+                    .body(Body::from(first_payload))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/runs")
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    let _ = first.await.unwrap();
+}
+
 struct MockRunner {
     outcome: Result<RunResponse, ErrorResponse>,
 }
@@ -185,6 +248,19 @@ impl MockRunner {
             }),
         }
     }
+
+    fn sleeping() -> Self {
+        Self {
+            outcome: Ok(RunResponse {
+                status: "ok".into(),
+                stdout: "slow".into(),
+                stderr: String::new(),
+                exit_code: 0,
+                timed_out: false,
+                duration_ms: 1,
+            }),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -194,6 +270,9 @@ impl agent_runner::server::Runner for MockRunner {
         _request: RunRequest,
         _validated: agent_runner::models::ValidatedRunRequest,
     ) -> Result<RunResponse, ErrorResponse> {
+        if self.outcome.as_ref().ok().map(|resp| resp.stdout.as_str()) == Some("slow") {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
         self.outcome.clone()
     }
 }
