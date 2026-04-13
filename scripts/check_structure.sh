@@ -41,8 +41,8 @@ ensure_pattern() {
 pattern_errors=0
 ensure_pattern "docker/claude-runner/Dockerfile" "@anthropic-ai/claude-code" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "docker/claude-runner/Dockerfile" "tini" || pattern_errors=$((pattern_errors+1))
-ensure_pattern "docker/claude-runner/Dockerfile" "gosu" || pattern_errors=$((pattern_errors+1))
-ensure_pattern "docker/claude-runner/entrypoint.sh" "gosu claude" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "docker/claude-runner/Dockerfile" "sudo" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "docker/claude-runner/entrypoint.sh" "sudo rm -f /etc/sudoers.d/claude" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/docker-compose.yml" "mem_limit" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/docker-compose.yml" "CLAUDE_CONFIG_DIR" || pattern_errors=$((pattern_errors+1))
 
