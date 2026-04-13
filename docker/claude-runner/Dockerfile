@@ -32,6 +32,5 @@ RUN useradd --system --create-home --home-dir /workspace claude \
   && chown -R claude:claude /workspace /state
 
 WORKDIR /workspace
-USER claude
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/usr/local/bin/entrypoint.sh"]
