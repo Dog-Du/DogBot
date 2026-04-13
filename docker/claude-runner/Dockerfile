@@ -32,7 +32,16 @@ RUN useradd --system --create-home --home-dir /workspace claude \
   && chown claude:claude /workspace /state/claude \
   && chown claude:claude /state
 
-RUN printf 'claude ALL=(root) NOPASSWD: /usr/bin/mkdir, /usr/bin/chown, /bin/touch, /bin/rm /etc/sudoers.d/claude\n' \
+RUN cat <<'EOF' > /usr/local/bin/claude-bootstrap.sh
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p /workspace /state/claude
+chown claude:claude /workspace
+chown claude:claude /state/claude
+touch /state/claude/.keep
+EOF
+RUN chmod +x /usr/local/bin/claude-bootstrap.sh
+RUN printf 'claude ALL=(root) NOPASSWD: /usr/local/bin/claude-bootstrap.sh\n' \
     > /etc/sudoers.d/claude \
   && chmod 0440 /etc/sudoers.d/claude
 
