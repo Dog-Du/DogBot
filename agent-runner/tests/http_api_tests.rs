@@ -23,6 +23,29 @@ fn base_request() -> RunRequest {
     }
 }
 
+fn test_settings() -> agent_runner::config::Settings {
+    agent_runner::config::Settings {
+        bind_addr: "127.0.0.1:8787".into(),
+        default_timeout_secs: 120,
+        max_timeout_secs: 300,
+        container_name: "claude-runner".into(),
+        image_name: "myqqbot/claude-runner:local".into(),
+        workspace_dir: "/srv/agent-workdir".into(),
+        state_dir: "/srv/agent-state".into(),
+        anthropic_base_url: "http://host.docker.internal:9000".into(),
+        max_concurrent_runs: 1,
+        max_queue_depth: 1,
+        global_rate_limit_per_minute: 10,
+        user_rate_limit_per_minute: 3,
+        conversation_rate_limit_per_minute: 5,
+        session_db_path: "/srv/agent-state/runner.db".into(),
+        container_cpu_cores: 4,
+        container_memory_mb: 4096,
+        container_disk_gb: 50,
+        container_pids_limit: 256,
+    }
+}
+
 #[test]
 fn run_request_validation_returns_timeout_and_cwd() {
     let request = base_request();
@@ -182,8 +205,12 @@ async fn run_endpoint_normalizes_invalid_json_errors() {
 }
 
 #[tokio::test]
-async fn run_endpoint_rejects_concurrent_runs() {
-    let app = agent_runner::server::build_test_app(Arc::new(MockRunner::sleeping()));
+async fn run_endpoint_queues_one_waiting_request_before_overflowing() {
+    let settings = test_settings();
+    let app = agent_runner::server::build_test_app_with_settings(
+        Arc::new(MockRunner::sleeping()),
+        settings,
+    );
     let payload = serde_json::to_vec(&base_request()).unwrap();
 
     let first_app = app.clone();
@@ -196,6 +223,24 @@ async fn run_endpoint_rejects_concurrent_runs() {
                     .uri("/v1/runs")
                     .header("content-type", "application/json")
                     .body(Body::from(first_payload))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let second_app = app.clone();
+    let second_payload = payload.clone();
+    let second = tokio::spawn(async move {
+        second_app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/runs")
+                    .header("content-type", "application/json")
+                    .body(Body::from(second_payload))
                     .unwrap(),
             )
             .await
@@ -217,7 +262,131 @@ async fn run_endpoint_rejects_concurrent_runs() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    let _ = first.await.unwrap();
+    assert_eq!(first.await.unwrap().status(), StatusCode::OK);
+    assert_eq!(second.await.unwrap().status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn run_endpoint_rate_limits_after_global_budget_is_exhausted() {
+    let mut settings = test_settings();
+    settings.max_concurrent_runs = 2;
+    settings.max_queue_depth = 2;
+    settings.global_rate_limit_per_minute = 1;
+    settings.user_rate_limit_per_minute = 10;
+    settings.conversation_rate_limit_per_minute = 10;
+    let app =
+        agent_runner::server::build_test_app_with_settings(Arc::new(MockRunner::success()), settings);
+    let payload = serde_json::to_vec(&base_request()).unwrap();
+
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/runs")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let second = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/runs")
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+    let body = to_bytes(second.into_body(), usize::MAX).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error_code"], "rate_limited");
+}
+
+#[tokio::test]
+async fn run_endpoint_rate_limits_per_user() {
+    let mut settings = test_settings();
+    settings.max_concurrent_runs = 2;
+    settings.max_queue_depth = 2;
+    settings.global_rate_limit_per_minute = 10;
+    settings.user_rate_limit_per_minute = 1;
+    settings.conversation_rate_limit_per_minute = 10;
+    let app =
+        agent_runner::server::build_test_app_with_settings(Arc::new(MockRunner::success()), settings);
+    let payload = serde_json::to_vec(&base_request()).unwrap();
+
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/runs")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let second = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/runs")
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn run_endpoint_rate_limits_per_conversation() {
+    let mut settings = test_settings();
+    settings.max_concurrent_runs = 2;
+    settings.max_queue_depth = 2;
+    settings.global_rate_limit_per_minute = 10;
+    settings.user_rate_limit_per_minute = 10;
+    settings.conversation_rate_limit_per_minute = 1;
+    let app =
+        agent_runner::server::build_test_app_with_settings(Arc::new(MockRunner::success()), settings);
+    let payload = serde_json::to_vec(&base_request()).unwrap();
+
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/runs")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let second = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/runs")
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
 struct MockRunner {

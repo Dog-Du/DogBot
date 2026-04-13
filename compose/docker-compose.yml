@@ -3,6 +3,7 @@ version: "3.9"
 services:
   claude-runner:
     container_name: ${CLAUDE_CONTAINER_NAME:-claude-runner} # default name expected by agent-runner
+    image: ${CLAUDE_IMAGE_NAME:-myqqbot/claude-runner:local}
     build:
       context: ..
       dockerfile: docker/claude-runner/Dockerfile
@@ -11,10 +12,12 @@ services:
     restart: unless-stopped
     stdin_open: false
     tty: false
-    cpus: "2.0"
+    cpus: "4.0"
     mem_limit: 4g
     memswap_limit: 4g
     pids_limit: 256
+    storage_opt:
+      size: 50G
     read_only: true
     tmpfs:
       - /tmp:size=256m,mode=1777
