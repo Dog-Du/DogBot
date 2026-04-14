@@ -24,6 +24,34 @@ if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" >/dev/null 2>&1; then
   exit 0
 fi
 
+resolve_uv() {
+  if command -v uv >/dev/null 2>&1; then
+    command -v uv
+    return 0
+  fi
+
+  if [[ -n "${SUDO_USER:-}" ]]; then
+    local sudo_home
+    sudo_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+    if [[ -n "$sudo_home" && -x "$sudo_home/.local/bin/uv" ]]; then
+      echo "$sudo_home/.local/bin/uv"
+      return 0
+    fi
+  fi
+
+  if [[ -x "$HOME/.local/bin/uv" ]]; then
+    echo "$HOME/.local/bin/uv"
+    return 0
+  fi
+
+  return 1
+}
+
+if ! uv_bin="$(resolve_uv)"; then
+  echo "uv not found. Install uv or make sure it is available in PATH." >&2
+  exit 1
+fi
+
 host="${WECHATPADPRO_ADAPTER_HOST:-127.0.0.1}"
 port="${WECHATPADPRO_ADAPTER_PORT:-18999}"
 
@@ -38,7 +66,7 @@ nohup env \
   WECHATPADPRO_DEFAULT_CWD="${WECHATPADPRO_DEFAULT_CWD:-/workspace}" \
   WECHATPADPRO_DEFAULT_TIMEOUT_SECS="${WECHATPADPRO_DEFAULT_TIMEOUT_SECS:-120}" \
   AGENT_RUNNER_BASE_URL="${AGENT_RUNNER_BASE_URL:-http://127.0.0.1:11451}" \
-  uv run --with fastapi --with uvicorn --with httpx python -m uvicorn \
+  "$uv_bin" run --with fastapi --with uvicorn --with httpx python -m uvicorn \
   wechatpadpro_adapter.app:create_app \
   --factory \
   --host "$host" \
