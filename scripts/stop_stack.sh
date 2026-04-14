@@ -57,6 +57,15 @@ if [[ -f "$pid_file" ]]; then
   rm -f "$pid_file"
 fi
 
+wechatpadpro_adapter_pid_file="${WECHATPADPRO_ADAPTER_PID_FILE:-${AGENT_STATE_DIR:-/srv/agent-state}/wechatpadpro-adapter.pid}"
+if [[ -f "$wechatpadpro_adapter_pid_file" ]]; then
+  pid="$(cat "$wechatpadpro_adapter_pid_file")"
+  if kill -0 "$pid" >/dev/null 2>&1; then
+    kill "$pid"
+  fi
+  rm -f "$wechatpadpro_adapter_pid_file"
+fi
+
 if [[ "${APPLY_NETWORK_POLICY:-1}" == "1" ]]; then
   if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
     "$repo_root/scripts/remove_runner_network_policy.sh"

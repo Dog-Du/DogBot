@@ -112,6 +112,10 @@ if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
   require_env WECHATPADPRO_MYSQL_PASSWORD
 
   run_compose_up "$repo_root/compose/wechatpadpro-stack.yml"
+  "$repo_root/scripts/start_wechatpadpro_adapter.sh" "$env_file"
+  if [[ "${WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK:-0}" == "1" ]]; then
+    "$repo_root/scripts/configure_wechatpadpro_webhook.sh" "$env_file"
+  fi
 fi
 
 if [[ "${APPLY_NETWORK_POLICY:-1}" == "1" ]]; then
@@ -133,4 +137,5 @@ echo "NapCat WebUI: http://127.0.0.1:${NAPCAT_WEBUI_PORT:-6099}"
 echo "AstrBot WebUI: http://127.0.0.1:${ASTRBOT_WEBUI_PORT:-6185}"
 if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
   echo "WeChatPadPro API: http://127.0.0.1:${WECHATPADPRO_HOST_PORT:-38849}"
+  echo "WeChatPadPro adapter: http://${WECHATPADPRO_ADAPTER_BIND_ADDR:-127.0.0.1:18999}"
 fi

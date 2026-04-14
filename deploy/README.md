@@ -17,11 +17,21 @@ Optional WeChat path:
 ```text
 WeChat
 -> WeChatPadPro
--> AstrBot
+-> wechatpadpro-adapter
 -> agent-runner
 -> claude-runner (Docker)
 -> agent-runner built-in Anthropic-compatible proxy
 -> upstream provider
+```
+
+When AstrBot is not used for WeChat, the repository can run:
+
+```text
+WeChat
+-> WeChatPadPro
+-> wechatpadpro-adapter
+-> agent-runner
+-> claude-runner
 ```
 
 Important boundary:
@@ -91,6 +101,8 @@ The main files you need to know:
   - full stop script
 - `scripts/send_session_message.sh`
   - host-local proactive send helper
+- `scripts/start_wechatpadpro_adapter.sh`
+  - host-local WeChatPadPro adapter startup script
 
 ## 3. Quick Start
 
@@ -126,6 +138,7 @@ If `ENABLE_WECHATPADPRO=1`, the same deploy command also starts:
 - `wechatpadpro_mysql`
 - `wechatpadpro_redis`
 - `wechatpadpro`
+- `wechatpadpro-adapter`
 
 ## 4. What Starts
 
@@ -308,7 +321,6 @@ WECHATPADPRO_MYSQL_USER=weixin
 WECHATPADPRO_MYSQL_PASSWORD=<required>
 WECHATPADPRO_MYSQL_DIR=/srv/wechatpadpro/mysql
 
-WECHATPADPRO_REDIS_PASSWORD=<required>
 WECHATPADPRO_REDIS_DIR=/srv/wechatpadpro/redis
 ```
 
@@ -317,6 +329,22 @@ Important notes:
 - this repository intentionally does not hardcode a default `WECHATPADPRO_IMAGE`
 - upstream image naming and distribution can change; set the exact image/tag from the current upstream release before enabling
 - deploy will fail fast if WeChatPadPro is enabled but required secrets or image are missing
+
+Adapter settings:
+
+```env
+WECHATPADPRO_BASE_URL=http://127.0.0.1:38849
+WECHATPADPRO_ACCOUNT_KEY=
+WECHATPADPRO_ADAPTER_HOST=127.0.0.1
+WECHATPADPRO_ADAPTER_PORT=18999
+WECHATPADPRO_ADAPTER_BIND_ADDR=127.0.0.1:18999
+WECHATPADPRO_ADAPTER_WEBHOOK_URL=http://host.docker.internal:18999/wechatpadpro/events
+WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=0
+WECHATPADPRO_WEBHOOK_INCLUDE_SELF_MESSAGE=false
+# WECHATPADPRO_WEBHOOK_SECRET=
+WECHATPADPRO_DEFAULT_CWD=/workspace
+WECHATPADPRO_DEFAULT_TIMEOUT_SECS=120
+```
 
 ### 5.9 Built-in Proxy and Upstream Provider
 
@@ -475,23 +503,30 @@ The current bridge plugin behavior is:
 
 ### 8.4 Optional WeChatPadPro Adapter
 
-When `ENABLE_WECHATPADPRO=1`, AstrBot can also be configured to consume WeChatPadPro.
+The current public AstrBot image does not expose a usable `WeChatPadPro` platform adapter, so this repository uses a host-local `wechatpadpro-adapter` instead.
 
-In AstrBot WebUI:
+WeChat flow is:
 
-1. Open `消息平台`
-2. Add adapter `wechatpadpro(微信)` or the equivalent WeChatPadPro personal-WeChat adapter shown by your AstrBot version
-3. Fill:
-   - `admin_key`: the same value as `WECHATPADPRO_ADMIN_KEY`
-   - `host`: the host/IP where AstrBot can reach WeChatPadPro
-   - `port`: `WECHATPADPRO_HOST_PORT`
-4. Save the adapter
-5. Watch AstrBot logs for the login QR code or prompt
-6. Scan the QR code with the target personal WeChat account
+```text
+WeChatPadPro -> wechatpadpro-adapter -> agent-runner -> claude-runner
+```
 
-If login succeeds but messages do not arrive, enable AstrBot's active message polling option for the WeChatPadPro adapter. AstrBot documentation explicitly calls this out as a fallback for some environments.
+The adapter:
 
-WeChat messages then flow through the same `claude_runner_bridge` plugin used by QQ.
+- receives webhook POST events from WeChatPadPro
+- forwards text messages to `agent-runner`
+- sends text replies back through WeChatPadPro `/message/SendTextMessage`
+
+The adapter needs `WECHATPADPRO_ACCOUNT_KEY`. This is not the same thing as `WECHATPADPRO_ADMIN_KEY`.
+
+Recommended setup:
+
+1. Start the stack with `ENABLE_WECHATPADPRO=1`
+2. Log in to WeChatPadPro with the target WeChat account
+3. Obtain the account key from WeChatPadPro after login
+4. Set `WECHATPADPRO_ACCOUNT_KEY` in `deploy/myqqbot.env`
+5. Optionally set `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1`
+6. Redeploy
 
 ## 9. Docker Configuration
 
@@ -560,7 +595,33 @@ Expected result:
 - an HTTP response from WeChatPadPro
 - or at least a non-empty server response proving the port is bound
 
-AstrBot owns the actual adapter login flow. This repository does not store QR codes or WeChat auth files in git.
+This repository does not store QR codes or WeChat auth files in git.
+
+## 10.1 WeChatPadPro Adapter
+
+The host-local adapter receives webhook events and forwards text messages to `agent-runner`.
+
+Health check:
+
+```bash
+curl http://127.0.0.1:18999/healthz
+```
+
+Webhook endpoint:
+
+```text
+POST /wechatpadpro/events
+```
+
+The first pass only supports text private/group messages. Unsupported message types are ignored.
+
+If `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1` and `WECHATPADPRO_ACCOUNT_KEY` is set, deploy also pushes this webhook config to WeChatPadPro:
+
+- `URL`: `WECHATPADPRO_ADAPTER_WEBHOOK_URL`
+- `Enabled`: `true`
+- `IncludeSelfMessage`: `WECHATPADPRO_WEBHOOK_INCLUDE_SELF_MESSAGE`
+- `MessageTypes`: `["Text"]`
+- `Secret`: `WECHATPADPRO_WEBHOOK_SECRET`
 
 ## 11. How to Start and Stop
 
