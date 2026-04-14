@@ -3,6 +3,7 @@
 Personal QQ bot stack built around:
 
 - `NapCat` for personal QQ access
+- optional `WeChatPadPro` for personal WeChat access
 - `AstrBot` for bot platform integration
 - `agent-runner` in Rust for Docker-managed Claude CLI execution
 - host-local Anthropic-compatible proxy, built into `agent-runner`, for PackyAPI or MiniMax access
@@ -16,6 +17,7 @@ The top priorities of this repository are:
 
 ```text
 QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> agent-runner local proxy -> PackyAPI / MiniMax
+WeChat -> WeChatPadPro -> AstrBot -> agent-runner -> claude-runner container -> agent-runner local proxy -> PackyAPI / MiniMax
 ```
 
 ## Planned Repository Layout
@@ -107,3 +109,4 @@ Detailed deployment instructions are in:
 - Python-based AstrBot integration and smoke-test helpers should be run with `uv run ...`, not bare `python`.
 - Host firewall enforcement is implemented via `scripts/apply_runner_network_policy.sh` and `scripts/remove_runner_network_policy.sh`, and the full smoke path is in `scripts/smoke_test_claude_runner.sh`.
 - Proactive message sending is intentionally deferred as an improvement item. The near-term path is a small host-local script that targets an existing `session_id`, not a full outbox service inside the current runtime.
+- WeChatPadPro support is optional and enabled through `ENABLE_WECHATPADPRO=1`; it reuses AstrBot rather than adding a second direct-to-runner adapter.

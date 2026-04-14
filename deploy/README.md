@@ -12,6 +12,18 @@ QQ
 -> upstream provider (Packy / GLM / MiniMax official)
 ```
 
+Optional WeChat path:
+
+```text
+WeChat
+-> WeChatPadPro
+-> AstrBot
+-> agent-runner
+-> claude-runner (Docker)
+-> agent-runner built-in Anthropic-compatible proxy
+-> upstream provider
+```
+
 Important boundary:
 
 - real upstream API keys stay on the host
@@ -67,6 +79,8 @@ The main files you need to know:
   - Claude container definition
 - `compose/platform-stack.yml`
   - NapCat and AstrBot containers
+- `compose/wechatpadpro-stack.yml`
+  - optional WeChatPadPro, MySQL, and Redis containers
 - `docker/claude-runner/Dockerfile`
   - Claude image build
 - `astrbot/plugins/claude_runner_bridge/main.py`
@@ -107,6 +121,12 @@ sudo ./scripts/deploy_stack.sh deploy/myqqbot.env
 sudo ./scripts/stop_stack.sh deploy/myqqbot.env
 ```
 
+If `ENABLE_WECHATPADPRO=1`, the same deploy command also starts:
+
+- `wechatpadpro_mysql`
+- `wechatpadpro_redis`
+- `wechatpadpro`
+
 ## 4. What Starts
 
 The stack starts:
@@ -143,6 +163,7 @@ Everything important is controlled there:
 - upstream provider selection
 - provider API key
 - NapCat and AstrBot ports and data paths
+- optional WeChatPadPro ports, secrets, and state paths
 
 ### 5.1 Claude Container
 
@@ -263,7 +284,41 @@ CLAUDE_BRIDGE_COMMAND_NAME=agent
 CLAUDE_BRIDGE_STATUS_COMMAND_NAME=agent-status
 ```
 
-### 5.8 Built-in Proxy and Upstream Provider
+### 5.8 WeChatPadPro
+
+WeChatPadPro support is optional.
+
+Enable it with:
+
+```env
+ENABLE_WECHATPADPRO=1
+```
+
+Required settings:
+
+```env
+WECHATPADPRO_IMAGE=<set this to a real upstream image tag>
+WECHATPADPRO_HOST_PORT=38849
+WECHATPADPRO_ADMIN_KEY=<set a strong random value>
+WECHATPADPRO_DATA_DIR=/srv/wechatpadpro/data
+
+WECHATPADPRO_MYSQL_ROOT_PASSWORD=<required>
+WECHATPADPRO_MYSQL_DATABASE=weixin
+WECHATPADPRO_MYSQL_USER=weixin
+WECHATPADPRO_MYSQL_PASSWORD=<required>
+WECHATPADPRO_MYSQL_DIR=/srv/wechatpadpro/mysql
+
+WECHATPADPRO_REDIS_PASSWORD=<required>
+WECHATPADPRO_REDIS_DIR=/srv/wechatpadpro/redis
+```
+
+Important notes:
+
+- this repository intentionally does not hardcode a default `WECHATPADPRO_IMAGE`
+- upstream image naming and distribution can change; set the exact image/tag from the current upstream release before enabling
+- deploy will fail fast if WeChatPadPro is enabled but required secrets or image are missing
+
+### 5.9 Built-in Proxy and Upstream Provider
 
 The built-in proxy chooses one active provider:
 
@@ -418,6 +473,26 @@ The current bridge plugin behavior is:
 - `/agent <prompt>` still works as a compatibility alias
 - QQ group replies automatically prepend `@sender`
 
+### 8.4 Optional WeChatPadPro Adapter
+
+When `ENABLE_WECHATPADPRO=1`, AstrBot can also be configured to consume WeChatPadPro.
+
+In AstrBot WebUI:
+
+1. Open `消息平台`
+2. Add adapter `wechatpadpro(微信)` or the equivalent WeChatPadPro personal-WeChat adapter shown by your AstrBot version
+3. Fill:
+   - `admin_key`: the same value as `WECHATPADPRO_ADMIN_KEY`
+   - `host`: the host/IP where AstrBot can reach WeChatPadPro
+   - `port`: `WECHATPADPRO_HOST_PORT`
+4. Save the adapter
+5. Watch AstrBot logs for the login QR code or prompt
+6. Scan the QR code with the target personal WeChat account
+
+If login succeeds but messages do not arrive, enable AstrBot's active message polling option for the WeChatPadPro adapter. AstrBot documentation explicitly calls this out as a fallback for some environments.
+
+WeChat messages then flow through the same `claude_runner_bridge` plugin used by QQ.
+
 ## 9. Docker Configuration
 
 The main Claude container config lives in:
@@ -427,6 +502,7 @@ The main Claude container config lives in:
 The platform services live in:
 
 - `compose/platform-stack.yml`
+- `compose/wechatpadpro-stack.yml`
 
 ### Claude Container Properties
 
@@ -449,7 +525,44 @@ Container env intentionally includes only:
 
 It does not contain real Packy, GLM, or MiniMax tokens.
 
-## 10. How to Start and Stop
+## 10. WeChatPadPro Configuration
+
+WeChatPadPro is a non-official personal WeChat ingress layer. It is optional and separate from NapCat.
+
+The repository starts it as three services:
+
+- `wechatpadpro_mysql`
+- `wechatpadpro_redis`
+- `wechatpadpro`
+
+After deployment:
+
+1. Confirm the containers are healthy:
+
+```bash
+docker ps --filter name=wechatpadpro --filter name=wechatpadpro_mysql --filter name=wechatpadpro_redis
+```
+
+2. Check WeChatPadPro logs:
+
+```bash
+docker logs --tail 200 wechatpadpro
+```
+
+3. Confirm its API port is reachable:
+
+```bash
+curl http://127.0.0.1:38849
+```
+
+Expected result:
+
+- an HTTP response from WeChatPadPro
+- or at least a non-empty server response proving the port is bound
+
+AstrBot owns the actual adapter login flow. This repository does not store QR codes or WeChat auth files in git.
+
+## 11. How to Start and Stop
 
 ### Start
 
@@ -480,7 +593,7 @@ It will:
 - start `astrbot`
 - optionally apply host firewall rules for the Claude container
 
-## 11. How to Change API Key or Model
+## 12. How to Change API Key or Model
 
 ### 11.1 Change API Key
 
@@ -543,7 +656,7 @@ This is the safest way to ensure:
 - the local proxy uses the new upstream
 - Claude container receives the correct local proxy auth env
 
-## 12. Verification Commands
+## 13. Verification Commands
 
 ### Check runner health
 
@@ -581,7 +694,19 @@ Not expected:
 - your real GLM token
 - your real MiniMax token
 
-## 13. Things to Watch Out For
+### Check WeChatPadPro when enabled
+
+```bash
+docker logs --tail 100 wechatpadpro
+docker logs --tail 100 astrbot
+```
+
+Expected:
+
+- WeChatPadPro shows a healthy boot
+- AstrBot shows the WeChatPadPro adapter and QR/login prompts when configured
+
+## 14. Things to Watch Out For
 
 ### 13.1 Provider Compatibility
 
@@ -633,7 +758,13 @@ uv run ...
 
 not plain `python`.
 
-## 14. Proactive Message MVP
+### 14.6 WeChatPadPro Risk and Host Constraints
+
+- WeChatPadPro is non-official and may trigger account risk, login churn, or protocol breakage.
+- Upstream AstrBot documentation notes the Docker route is Linux-oriented and not arm64-friendly.
+- Treat WeChatPadPro as experimental infrastructure, not a stable official API.
+
+## 15. Proactive Message MVP
 
 The current first-pass proactive send path is host-local and session-based:
 

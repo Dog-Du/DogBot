@@ -35,9 +35,15 @@ if ! compose_cmd="$(resolve_compose_cmd)"; then
 fi
 
 if [[ "$compose_cmd" == "docker compose" ]]; then
+  if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
+    docker compose --env-file "$env_file" -f "$repo_root/compose/wechatpadpro-stack.yml" down
+  fi
   docker compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" down
   docker compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" down
 else
+  if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
+    docker-compose --env-file "$env_file" -f "$repo_root/compose/wechatpadpro-stack.yml" down
+  fi
   docker-compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" down
   docker-compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" down
 fi

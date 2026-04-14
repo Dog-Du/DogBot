@@ -1,0 +1,71 @@
+services:
+  wechatpadpro_mysql:
+    image: mysql:8.0
+    container_name: ${WECHATPADPRO_MYSQL_CONTAINER_NAME:-wechatpadpro_mysql}
+    restart: unless-stopped
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${WECHATPADPRO_MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${WECHATPADPRO_MYSQL_DATABASE:-weixin}
+      MYSQL_USER: ${WECHATPADPRO_MYSQL_USER:-weixin}
+      MYSQL_PASSWORD: ${WECHATPADPRO_MYSQL_PASSWORD}
+    volumes:
+      - "${WECHATPADPRO_MYSQL_DIR:-/srv/wechatpadpro/mysql}:/var/lib/mysql"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  wechatpadpro_redis:
+    image: redis:7-alpine
+    container_name: ${WECHATPADPRO_REDIS_CONTAINER_NAME:-wechatpadpro_redis}
+    restart: unless-stopped
+    command:
+      ["sh", "-c", "exec redis-server --requirepass \"$WECHATPADPRO_REDIS_PASSWORD\""]
+    environment:
+      WECHATPADPRO_REDIS_PASSWORD: ${WECHATPADPRO_REDIS_PASSWORD}
+    volumes:
+      - "${WECHATPADPRO_REDIS_DIR:-/srv/wechatpadpro/redis}:/data"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli -a \"$WECHATPADPRO_REDIS_PASSWORD\" ping | grep PONG",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  wechatpadpro:
+    image: ${WECHATPADPRO_IMAGE}
+    container_name: ${WECHATPADPRO_CONTAINER_NAME:-wechatpadpro}
+    restart: unless-stopped
+    depends_on:
+      wechatpadpro_mysql:
+        condition: service_healthy
+      wechatpadpro_redis:
+        condition: service_healthy
+    ports:
+      - "${WECHATPADPRO_HOST_PORT:-38849}:1238"
+    environment:
+      ADMIN_KEY: ${WECHATPADPRO_ADMIN_KEY}
+      DB_HOST: ${WECHATPADPRO_MYSQL_CONTAINER_NAME:-wechatpadpro_mysql}
+      DB_PORT: ${WECHATPADPRO_MYSQL_PORT:-3306}
+      DB_DATABASE: ${WECHATPADPRO_MYSQL_DATABASE:-weixin}
+      DB_USERNAME: ${WECHATPADPRO_MYSQL_USER:-weixin}
+      DB_PASSWORD: ${WECHATPADPRO_MYSQL_PASSWORD}
+      REDIS_HOST: ${WECHATPADPRO_REDIS_CONTAINER_NAME:-wechatpadpro_redis}
+      REDIS_PORT: ${WECHATPADPRO_REDIS_PORT:-6379}
+      REDIS_DB: ${WECHATPADPRO_REDIS_DB:-0}
+      REDIS_PASSWORD: ${WECHATPADPRO_REDIS_PASSWORD}
+      WECHAT_PORT: ${WECHATPADPRO_WECHAT_PORT:-8080}
+    volumes:
+      - "${WECHATPADPRO_DATA_DIR:-/srv/wechatpadpro/data}:/app/data"
