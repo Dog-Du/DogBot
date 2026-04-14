@@ -103,6 +103,8 @@ The main files you need to know:
   - host-local proactive send helper
 - `scripts/start_wechatpadpro_adapter.sh`
   - host-local WeChatPadPro adapter startup script
+- `scripts/prepare_wechatpadpro_login.sh`
+  - ensures a WeChatPadPro account key exists and prints QR login output
 
 ## 3. Quick Start
 
@@ -139,6 +141,13 @@ If `ENABLE_WECHATPADPRO=1`, the same deploy command also starts:
 - `wechatpadpro_redis`
 - `wechatpadpro`
 - `wechatpadpro-adapter`
+
+It also:
+
+- generates `WECHATPADPRO_ACCOUNT_KEY` automatically if missing
+- requests a fresh WeChat login QR
+- writes QR output under `WECHATPADPRO_LOGIN_OUTPUT_DIR`
+- prints the QR image path and QR link in the terminal
 
 ## 4. What Starts
 
@@ -342,6 +351,7 @@ WECHATPADPRO_ADAPTER_WEBHOOK_URL=http://host.docker.internal:18999/wechatpadpro/
 WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=0
 WECHATPADPRO_WEBHOOK_INCLUDE_SELF_MESSAGE=false
 # WECHATPADPRO_WEBHOOK_SECRET=
+WECHATPADPRO_LOGIN_OUTPUT_DIR=/srv/agent-state/wechatpadpro-login
 WECHATPADPRO_DEFAULT_CWD=/workspace
 WECHATPADPRO_DEFAULT_TIMEOUT_SECS=120
 ```
@@ -522,11 +532,10 @@ The adapter needs `WECHATPADPRO_ACCOUNT_KEY`. This is not the same thing as `WEC
 Recommended setup:
 
 1. Start the stack with `ENABLE_WECHATPADPRO=1`
-2. Log in to WeChatPadPro with the target WeChat account
-3. Obtain the account key from WeChatPadPro after login
-4. Set `WECHATPADPRO_ACCOUNT_KEY` in `deploy/myqqbot.env`
-5. Optionally set `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1`
-6. Redeploy
+2. Let deploy print a fresh QR image path and QR link
+3. Scan the QR code with the target WeChat account
+4. Optionally set `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1`
+5. Re-run deploy after login if webhook setup was skipped on the first pass
 
 ## 9. Docker Configuration
 
@@ -622,6 +631,49 @@ If `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1` and `WECHATPADPRO_ACCOUNT_KEY` is set
 - `IncludeSelfMessage`: `WECHATPADPRO_WEBHOOK_INCLUDE_SELF_MESSAGE`
 - `MessageTypes`: `["Text"]`
 - `Secret`: `WECHATPADPRO_WEBHOOK_SECRET`
+
+### 10.2 WeChat Login QR Workflow
+
+When WeChat is enabled, deploy runs:
+
+```bash
+./scripts/prepare_wechatpadpro_login.sh deploy/myqqbot.env
+```
+
+That script:
+
+- creates `WECHATPADPRO_ACCOUNT_KEY` automatically if it is missing
+- requests a fresh login QR from WeChatPadPro
+- writes:
+  - `wechatpadpro-login-qr.png`
+  - `wechatpadpro-login-meta.json`
+- prints:
+  - QR image path
+  - QR link
+  - QR image URL
+  - QR expiry time
+
+By default the files are stored under:
+
+```text
+WECHATPADPRO_LOGIN_OUTPUT_DIR
+```
+
+For example:
+
+```env
+WECHATPADPRO_LOGIN_OUTPUT_DIR=/srv/agent-state/wechatpadpro-login
+```
+
+If webhook auto-configuration fails right after deploy, the most common reason is:
+
+- the QR was generated, but the WeChat account has not finished scanning/logging in yet
+
+In that case:
+
+1. scan the printed QR
+2. wait for login to complete
+3. run deploy again
 
 ## 11. How to Start and Stop
 

@@ -113,8 +113,12 @@ if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
 
   run_compose_up "$repo_root/compose/wechatpadpro-stack.yml"
   "$repo_root/scripts/start_wechatpadpro_adapter.sh" "$env_file"
+  "$repo_root/scripts/prepare_wechatpadpro_login.sh" "$env_file"
   if [[ "${WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK:-0}" == "1" ]]; then
-    "$repo_root/scripts/configure_wechatpadpro_webhook.sh" "$env_file"
+    if ! "$repo_root/scripts/configure_wechatpadpro_webhook.sh" "$env_file"; then
+      echo "WeChatPadPro webhook auto-configuration failed." >&2
+      echo "If the account is not logged in yet, scan the QR code printed above first and re-run deploy." >&2
+    fi
   fi
 fi
 

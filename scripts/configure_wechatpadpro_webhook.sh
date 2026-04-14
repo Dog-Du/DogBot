@@ -42,7 +42,7 @@ payload="$(cat <<JSON
 JSON
 )"
 
-response="$(curl -sS -X POST \
+response="$(curl --max-time 15 -sS -X POST \
   "${base_url}/webhook/Config?key=${WECHATPADPRO_ACCOUNT_KEY}" \
   -H 'Content-Type: application/json' \
   -d "$payload")"
