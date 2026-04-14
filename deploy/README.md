@@ -224,12 +224,12 @@ If you change these paths later, old state and session continuity may appear los
 
 ```env
 AGENT_RUNNER_BIND_ADDR=127.0.0.1:8787
-API_PROXY_BIND_ADDR=127.0.0.1:9000
+API_PROXY_BIND_ADDR=0.0.0.0:9000
 ```
 
 `AGENT_RUNNER_BIND_ADDR` is for AstrBot.
 
-`API_PROXY_BIND_ADDR` is for Claude inside Docker.
+`API_PROXY_BIND_ADDR` is for Claude inside Docker, so it must be reachable from the host bridge. Do not bind it to `127.0.0.1`.
 
 Claude should always point to the local proxy:
 
@@ -344,9 +344,9 @@ Adapter settings:
 ```env
 WECHATPADPRO_BASE_URL=http://127.0.0.1:38849
 WECHATPADPRO_ACCOUNT_KEY=
-WECHATPADPRO_ADAPTER_HOST=127.0.0.1
+WECHATPADPRO_ADAPTER_HOST=0.0.0.0
 WECHATPADPRO_ADAPTER_PORT=18999
-WECHATPADPRO_ADAPTER_BIND_ADDR=127.0.0.1:18999
+WECHATPADPRO_ADAPTER_BIND_ADDR=0.0.0.0:18999
 WECHATPADPRO_ADAPTER_WEBHOOK_URL=http://host.docker.internal:18999/wechatpadpro/events
 WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=0
 WECHATPADPRO_WEBHOOK_INCLUDE_SELF_MESSAGE=false
@@ -526,6 +526,12 @@ The adapter:
 - receives webhook POST events from WeChatPadPro
 - forwards text messages to `agent-runner`
 - sends text replies back through WeChatPadPro `/message/SendTextMessage`
+
+Important:
+
+- because WeChatPadPro calls the adapter through `host.docker.internal`, the adapter must bind to a host-reachable address
+- do not bind it to `127.0.0.1`
+- use `0.0.0.0:18999` unless you have a stricter host routing setup
 
 The adapter needs `WECHATPADPRO_ACCOUNT_KEY`. This is not the same thing as `WECHATPADPRO_ADMIN_KEY`.
 

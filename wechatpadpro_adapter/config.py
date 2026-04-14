@@ -20,7 +20,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
-            bind_addr=os.getenv("WECHATPADPRO_ADAPTER_BIND_ADDR", "127.0.0.1:18999"),
+            bind_addr=os.getenv("WECHATPADPRO_ADAPTER_BIND_ADDR", "0.0.0.0:18999"),
             wechatpadpro_base_url=os.getenv(
                 "WECHATPADPRO_BASE_URL", "http://127.0.0.1:38849"
             ).rstrip("/"),

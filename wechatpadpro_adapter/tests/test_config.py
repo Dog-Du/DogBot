@@ -15,7 +15,7 @@ def test_settings_use_expected_defaults(monkeypatch):
 
     settings = Settings.from_env()
 
-    assert settings.bind_addr == "127.0.0.1:18999"
+    assert settings.bind_addr == "0.0.0.0:18999"
     assert settings.wechatpadpro_base_url == "http://127.0.0.1:38849"
     assert settings.agent_runner_base_url == "http://127.0.0.1:11451"
     assert settings.account_key is None

@@ -61,7 +61,7 @@ impl ApiProxySettings {
             bind_addr: env_map
                 .get("API_PROXY_BIND_ADDR")
                 .cloned()
-                .unwrap_or_else(|| "127.0.0.1:9000".to_string()),
+                .unwrap_or_else(|| "0.0.0.0:9000".to_string()),
             local_auth_token: normalize_optional_env(
                 env_map.get("API_PROXY_AUTH_TOKEN").cloned(),
                 "local-proxy-token",
