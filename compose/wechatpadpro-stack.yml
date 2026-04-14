@@ -25,21 +25,14 @@ services:
       retries: 20
 
   wechatpadpro_redis:
-    image: redis:7-alpine
+    image: redis:6
     container_name: ${WECHATPADPRO_REDIS_CONTAINER_NAME:-wechatpadpro_redis}
     restart: unless-stopped
-    command:
-      ["sh", "-c", "exec redis-server --requirepass \"$WECHATPADPRO_REDIS_PASSWORD\""]
-    environment:
-      WECHATPADPRO_REDIS_PASSWORD: ${WECHATPADPRO_REDIS_PASSWORD}
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - "${WECHATPADPRO_REDIS_DIR:-/srv/wechatpadpro/redis}:/data"
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "redis-cli -a \"$WECHATPADPRO_REDIS_PASSWORD\" ping | grep PONG",
-        ]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -55,7 +48,9 @@ services:
         condition: service_healthy
     ports:
       - "${WECHATPADPRO_HOST_PORT:-38849}:1238"
+      - "${WECHATPADPRO_WECHAT_PORT:-8080}:8080"
     environment:
+      TZ: ${WECHATPADPRO_TZ:-Asia/Shanghai}
       ADMIN_KEY: ${WECHATPADPRO_ADMIN_KEY}
       DB_HOST: ${WECHATPADPRO_MYSQL_CONTAINER_NAME:-wechatpadpro_mysql}
       DB_PORT: ${WECHATPADPRO_MYSQL_PORT:-3306}
@@ -65,7 +60,7 @@ services:
       REDIS_HOST: ${WECHATPADPRO_REDIS_CONTAINER_NAME:-wechatpadpro_redis}
       REDIS_PORT: ${WECHATPADPRO_REDIS_PORT:-6379}
       REDIS_DB: ${WECHATPADPRO_REDIS_DB:-0}
-      REDIS_PASSWORD: ${WECHATPADPRO_REDIS_PASSWORD}
       WECHAT_PORT: ${WECHATPADPRO_WECHAT_PORT:-8080}
+      MYSQL_CONNECT_STR: ${WECHATPADPRO_MYSQL_USER:-weixin}:${WECHATPADPRO_MYSQL_PASSWORD}@tcp(${WECHATPADPRO_MYSQL_CONTAINER_NAME:-wechatpadpro_mysql}:${WECHATPADPRO_MYSQL_PORT:-3306})/${WECHATPADPRO_MYSQL_DATABASE:-weixin}?charset=utf8mb4&parseTime=true&loc=Local
     volumes:
       - "${WECHATPADPRO_DATA_DIR:-/srv/wechatpadpro/data}:/app/data"

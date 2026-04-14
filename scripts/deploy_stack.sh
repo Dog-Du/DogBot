@@ -37,6 +37,52 @@ require_env() {
   fi
 }
 
+print_compose_failure_hint() {
+  local stderr_file="$1"
+  local stderr_output=""
+  if [[ -f "$stderr_file" ]]; then
+    stderr_output="$(cat "$stderr_file")"
+  fi
+
+  echo >&2
+  echo "Docker Compose up failed." >&2
+  if [[ -n "$stderr_output" ]]; then
+    echo "Original error:" >&2
+    echo "$stderr_output" >&2
+  fi
+
+  if grep -Eqi \
+    'pull access denied|failed to resolve reference|manifest unknown|context deadline exceeded|proxyconnect|TLS handshake timeout|i/o timeout|connection refused|Get \"https://registry-1.docker.io|Get \"https://auth.docker.io' \
+    <<<"$stderr_output"; then
+    echo >&2
+    echo "Hint: image pull appears to have failed." >&2
+    echo "Check Docker Hub connectivity first, especially your proxy / Docker Hub outbound access." >&2
+  fi
+}
+
+run_compose_up() {
+  local compose_file="$1"
+  shift
+  local stderr_file
+  stderr_file="$(mktemp)"
+
+  if [[ "$compose_cmd" == "docker compose" ]]; then
+    if ! docker compose --env-file "$env_file" -f "$compose_file" up -d "$@" 2> >(tee "$stderr_file" >&2); then
+      print_compose_failure_hint "$stderr_file"
+      rm -f "$stderr_file"
+      exit 1
+    fi
+  else
+    if ! docker-compose --env-file "$env_file" -f "$compose_file" up -d "$@" 2> >(tee "$stderr_file" >&2); then
+      print_compose_failure_hint "$stderr_file"
+      rm -f "$stderr_file"
+      exit 1
+    fi
+  fi
+
+  rm -f "$stderr_file"
+}
+
 if ! compose_cmd="$(resolve_compose_cmd)"; then
   echo "Docker Compose is not available." >&2
   echo "Install 'docker compose' plugin or 'docker-compose' first." >&2
@@ -56,26 +102,16 @@ mkdir -p \
 
 "$repo_root/scripts/start_agent_runner.sh" "$env_file"
 
-if [[ "$compose_cmd" == "docker compose" ]]; then
-  docker compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" up -d claude-runner
-  docker compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" up -d napcat astrbot
-else
-  docker-compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" up -d claude-runner
-  docker-compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" up -d napcat astrbot
-fi
+run_compose_up "$repo_root/compose/docker-compose.yml" claude-runner
+run_compose_up "$repo_root/compose/platform-stack.yml" napcat astrbot
 
 if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
   require_env WECHATPADPRO_IMAGE
   require_env WECHATPADPRO_ADMIN_KEY
   require_env WECHATPADPRO_MYSQL_ROOT_PASSWORD
   require_env WECHATPADPRO_MYSQL_PASSWORD
-  require_env WECHATPADPRO_REDIS_PASSWORD
 
-  if [[ "$compose_cmd" == "docker compose" ]]; then
-    docker compose --env-file "$env_file" -f "$repo_root/compose/wechatpadpro-stack.yml" up -d
-  else
-    docker-compose --env-file "$env_file" -f "$repo_root/compose/wechatpadpro-stack.yml" up -d
-  fi
+  run_compose_up "$repo_root/compose/wechatpadpro-stack.yml"
 fi
 
 if [[ "${APPLY_NETWORK_POLICY:-1}" == "1" ]]; then
