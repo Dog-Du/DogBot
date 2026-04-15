@@ -1,23 +1,18 @@
 # DogBot
 
-`DogBot` 是一个面向个人账号机器人的多平台 Agent 工程，当前已经落地两条接入链路：
+`DogBot` 是一个面向个人账号机器人的多平台 Agent 项目。
 
-- `QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner`
+当前已经落地两条接入链路：
+
+- `QQ -> NapCat -> AstrBot -> claude_runner_bridge -> agent-runner -> claude-runner`
 - `微信 -> WeChatPadPro -> wechatpadpro-adapter -> agent-runner -> claude-runner`
 
-其中：
+目标：
 
-- `agent-runner` 使用 Rust 编写，负责 Docker 容器管理、超时、限流、会话、消息回发和内置上游代理
-- `claude-runner` 在 Docker 中运行 Claude Code CLI
-- 真实模型密钥只保留在宿主机，不进入 Claude 容器
-
-## 项目目标
-
-这个仓库优先解决三件事：
-
-1. 把 CLI Agent 放进 Docker，限制 CPU、内存、进程数和宿主机暴露面
-2. 用统一的宿主机控制层管理超时、队列、限流和会话
-3. 让 QQ / 微信等不同平台都能复用同一套 Agent 执行后端
+1. 资源控制：把 CLI Agent 放进 Docker，限制 CPU、内存、进程数和宿主机暴露面，用统一的宿主机控制层管理超时、队列、限流、会话和消息回发。
+2. 多平台接入：接入 QQ、微信、飞书等多平台
+3. 易用性：开箱即用的体验，运行脚本即可一键部署
+4. 上下文管理：为 Agent 提供 memory、skills、system prompt 等内容
 
 ## 当前架构
 
