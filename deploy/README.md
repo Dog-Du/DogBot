@@ -22,8 +22,7 @@
 ```text
 QQ
 -> NapCat
--> AstrBot
--> claude_runner_bridge
+-> qq-adapter
 -> agent-runner
 -> claude-runner
 -> agent-runner 内置上游代理
@@ -49,7 +48,7 @@ QQ
 - `uv`
   - 用来运行 Python 相关脚本、适配器和测试
 - `Docker Engine`
-  - 用来运行 `claude-runner`、`NapCat`、`AstrBot`、`WeChatPadPro`
+  - 用来运行 `claude-runner`、`NapCat`、`WeChatPadPro`
 - `Docker Compose v2`
   - 用来编排多个容器栈
 - `Rust` / `cargo`
@@ -122,11 +121,13 @@ newgrp docker
 - `compose/docker-compose.yml`
   - `claude-runner` 容器定义
 - `compose/platform-stack.yml`
-  - `napcat` / `astrbot` 容器定义
+  - `napcat` 容器定义
 - `compose/wechatpadpro-stack.yml`
   - `wechatpadpro` / MySQL / Redis 容器定义
 - `scripts/start_agent_runner.sh`
   - 启动宿主机 `agent-runner`
+- `scripts/start_qq_adapter.sh`
+  - 启动宿主机 QQ 适配器
 - `scripts/start_wechatpadpro_adapter.sh`
   - 启动宿主机微信适配器
 
@@ -230,7 +231,7 @@ SESSION_DB_PATH=/srv/agent-state/runner.db
   - Claude 会话状态
   - SQLite 数据库
   - 日志
-  - NapCat / AstrBot / WeChatPadPro 状态
+  - NapCat / WeChatPadPro 状态
 
 如果你改这些路径，旧会话和旧状态看起来会像“丢了”。
 
@@ -245,7 +246,7 @@ API_PROXY_AUTH_TOKEN=local-proxy-token
 
 说明：
 
-- `AGENT_RUNNER_BIND_ADDR` 给 AstrBot / 微信 adapter 调用
+- `AGENT_RUNNER_BIND_ADDR` 给 QQ / 微信 adapter 调用
 - `API_PROXY_BIND_ADDR` 给 Docker 里的 Claude 调用
 - `API_PROXY_BIND_ADDR` 不能绑到 `127.0.0.1`，否则 Docker 内访问不到
 - `API_PROXY_AUTH_TOKEN` 不是上游真实 key，只是本地代理 token
@@ -269,7 +270,7 @@ API_PROXY_UPSTREAM_AUTH_HEADER=x-api-key
 - `API_PROXY_UPSTREAM_AUTH_HEADER` 和 `API_PROXY_UPSTREAM_AUTH_SCHEME` 用来适配上游鉴权方式
 - `API_PROXY_UPSTREAM_MODEL` 可选，填写后会覆盖请求体里的模型名
 
-## 5. NapCat 配置
+## 6. NapCat 配置
 
 ### 5.1 WebUI
 
@@ -289,12 +290,12 @@ http://127.0.0.1:6099
 
 ### 5.3 反向 WebSocket
 
-当前工程要求 `NapCat` 把 OneBot 事件推给 `AstrBot`。
+当前工程要求 `NapCat` 把 OneBot 事件推给宿主机上的 `qq-adapter`。
 
 目标地址：
 
 ```text
-ws://astrbot:6199/ws
+ws://host.docker.internal:19000/napcat/ws
 ```
 
 这部分现在由脚本自动写入：
@@ -303,24 +304,28 @@ ws://astrbot:6199/ws
 
 正常情况下不需要你手动改容器内配置。
 
-## 6. AstrBot 配置
+## 7. QQ adapter 配置
 
-### 6.1 WebUI
-
-默认地址：
+QQ 不再经过 AstrBot，而是：
 
 ```text
-http://127.0.0.1:6185
+NapCat -> qq-adapter -> agent-runner
 ```
 
-### 6.2 QQ 机器人
+适配器启动脚本：
 
-在 AstrBot 里创建 `OneBot v11` 机器人，关键配置：
+- `scripts/start_qq_adapter.sh`
 
-- 反向 WebSocket 主机：`0.0.0.0`
-- 反向 WebSocket 端口：`6199`
+关键配置：
 
-### 6.3 触发规则
+```env
+QQ_ADAPTER_BIND_ADDR=0.0.0.0:19000
+QQ_ADAPTER_QQ_BOT_ID=你的QQ号
+QQ_ADAPTER_COMMAND_NAME=agent
+QQ_ADAPTER_STATUS_COMMAND_NAME=agent-status
+```
+
+## 8. 触发规则
 
 当前项目统一规则如下：
 
@@ -330,7 +335,7 @@ http://127.0.0.1:6185
 - 微信群聊：必须 `@机器人名 + /agent ...`
 - `/agent-status` 保留
 
-## 7. WeChatPadPro 配置
+## 9. WeChatPadPro 配置
 
 ### 7.1 启用
 
@@ -356,9 +361,9 @@ ENABLE_WECHATPADPRO=1
 - 把二维码图片和元信息写到：
   - `WECHATPADPRO_LOGIN_OUTPUT_DIR`
 
-### 7.4 微信适配器
+### 9.4 微信适配器
 
-微信不经过 AstrBot，而是：
+微信不经过任何额外编排层，而是：
 
 ```text
 WeChatPadPro -> wechatpadpro-adapter -> agent-runner
@@ -368,7 +373,7 @@ WeChatPadPro -> wechatpadpro-adapter -> agent-runner
 
 - `scripts/start_wechatpadpro_adapter.sh`
 
-## 8. Docker 资源限制
+## 10. Docker 资源限制
 
 关键字段：
 
@@ -385,7 +390,7 @@ CLAUDE_CONTAINER_PIDS_LIMIT=256
 - `disk=50` 只是目标值，不一定是宿主机上的硬限制
 - 如果宿主机文件系统不支持 Docker 层磁盘配额，仍需要宿主机级别的限额方案
 
-## 9. 如何修改 API key 和模型
+## 11. 如何修改 API key 和模型
 
 ### 9.1 改 key
 

@@ -26,18 +26,18 @@ fi
 
 NAPCAT_CONTAINER_NAME="${NAPCAT_CONTAINER_NAME:-napcat}"
 NAPCAT_CONFIG_DIR="${NAPCAT_CONFIG_DIR:-$ROOT_DIR/agent-state/napcat-config}"
-NAPCAT_WS_CLIENT_URL="${NAPCAT_WS_CLIENT_URL:-ws://astrbot:6199/ws}"
+NAPCAT_WS_CLIENT_URL="${NAPCAT_WS_CLIENT_URL:-ws://host.docker.internal:19000/napcat/ws}"
 NAPCAT_WS_CLIENT_TOKEN="${NAPCAT_WS_CLIENT_TOKEN:-}"
 NAPCAT_WS_CLIENT_RECONNECT_MS="${NAPCAT_WS_CLIENT_RECONNECT_MS:-1000}"
 NAPCAT_WS_CLIENT_HEART_MS="${NAPCAT_WS_CLIENT_HEART_MS:-1000}"
-CLAUDE_BRIDGE_QQ_BOT_ID="${CLAUDE_BRIDGE_QQ_BOT_ID:-}"
+QQ_ADAPTER_QQ_BOT_ID="${QQ_ADAPTER_QQ_BOT_ID:-}"
 
-if [[ -z "$CLAUDE_BRIDGE_QQ_BOT_ID" ]]; then
-  echo "CLAUDE_BRIDGE_QQ_BOT_ID is required to configure NapCat websocket client" >&2
+if [[ -z "$QQ_ADAPTER_QQ_BOT_ID" ]]; then
+  echo "QQ_ADAPTER_QQ_BOT_ID is required to configure NapCat websocket client" >&2
   exit 1
 fi
 
-CONFIG_FILE="$NAPCAT_CONFIG_DIR/onebot11_${CLAUDE_BRIDGE_QQ_BOT_ID}.json"
+CONFIG_FILE="$NAPCAT_CONFIG_DIR/onebot11_${QQ_ADAPTER_QQ_BOT_ID}.json"
 mkdir -p "$NAPCAT_CONFIG_DIR"
 
 uv run python - <<PY
@@ -55,7 +55,7 @@ for key in ("httpServers", "httpSseServers", "httpClients", "websocketServers", 
     network.setdefault(key, [])
 
 network["websocketClients"] = [{
-    "name": "astrbot",
+    "name": "qq-adapter",
     "enable": True,
     "url": ${NAPCAT_WS_CLIENT_URL@Q},
     "reportSelfMessage": False,

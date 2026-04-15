@@ -7,7 +7,7 @@
 - `docker-compose.yml`
   - 定义 `claude-runner`
 - `platform-stack.yml`
-  - 定义 `napcat` 和当前遗留的 `astrbot`
+  - 定义 `napcat`
 - `wechatpadpro-stack.yml`
   - 定义 `wechatpadpro`、`mysql`、`redis`
 

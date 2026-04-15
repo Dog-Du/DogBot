@@ -148,7 +148,6 @@ mkdir -p \
   "${AGENT_STATE_DIR:-/srv/agent-state}" \
   "${NAPCAT_QQ_DIR:-/srv/napcat/qq}" \
   "${NAPCAT_CONFIG_DIR:-/srv/napcat/config}" \
-  "${ASTRBOT_DATA_DIR:-/srv/astrbot/data}" \
   "${WECHATPADPRO_DATA_DIR:-/srv/wechatpadpro/data}" \
   "${WECHATPADPRO_MYSQL_DIR:-/srv/wechatpadpro/mysql}" \
   "${WECHATPADPRO_REDIS_DIR:-/srv/wechatpadpro/redis}" \
@@ -161,7 +160,9 @@ dogbot_save_runtime_state "$runtime_state_file"
 run_compose_up "$repo_root/compose/docker-compose.yml" claude-runner
 
 if [[ "${ENABLE_QQ}" == "1" ]]; then
-  run_compose_up "$repo_root/compose/platform-stack.yml" napcat astrbot
+  dogbot_require_env QQ_ADAPTER_QQ_BOT_ID
+  "$repo_root/scripts/start_qq_adapter.sh" "$env_file"
+  run_compose_up "$repo_root/compose/platform-stack.yml" napcat
   "$repo_root/scripts/configure_napcat_ws.sh" "$env_file"
   "$repo_root/scripts/prepare_napcat_login.sh" "$env_file"
 fi
@@ -200,7 +201,7 @@ fi
 echo "Deployment finished."
 if [[ "${ENABLE_QQ}" == "1" ]]; then
   echo "NapCat WebUI: http://127.0.0.1:${NAPCAT_WEBUI_PORT:-6099}"
-  echo "AstrBot WebUI: http://127.0.0.1:${ASTRBOT_WEBUI_PORT:-6185}"
+  echo "QQ adapter: http://${QQ_ADAPTER_BIND_ADDR:-127.0.0.1:19000}"
 fi
 if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
   echo "WeChatPadPro API: http://127.0.0.1:${WECHATPADPRO_HOST_PORT:-38849}"

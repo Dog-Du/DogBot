@@ -4,7 +4,7 @@
 
 当前已经落地两条接入链路：
 
-- `QQ -> NapCat -> AstrBot -> claude_runner_bridge -> agent-runner -> claude-runner`
+- `QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner`
 - `微信 -> WeChatPadPro -> wechatpadpro-adapter -> agent-runner -> claude-runner`
 
 目标：
@@ -19,8 +19,7 @@
 ```text
 QQ
 -> NapCat
--> AstrBot
--> claude_runner_bridge
+-> qq-adapter
 -> agent-runner
 -> claude-runner 容器
 -> agent-runner 内置上游代理
@@ -43,11 +42,11 @@ QQ
 ├── stop_stack.sh                # 根目录停止入口
 ├── README.md
 ├── agent-runner/                 # Rust 核心服务
-├── astrbot/                      # AstrBot 插件
 ├── compose/                      # Docker Compose 编排
 │   └── README.md                 # 高级用户的 compose 说明
 ├── deploy/                       # 配置模板与部署说明
 ├── docker/claude-runner/         # Claude 容器镜像
+├── qq_adapter/                   # 宿主机 QQ 适配器
 ├── scripts/                      # 启停、配置、诊断脚本
 ├── wechatpadpro_adapter/         # 宿主机微信适配器
 └── docs/                         # 设计文档
@@ -92,7 +91,7 @@ QQ
 - `uv`
   - 用来运行 Python 工具和测试
 - `Docker Engine`
-  - 用来运行 `claude-runner`、`NapCat`、`AstrBot`、`WeChatPadPro`
+  - 用来运行 `claude-runner`、`NapCat`、`WeChatPadPro`
 - `Docker Compose v2`
   - 用来启动各个容器栈
 - `Rust` / `cargo`
@@ -127,9 +126,9 @@ QQ
 - [ ] 历史消息持久化
   - 对 QQ、微信等平台的消息做统一入库
   - 为后续上下文补全、长期记忆、检索和审计提供基础
-- [ ] 去除 AstrBot，改为轻量 Python adapter
-  - 让 QQ 也走与微信类似的薄适配层
-  - 收敛平台接入逻辑，减少额外抽象层
+- [ ] 清理 AstrBot 遗留
+  - 删除不再使用的插件和部署残留
+  - 彻底收敛到双 adapter 架构
 - [ ] Agent 内容管理与记忆管理
   - 对 `skill`、`memory`、`system prompt` 等内容做结构化管理
   - 减少上下文污染，提升长期可维护性

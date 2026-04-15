@@ -44,6 +44,15 @@ if [[ -f "$pid_file" ]]; then
   rm -f "$pid_file"
 fi
 
+qq_adapter_pid_file="${QQ_ADAPTER_PID_FILE:-${AGENT_STATE_DIR:-/srv/agent-state}/qq-adapter.pid}"
+if [[ -f "$qq_adapter_pid_file" ]]; then
+  pid="$(cat "$qq_adapter_pid_file")"
+  if kill -0 "$pid" >/dev/null 2>&1; then
+    kill "$pid"
+  fi
+  rm -f "$qq_adapter_pid_file"
+fi
+
 wechatpadpro_adapter_pid_file="${WECHATPADPRO_ADAPTER_PID_FILE:-${AGENT_STATE_DIR:-/srv/agent-state}/wechatpadpro-adapter.pid}"
 if [[ -f "$wechatpadpro_adapter_pid_file" ]]; then
   pid="$(cat "$wechatpadpro_adapter_pid_file")"
@@ -53,6 +62,7 @@ if [[ -f "$wechatpadpro_adapter_pid_file" ]]; then
   rm -f "$wechatpadpro_adapter_pid_file"
 fi
 
+pkill -f 'uvicorn qq_adapter.app:create_app' >/dev/null 2>&1 || true
 pkill -f 'uvicorn wechatpadpro_adapter.app:create_app' >/dev/null 2>&1 || true
 
 if [[ "${APPLY_NETWORK_POLICY:-1}" == "1" ]]; then
