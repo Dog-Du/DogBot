@@ -35,6 +35,8 @@
 - `2026-04-13-qq-agent-design.md`
 - `2026-04-14-wechatpadpro-integration-design.md`
 - `2026-04-14-wechatpadpro-adapter-design.md`
+- `2026-04-15-usability-cleanup-design.md`
+- `2026-04-15-code-cleanup-design.md`
 
 ### 实施计划
 

@@ -3,33 +3,11 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-default_env_file="$repo_root/deploy/dogbot.env"
-if [[ $# -ge 1 ]]; then
-  env_file="$1"
-else
-  env_file="$default_env_file"
-fi
-
-resolve_uv_bin() {
-  if command -v uv >/dev/null 2>&1; then
-    command -v uv
-    return 0
-  fi
-
-  echo "uv not found. Please install uv first." >&2
-  return 1
-}
-
-if [[ ! -f "$env_file" ]]; then
-  echo "Missing env file: $env_file" >&2
-  exit 1
-fi
-
-set -a
-source "$env_file"
-set +a
-
-uv_bin="$(resolve_uv_bin)"
+# shellcheck source=./lib/common.sh
+source "$script_dir/lib/common.sh"
+env_file="$(dogbot_resolve_env_file "${1:-}")"
+dogbot_load_env_file "$env_file"
+uv_bin="$(dogbot_resolve_uv_bin)"
 
 if [[ "${ENABLE_WECHATPADPRO:-0}" != "1" ]]; then
   echo "WeChatPadPro is disabled; skip login preparation."

@@ -3,21 +3,10 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-default_env_file="$repo_root/deploy/dogbot.env"
-if [[ $# -ge 1 ]]; then
-  env_file="$1"
-else
-  env_file="$default_env_file"
-fi
-
-if [[ ! -f "$env_file" ]]; then
-  echo "Missing env file: $env_file" >&2
-  exit 1
-fi
-
-set -a
-source "$env_file"
-set +a
+# shellcheck source=./lib/common.sh
+source "$script_dir/lib/common.sh"
+env_file="$(dogbot_resolve_env_file "${1:-}")"
+dogbot_load_env_file "$env_file"
 
 if [[ "${ENABLE_WECHATPADPRO:-0}" != "1" ]]; then
   echo "WeChatPadPro is disabled; skip webhook configuration."

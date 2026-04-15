@@ -3,37 +3,13 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-default_env_file="$repo_root/deploy/dogbot.env"
-if [[ $# -ge 1 ]]; then
-  env_file="$1"
-else
-  env_file="$default_env_file"
-fi
+# shellcheck source=./lib/common.sh
+source "$script_dir/lib/common.sh"
 
-resolve_compose_cmd() {
-  if docker compose version >/dev/null 2>&1; then
-    echo "docker compose"
-    return 0
-  fi
+env_file="$(dogbot_resolve_env_file "${1:-}")"
+dogbot_load_env_file "$env_file"
 
-  if command -v docker-compose >/dev/null 2>&1; then
-    echo "docker-compose"
-    return 0
-  fi
-
-  return 1
-}
-
-if [[ ! -f "$env_file" ]]; then
-  echo "Missing env file: $env_file" >&2
-  exit 1
-fi
-
-set -a
-source "$env_file"
-set +a
-
-if ! compose_cmd="$(resolve_compose_cmd)"; then
+if ! compose_cmd="$(dogbot_resolve_compose_cmd)"; then
   echo "Docker Compose is not available." >&2
   echo "Install 'docker compose' plugin or 'docker-compose' first." >&2
   exit 1

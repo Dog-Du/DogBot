@@ -26,15 +26,15 @@ def test_webhook_probe_supports_head_and_get():
 def test_webhook_accepts_agent_command_payload(monkeypatch):
     calls = {}
 
-    async def fake_run(*args, **kwargs):
+    async def fake_run(self, payload):
         calls["run"] = True
         return {"stdout": "hello from runner", "stderr": ""}
 
-    async def fake_send(*args, **kwargs):
+    async def fake_send(self, event, result):
         calls["send"] = True
 
-    monkeypatch.setattr("wechatpadpro_adapter.app.run_agent", fake_run)
-    monkeypatch.setattr("wechatpadpro_adapter.app.send_reply", fake_send)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.run_agent", fake_run)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.send_reply", fake_send)
 
     app = create_app()
     client = TestClient(app)
@@ -59,15 +59,15 @@ def test_webhook_accepts_agent_command_payload(monkeypatch):
 def test_webhook_ignores_text_without_agent_command_by_default(monkeypatch):
     calls = {}
 
-    async def fake_run(*args, **kwargs):
+    async def fake_run(self, payload):
         calls["run"] = True
         return {"stdout": "hello from runner", "stderr": ""}
 
-    async def fake_send(*args, **kwargs):
+    async def fake_send(self, event, result):
         calls["send"] = True
 
-    monkeypatch.setattr("wechatpadpro_adapter.app.run_agent", fake_run)
-    monkeypatch.setattr("wechatpadpro_adapter.app.send_reply", fake_send)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.run_agent", fake_run)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.send_reply", fake_send)
 
     app = create_app()
     client = TestClient(app)
@@ -93,16 +93,16 @@ def test_webhook_accepts_plain_text_when_prefix_not_required(
 ):
     calls = {}
 
-    async def fake_run(*args, **kwargs):
+    async def fake_run(self, payload):
         calls["run"] = True
         return {"stdout": "hello from runner", "stderr": ""}
 
-    async def fake_send(*args, **kwargs):
+    async def fake_send(self, event, result):
         calls["send"] = True
 
     monkeypatch.setenv("WECHATPADPRO_REQUIRE_COMMAND_PREFIX", "0")
-    monkeypatch.setattr("wechatpadpro_adapter.app.run_agent", fake_run)
-    monkeypatch.setattr("wechatpadpro_adapter.app.send_reply", fake_send)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.run_agent", fake_run)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.send_reply", fake_send)
 
     app = create_app()
     client = TestClient(app)
@@ -126,16 +126,16 @@ def test_webhook_accepts_plain_text_when_prefix_not_required(
 def test_webhook_strips_agent_prefix_before_runner(monkeypatch):
     calls = {}
 
-    async def fake_run(_runner, payload, _settings):
+    async def fake_run(self, payload):
         calls["prompt"] = payload["message"]["content"]
         return {"stdout": "hello from runner", "stderr": ""}
 
-    async def fake_send(*args, **kwargs):
+    async def fake_send(self, event, result):
         calls["send"] = True
 
     monkeypatch.setenv("WECHATPADPRO_REQUIRE_COMMAND_PREFIX", "1")
-    monkeypatch.setattr("wechatpadpro_adapter.app.run_agent", fake_run)
-    monkeypatch.setattr("wechatpadpro_adapter.app.send_reply", fake_send)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.run_agent", fake_run)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.send_reply", fake_send)
 
     app = create_app()
     client = TestClient(app)
@@ -159,16 +159,16 @@ def test_webhook_strips_agent_prefix_before_runner(monkeypatch):
 def test_webhook_accepts_group_mention_before_agent_command(monkeypatch):
     calls = {}
 
-    async def fake_run(_runner, payload, _settings):
+    async def fake_run(self, payload):
         calls["prompt"] = payload["message"]["content"]
         return {"stdout": "hello from runner", "stderr": ""}
 
-    async def fake_send(*args, **kwargs):
+    async def fake_send(self, event, result):
         calls["send"] = True
 
     monkeypatch.setenv("WECHATPADPRO_REQUIRE_COMMAND_PREFIX", "1")
-    monkeypatch.setattr("wechatpadpro_adapter.app.run_agent", fake_run)
-    monkeypatch.setattr("wechatpadpro_adapter.app.send_reply", fake_send)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.run_agent", fake_run)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.send_reply", fake_send)
 
     app = create_app()
     client = TestClient(app)
@@ -194,18 +194,18 @@ def test_webhook_accepts_group_mention_before_agent_command(monkeypatch):
 def test_webhook_ignores_group_agent_command_without_mention(monkeypatch):
     calls = {}
 
-    async def fake_run(*args, **kwargs):
+    async def fake_run(self, payload):
         calls["run"] = True
         return {"stdout": "hello from runner", "stderr": ""}
 
-    async def fake_send(*args, **kwargs):
+    async def fake_send(self, event, result):
         calls["send"] = True
 
     monkeypatch.setenv("WECHATPADPRO_REQUIRE_COMMAND_PREFIX", "1")
     monkeypatch.setenv("WECHATPADPRO_REQUIRE_MENTION_IN_GROUP", "1")
     monkeypatch.setenv("WECHATPADPRO_BOT_MENTION_NAMES", "DogDu,%&*#")
-    monkeypatch.setattr("wechatpadpro_adapter.app.run_agent", fake_run)
-    monkeypatch.setattr("wechatpadpro_adapter.app.send_reply", fake_send)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.run_agent", fake_run)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.send_reply", fake_send)
 
     app = create_app()
     client = TestClient(app)
@@ -235,11 +235,11 @@ def test_webhook_status_command_replies_without_runner_execution(monkeypatch):
         calls["healthz"] = True
         return {"status": "ok"}
 
-    async def fake_send(_wechat, _event, result):
+    async def fake_send(self, event, result):
         calls["reply"] = result["stdout"]
 
     monkeypatch.setattr("wechatpadpro_adapter.runner_client.AgentRunnerClient.healthz", fake_healthz)
-    monkeypatch.setattr("wechatpadpro_adapter.app.send_reply", fake_send)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.send_reply", fake_send)
 
     app = create_app()
     client = TestClient(app)
@@ -260,6 +260,26 @@ def test_webhook_status_command_replies_without_runner_execution(monkeypatch):
     assert calls == {"healthz": True, "reply": "agent-runner ok"}
 
 
+def test_webhook_rejects_invalid_signature(monkeypatch):
+    monkeypatch.setenv("WECHATPADPRO_WEBHOOK_SECRET", "top-secret")
+    app = create_app()
+    client = TestClient(app)
+    response = client.post(
+        "/wechatpadpro/events",
+        headers={"X-Signature": "invalid"},
+        json={
+            "event_type": "message",
+            "message": {
+                "msgType": 1,
+                "content": "/agent hi",
+                "fromUserName": "wxid_user",
+            },
+        },
+    )
+
+    assert response.status_code == 401
+
+
 def test_webhook_ignores_non_message_event():
     app = create_app()
     client = TestClient(app)
@@ -274,15 +294,15 @@ def test_webhook_ignores_non_message_event():
 def test_webhook_ignores_control_message_type_51(monkeypatch):
     calls = {}
 
-    async def fake_run(*args, **kwargs):
+    async def fake_run(self, payload):
         calls["run"] = True
         return {"stdout": "hello from runner", "stderr": ""}
 
-    async def fake_send(*args, **kwargs):
+    async def fake_send(self, event, result):
         calls["send"] = True
 
-    monkeypatch.setattr("wechatpadpro_adapter.app.run_agent", fake_run)
-    monkeypatch.setattr("wechatpadpro_adapter.app.send_reply", fake_send)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.run_agent", fake_run)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.send_reply", fake_send)
 
     app = create_app()
     client = TestClient(app)
@@ -306,15 +326,15 @@ def test_webhook_ignores_control_message_type_51(monkeypatch):
 def test_webhook_deduplicates_same_message_id(monkeypatch):
     calls = {"run": 0, "send": 0}
 
-    async def fake_run(*args, **kwargs):
+    async def fake_run(self, payload):
         calls["run"] += 1
         return {"stdout": "hello from runner", "stderr": ""}
 
-    async def fake_send(*args, **kwargs):
+    async def fake_send(self, event, result):
         calls["send"] += 1
 
-    monkeypatch.setattr("wechatpadpro_adapter.app.run_agent", fake_run)
-    monkeypatch.setattr("wechatpadpro_adapter.app.send_reply", fake_send)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.run_agent", fake_run)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.send_reply", fake_send)
 
     app = create_app()
     client = TestClient(app)

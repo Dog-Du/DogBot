@@ -3,6 +3,8 @@ use std::env;
 
 use thiserror::Error;
 
+use crate::env_helpers::{optional_trimmed, string_or_default};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiProxySettings {
     pub bind_addr: String,
@@ -33,57 +35,26 @@ impl ApiProxySettings {
 
     pub fn from_env_map(env_map: HashMap<String, String>) -> Result<Self, ConfigError> {
         Ok(Self {
-            bind_addr: env_map
-                .get("API_PROXY_BIND_ADDR")
-                .cloned()
-                .unwrap_or_else(|| "0.0.0.0:9000".to_string()),
-            local_auth_token: normalize_optional_env(
-                env_map.get("API_PROXY_AUTH_TOKEN").cloned(),
-                "local-proxy-token",
-            ),
+            bind_addr: string_or_default(&env_map, "API_PROXY_BIND_ADDR", "0.0.0.0:9000"),
+            local_auth_token: optional_trimmed(&env_map, "API_PROXY_AUTH_TOKEN")
+                .unwrap_or_else(|| "local-proxy-token".to_string()),
             upstream: parse_upstream(&env_map)?,
         })
     }
 }
 
 fn parse_upstream(env_map: &HashMap<String, String>) -> Result<ProviderConfig, ConfigError> {
-    let base_url = env_map
-        .get("API_PROXY_UPSTREAM_BASE_URL")
-        .and_then(|value| trim_to_option(value))
-        .ok_or(ConfigError::MissingUpstream)?;
-    let upstream_token = env_map
-        .get("API_PROXY_UPSTREAM_TOKEN")
-        .and_then(|value| trim_to_option(value))
-        .ok_or(ConfigError::MissingUpstream)?;
+    let base_url =
+        optional_trimmed(env_map, "API_PROXY_UPSTREAM_BASE_URL").ok_or(ConfigError::MissingUpstream)?;
+    let upstream_token =
+        optional_trimmed(env_map, "API_PROXY_UPSTREAM_TOKEN").ok_or(ConfigError::MissingUpstream)?;
 
     Ok(ProviderConfig {
         base_url,
         upstream_token,
-        upstream_auth_header: normalize_optional_env(
-            env_map.get("API_PROXY_UPSTREAM_AUTH_HEADER").cloned(),
-            "x-api-key",
-        ),
-        upstream_auth_scheme: env_map
-            .get("API_PROXY_UPSTREAM_AUTH_SCHEME")
-            .and_then(|value| trim_to_option(value)),
-        model: env_map
-            .get("API_PROXY_UPSTREAM_MODEL")
-            .and_then(|value| trim_to_option(value)),
+        upstream_auth_header: optional_trimmed(env_map, "API_PROXY_UPSTREAM_AUTH_HEADER")
+            .unwrap_or_else(|| "x-api-key".to_string()),
+        upstream_auth_scheme: optional_trimmed(env_map, "API_PROXY_UPSTREAM_AUTH_SCHEME"),
+        model: optional_trimmed(env_map, "API_PROXY_UPSTREAM_MODEL"),
     })
-}
-
-fn normalize_optional_env(value: Option<String>, default: &str) -> String {
-    match value.and_then(|value| trim_to_option(&value)) {
-        Some(value) => value,
-        None => default.to_string(),
-    }
-}
-
-fn trim_to_option(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
 }

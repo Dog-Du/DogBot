@@ -3,12 +3,9 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-default_env_file="$repo_root/deploy/dogbot.env"
-if [[ $# -ge 1 ]]; then
-  env_file="$1"
-else
-  env_file="$default_env_file"
-fi
+# shellcheck source=./lib/common.sh
+source "$script_dir/lib/common.sh"
+env_file="$(dogbot_resolve_env_file "${1:-}")"
 
 resolve_rust_user_home() {
   local rust_user
@@ -32,14 +29,7 @@ resolve_cargo_bin() {
   return 1
 }
 
-if [[ ! -f "$env_file" ]]; then
-  echo "Missing env file: $env_file" >&2
-  exit 1
-fi
-
-set -a
-source "$env_file"
-set +a
+dogbot_load_env_file "$env_file"
 
 if ! cargo_bin="$(resolve_cargo_bin)"; then
   echo "cargo not found. Install Rust toolchain for the current user first." >&2

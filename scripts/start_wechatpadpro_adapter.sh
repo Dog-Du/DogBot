@@ -3,21 +3,10 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-default_env_file="$repo_root/deploy/dogbot.env"
-if [[ $# -ge 1 ]]; then
-  env_file="$1"
-else
-  env_file="$default_env_file"
-fi
-
-if [[ ! -f "$env_file" ]]; then
-  echo "Missing env file: $env_file" >&2
-  exit 1
-fi
-
-set -a
-source "$env_file"
-set +a
+# shellcheck source=./lib/common.sh
+source "$script_dir/lib/common.sh"
+env_file="$(dogbot_resolve_env_file "${1:-}")"
+dogbot_load_env_file "$env_file"
 
 log_dir="${WECHATPADPRO_ADAPTER_LOG_DIR:-${AGENT_STATE_DIR:-/srv/agent-state}/logs}"
 pid_file="${WECHATPADPRO_ADAPTER_PID_FILE:-${AGENT_STATE_DIR:-/srv/agent-state}/wechatpadpro-adapter.pid}"
@@ -50,31 +39,7 @@ if existing_pid="$(find_listener_pid "$port")" && [[ -n "${existing_pid:-}" ]]; 
   exit 0
 fi
 
-resolve_uv() {
-  if command -v uv >/dev/null 2>&1; then
-    command -v uv
-    return 0
-  fi
-
-  if [[ -n "${SUDO_USER:-}" ]]; then
-    local sudo_home
-    sudo_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
-    if [[ -n "$sudo_home" && -x "$sudo_home/.local/bin/uv" ]]; then
-      echo "$sudo_home/.local/bin/uv"
-      return 0
-    fi
-  fi
-
-  if [[ -x "$HOME/.local/bin/uv" ]]; then
-    echo "$HOME/.local/bin/uv"
-    return 0
-  fi
-
-  return 1
-}
-
-if ! uv_bin="$(resolve_uv)"; then
-  echo "uv not found. Install uv or make sure it is available in PATH." >&2
+if ! uv_bin="$(dogbot_resolve_uv_bin)"; then
   exit 1
 fi
 

@@ -3,44 +3,17 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-default_env_file="$repo_root/deploy/dogbot.env"
-if [[ $# -ge 1 ]]; then
-  env_file="$1"
-else
-  env_file="$default_env_file"
-fi
+# shellcheck source=./lib/common.sh
+source "$script_dir/lib/common.sh"
 
-resolve_compose_cmd() {
-  if docker compose version >/dev/null 2>&1; then
-    echo "docker compose"
-    return 0
-  fi
-
-  if command -v docker-compose >/dev/null 2>&1; then
-    echo "docker-compose"
-    return 0
-  fi
-
-  return 1
-}
-
-if [[ ! -f "$env_file" ]]; then
+env_file="$(dogbot_resolve_env_file "${1:-}")"
+if ! dogbot_require_env_file "$env_file"; then
   echo "Missing env file: $env_file" >&2
   echo "请先复制 deploy/dogbot.env.example 为 deploy/dogbot.env，并完成本地配置。" >&2
   exit 1
 fi
 
-set -a
-source "$env_file"
-set +a
-
-require_env() {
-  local key="$1"
-  if [[ -z "${!key:-}" ]]; then
-    echo "Missing required environment variable: $key" >&2
-    exit 1
-  fi
-}
+dogbot_load_env_file "$env_file"
 
 print_compose_failure_hint() {
   local stderr_file="$1"
@@ -88,7 +61,7 @@ run_compose_up() {
   rm -f "$stderr_file"
 }
 
-if ! compose_cmd="$(resolve_compose_cmd)"; then
+if ! compose_cmd="$(dogbot_resolve_compose_cmd)"; then
   echo "Docker Compose is not available." >&2
   echo "Install 'docker compose' plugin or 'docker-compose' first." >&2
   exit 1
@@ -112,10 +85,10 @@ run_compose_up "$repo_root/compose/platform-stack.yml" napcat astrbot
 "$repo_root/scripts/configure_napcat_ws.sh" "$env_file"
 
 if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
-  require_env WECHATPADPRO_IMAGE
-  require_env WECHATPADPRO_ADMIN_KEY
-  require_env WECHATPADPRO_MYSQL_ROOT_PASSWORD
-  require_env WECHATPADPRO_MYSQL_PASSWORD
+  dogbot_require_env WECHATPADPRO_IMAGE
+  dogbot_require_env WECHATPADPRO_ADMIN_KEY
+  dogbot_require_env WECHATPADPRO_MYSQL_ROOT_PASSWORD
+  dogbot_require_env WECHATPADPRO_MYSQL_PASSWORD
 
   run_compose_up "$repo_root/compose/wechatpadpro-stack.yml"
   "$repo_root/scripts/start_wechatpadpro_adapter.sh" "$env_file"

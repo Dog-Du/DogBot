@@ -112,7 +112,7 @@ QQ
 - [ ] Agent 内容管理与记忆管理
   - 对 `skill`、`memory`、`system prompt` 等内容做结构化管理
   - 减少上下文污染，提升长期可维护性
-- [ ] 支持 `Codex`、`OpenCode`
+- [ ] 支持 `Codex`、`OpenCode` 等
   - 除 Claude Code 外，扩展更多 CLI Agent 后端
   - 保持统一的运行、会话和资源限制边界
 - [ ] 易用性整理

@@ -3,6 +3,8 @@ use std::env;
 
 use thiserror::Error;
 
+use crate::env_helpers::{optional_trimmed, parse_or_default, string_or_default};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     pub bind_addr: String,
@@ -43,67 +45,39 @@ impl Settings {
     }
 
     pub fn from_env_map(env_map: HashMap<String, String>) -> Result<Self, ConfigError> {
-        let bind_addr = env_map
-            .get("BIND_ADDR")
-            .cloned()
-            .unwrap_or_else(|| "127.0.0.1:8787".to_string());
-        let default_timeout_secs = parse_u64(&env_map, "DEFAULT_TIMEOUT_SECS", 120)?;
-        let max_timeout_secs = parse_u64(&env_map, "MAX_TIMEOUT_SECS", 300)?;
-        let container_name = env_map
-            .get("CLAUDE_CONTAINER_NAME")
-            .cloned()
-            .unwrap_or_else(|| "claude-runner".to_string());
-        let image_name = env_map
-            .get("CLAUDE_IMAGE_NAME")
-            .cloned()
-            .unwrap_or_else(|| "dogbot/claude-runner:local".to_string());
-        let workspace_dir = env_map
-            .get("AGENT_WORKSPACE_DIR")
-            .cloned()
-            .unwrap_or_else(|| "/srv/agent-workdir".to_string());
-        let state_dir = env_map
-            .get("AGENT_STATE_DIR")
-            .cloned()
-            .unwrap_or_else(|| "/srv/agent-state".to_string());
-        let anthropic_base_url = env_map
-            .get("ANTHROPIC_BASE_URL")
-            .cloned()
-            .unwrap_or_else(|| "http://host.docker.internal:9000".to_string());
-        let api_proxy_auth_token = env_map
-            .get("API_PROXY_AUTH_TOKEN")
-            .cloned()
-            .and_then(normalize_optional_env)
+        let bind_addr = string_or_default(&env_map, "BIND_ADDR", "127.0.0.1:8787");
+        let default_timeout_secs = parse_or_default(&env_map, "DEFAULT_TIMEOUT_SECS", 120)?;
+        let max_timeout_secs = parse_or_default(&env_map, "MAX_TIMEOUT_SECS", 300)?;
+        let container_name =
+            string_or_default(&env_map, "CLAUDE_CONTAINER_NAME", "claude-runner");
+        let image_name =
+            string_or_default(&env_map, "CLAUDE_IMAGE_NAME", "dogbot/claude-runner:local");
+        let workspace_dir = string_or_default(&env_map, "AGENT_WORKSPACE_DIR", "/srv/agent-workdir");
+        let state_dir = string_or_default(&env_map, "AGENT_STATE_DIR", "/srv/agent-state");
+        let anthropic_base_url =
+            string_or_default(&env_map, "ANTHROPIC_BASE_URL", "http://host.docker.internal:9000");
+        let api_proxy_auth_token = optional_trimmed(&env_map, "API_PROXY_AUTH_TOKEN")
             .unwrap_or_else(|| "local-proxy-token".to_string());
-        let max_concurrent_runs = parse_usize(&env_map, "MAX_CONCURRENT_RUNS", 10)?;
-        let napcat_api_base_url = env_map
-            .get("NAPCAT_API_BASE_URL")
-            .cloned()
-            .unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
-        let napcat_access_token = env_map
-            .get("NAPCAT_ACCESS_TOKEN")
-            .cloned()
-            .and_then(|value| {
-                let trimmed = value.trim().to_string();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed)
-                }
-            });
-        let max_queue_depth = parse_usize(&env_map, "MAX_QUEUE_DEPTH", 20)?;
+        let max_concurrent_runs = parse_or_default(&env_map, "MAX_CONCURRENT_RUNS", 10)?;
+        let napcat_api_base_url =
+            string_or_default(&env_map, "NAPCAT_API_BASE_URL", "http://127.0.0.1:3001");
+        let napcat_access_token = optional_trimmed(&env_map, "NAPCAT_ACCESS_TOKEN");
+        let max_queue_depth = parse_or_default(&env_map, "MAX_QUEUE_DEPTH", 20)?;
         let global_rate_limit_per_minute =
-            parse_usize(&env_map, "GLOBAL_RATE_LIMIT_PER_MINUTE", 10)?;
-        let user_rate_limit_per_minute = parse_usize(&env_map, "USER_RATE_LIMIT_PER_MINUTE", 3)?;
+            parse_or_default(&env_map, "GLOBAL_RATE_LIMIT_PER_MINUTE", 10)?;
+        let user_rate_limit_per_minute =
+            parse_or_default(&env_map, "USER_RATE_LIMIT_PER_MINUTE", 3)?;
         let conversation_rate_limit_per_minute =
-            parse_usize(&env_map, "CONVERSATION_RATE_LIMIT_PER_MINUTE", 5)?;
-        let session_db_path = env_map
-            .get("SESSION_DB_PATH")
-            .cloned()
+            parse_or_default(&env_map, "CONVERSATION_RATE_LIMIT_PER_MINUTE", 5)?;
+        let session_db_path = optional_trimmed(&env_map, "SESSION_DB_PATH")
             .unwrap_or_else(|| format!("{state_dir}/runner.db"));
-        let container_cpu_cores = parse_u64(&env_map, "CLAUDE_CONTAINER_CPU_CORES", 4)?;
-        let container_memory_mb = parse_u64(&env_map, "CLAUDE_CONTAINER_MEMORY_MB", 4096)?;
-        let container_disk_gb = parse_u64(&env_map, "CLAUDE_CONTAINER_DISK_GB", 50)?;
-        let container_pids_limit = parse_i64(&env_map, "CLAUDE_CONTAINER_PIDS_LIMIT", 256)?;
+        let container_cpu_cores =
+            parse_or_default(&env_map, "CLAUDE_CONTAINER_CPU_CORES", 4)?;
+        let container_memory_mb =
+            parse_or_default(&env_map, "CLAUDE_CONTAINER_MEMORY_MB", 4096)?;
+        let container_disk_gb = parse_or_default(&env_map, "CLAUDE_CONTAINER_DISK_GB", 50)?;
+        let container_pids_limit =
+            parse_or_default(&env_map, "CLAUDE_CONTAINER_PIDS_LIMIT", 256)?;
 
         if default_timeout_secs > max_timeout_secs {
             return Err(ConfigError::InvalidTimeoutBounds);
@@ -132,47 +106,5 @@ impl Settings {
             container_disk_gb,
             container_pids_limit,
         })
-    }
-}
-
-fn parse_u64(
-    env_map: &HashMap<String, String>,
-    key: &'static str,
-    default: u64,
-) -> Result<u64, ConfigError> {
-    match env_map.get(key) {
-        Some(raw) => raw.parse().map_err(|_| ConfigError::InvalidInt(key)),
-        None => Ok(default),
-    }
-}
-
-fn parse_usize(
-    env_map: &HashMap<String, String>,
-    key: &'static str,
-    default: usize,
-) -> Result<usize, ConfigError> {
-    match env_map.get(key) {
-        Some(raw) => raw.parse().map_err(|_| ConfigError::InvalidInt(key)),
-        None => Ok(default),
-    }
-}
-
-fn parse_i64(
-    env_map: &HashMap<String, String>,
-    key: &'static str,
-    default: i64,
-) -> Result<i64, ConfigError> {
-    match env_map.get(key) {
-        Some(raw) => raw.parse().map_err(|_| ConfigError::InvalidInt(key)),
-        None => Ok(default),
-    }
-}
-
-fn normalize_optional_env(value: String) -> Option<String> {
-    let trimmed = value.trim().to_string();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
     }
 }
