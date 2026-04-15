@@ -28,16 +28,16 @@ QQ
 -> claude_runner_bridge
 -> agent-runner
 -> claude-runner 容器
--> agent-runner 内置 Anthropic 兼容代理
--> Packy / GLM / MiniMax 等上游
+-> agent-runner 内置上游代理
+-> Claude 协议模型源
 
 微信
 -> WeChatPadPro
 -> wechatpadpro-adapter
 -> agent-runner
 -> claude-runner 容器
--> agent-runner 内置 Anthropic 兼容代理
--> Packy / GLM / MiniMax 等上游
+-> agent-runner 内置上游代理
+-> Claude 协议模型源
 ```
 
 ## 仓库结构
@@ -59,11 +59,11 @@ QQ
 
 完整部署说明见：
 
-- [deploy/README.md](/home/dogdu/workspace/myQQbot/deploy/README.md)
+- `deploy/README.md`
 
 默认配置模板见：
 
-- [deploy/dogbot.env.example](/home/dogdu/workspace/myQQbot/deploy/dogbot.env.example)
+- `deploy/dogbot.env.example`
 
 ## 部署依赖
 
@@ -88,11 +88,7 @@ QQ
 
 ### 必需外部条件
 
-- 一个可用的 `Claude / Anthropic 协议兼容模型源`
-  - 例如：
-    - `Claude`
-    - `GLM` 官方 Anthropic 兼容入口
-    - `MiniMax` 官方 Anthropic 兼容入口
+- 一个可用的 `Claude 协议模型源`
 - 至少一个机器人接入平台
   - QQ：需要 `NapCat` 可登录的个人 QQ 号
   - 微信：需要 `WeChatPadPro` 可登录的个人微信号

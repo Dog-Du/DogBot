@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use agent_runner::api_proxy::build_test_app;
-use agent_runner::api_proxy_config::{ApiProxySettings, ProviderConfig, ProviderKind};
+use agent_runner::api_proxy_config::{ApiProxySettings, ProviderConfig};
 use axum::{
     Router,
     body::{Body, to_bytes},
@@ -17,22 +17,26 @@ use tower::ServiceExt;
 #[test]
 fn settings_require_only_local_proxy_token_for_claude_container() {
     let settings = ApiProxySettings::from_env_map(HashMap::from([
-        ("API_PROXY_ACTIVE_PROVIDER".into(), "packy".into()),
-        ("API_PROXY_PACKY_BASE_URL".into(), "https://www.packyapi.com".into()),
-        ("API_PROXY_PACKY_UPSTREAM_TOKEN".into(), "packy-secret".into()),
+        (
+            "API_PROXY_UPSTREAM_BASE_URL".into(),
+            "https://upstream.example.com".into(),
+        ),
+        (
+            "API_PROXY_UPSTREAM_TOKEN".into(),
+            "upstream-secret".into(),
+        ),
     ]))
     .unwrap();
 
     assert_eq!(settings.local_auth_token, "local-proxy-token");
-    assert_eq!(settings.active_provider, ProviderKind::Packy);
     assert_eq!(
-        settings.active_provider_config().unwrap().upstream_token,
-        "packy-secret".to_string()
+        settings.upstream.upstream_token,
+        "upstream-secret".to_string()
     );
 }
 
 #[tokio::test]
-async fn proxy_rewrites_model_and_auth_for_active_provider() {
+async fn proxy_rewrites_model_and_auth_for_upstream() {
     let captured = Arc::new(Mutex::new(None::<CapturedRequest>));
     let upstream_app = upstream_router(captured.clone());
 
@@ -45,16 +49,13 @@ async fn proxy_rewrites_model_and_auth_for_active_provider() {
     let settings = ApiProxySettings {
         bind_addr: "127.0.0.1:9000".into(),
         local_auth_token: "local-proxy-token".into(),
-        active_provider: ProviderKind::Packy,
-        packy: Some(ProviderConfig {
+        upstream: ProviderConfig {
             base_url: format!("http://{upstream_addr}"),
-            upstream_token: "packy-secret".into(),
+            upstream_token: "upstream-secret".into(),
             upstream_auth_header: "x-api-key".into(),
             upstream_auth_scheme: None,
-            model: Some("packy-model".into()),
-        }),
-        glm_official: None,
-        minimax_official: None,
+            model: Some("upstream-model".into()),
+        },
     };
 
     let app = build_test_app(settings);
@@ -82,21 +83,26 @@ async fn proxy_rewrites_model_and_auth_for_active_provider() {
     assert_eq!(forwarded.path, "/v1/messages");
     assert_eq!(
         forwarded.headers.get("x-api-key").map(String::as_str),
-        Some("packy-secret")
+        Some("upstream-secret")
     );
     assert_eq!(
         forwarded.headers.get("content-type").map(String::as_str),
         Some("application/json")
     );
-    assert_eq!(forwarded.body["model"], "packy-model");
+    assert_eq!(forwarded.body["model"], "upstream-model");
 }
 
 #[tokio::test]
 async fn proxy_rejects_invalid_local_auth_token() {
     let settings = ApiProxySettings::from_env_map(HashMap::from([
-        ("API_PROXY_ACTIVE_PROVIDER".into(), "packy".into()),
-        ("API_PROXY_PACKY_BASE_URL".into(), "https://www.packyapi.com".into()),
-        ("API_PROXY_PACKY_UPSTREAM_TOKEN".into(), "packy-secret".into()),
+        (
+            "API_PROXY_UPSTREAM_BASE_URL".into(),
+            "https://upstream.example.com".into(),
+        ),
+        (
+            "API_PROXY_UPSTREAM_TOKEN".into(),
+            "upstream-secret".into(),
+        ),
     ]))
     .unwrap();
     let app = build_test_app(settings);

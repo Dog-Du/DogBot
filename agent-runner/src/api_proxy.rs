@@ -44,16 +44,7 @@ async fn proxy_request(
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
 
-    let provider = match state.settings.active_provider_config() {
-        Some(provider) => provider,
-        None => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "active provider config missing",
-            )
-                .into_response();
-        }
-    };
+    let provider = &state.settings.upstream;
 
     let url = format!(
         "{}{}",

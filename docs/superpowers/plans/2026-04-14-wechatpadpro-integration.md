@@ -100,7 +100,7 @@ git commit -m "feat: add WeChatPadPro compose stack"
 ### Task 2: Extend env template and deploy scripts
 
 **Files:**
-- Modify: `deploy/myqqbot.env.example`
+- Modify: `deploy/dogbot.env.example`
 - Modify: `scripts/deploy_stack.sh`
 - Modify: `scripts/stop_stack.sh`
 
@@ -171,7 +171,7 @@ Expected: no output, zero exit code
 - [ ] **Step 5: Commit**
 
 ```bash
-git add deploy/myqqbot.env.example scripts/deploy_stack.sh scripts/stop_stack.sh
+git add deploy/dogbot.env.example scripts/deploy_stack.sh scripts/stop_stack.sh
 git commit -m "feat: add optional WeChatPadPro deploy controls"
 ```
 
@@ -239,14 +239,14 @@ Notes:
 - [ ] **Step 5: Verify documentation references**
 
 Run:
-- `rg -n "WeChatPadPro|wechatpadpro" README.md deploy/README.md deploy/myqqbot.env.example`
+- `rg -n "WeChatPadPro|wechatpadpro" README.md deploy/README.md deploy/dogbot.env.example`
 
 Expected: entries appear in all three files
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add README.md deploy/README.md deploy/myqqbot.env.example
+git add README.md deploy/README.md deploy/dogbot.env.example
 git commit -m "docs: add WeChatPadPro deployment guide"
 ```
 

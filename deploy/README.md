@@ -11,7 +11,7 @@ QQ
 -> claude_runner_bridge
 -> agent-runner
 -> claude-runner
--> agent-runner 内置 Anthropic 兼容代理
+-> agent-runner 内置上游代理
 -> 上游模型服务
 
 微信
@@ -19,7 +19,7 @@ QQ
 -> wechatpadpro-adapter
 -> agent-runner
 -> claude-runner
--> agent-runner 内置 Anthropic 兼容代理
+-> agent-runner 内置上游代理
 -> 上游模型服务
 ```
 
@@ -46,15 +46,9 @@ QQ
 
 ### 1.2 必需外部条件
 
-- 一个可用的 `Claude / Anthropic 协议兼容模型源`
-  - 当前 Docker 内的 Claude Code 只能直接使用：
-    - `Anthropic-compatible`
-    - 或 `Claude-compatible`
-    的接口
-  - 例如：
-    - `PackyAPI` 的 Claude 兼容入口
-    - `GLM` 官方 Anthropic 兼容入口
-    - `MiniMax` 官方 Anthropic 兼容入口
+- 一个可用的 `Claude 协议模型源`
+  - 当前 Docker 内的 Claude Code 只能直接使用 Claude 协议接口
+  - 你需要自行提供可用的上游地址和对应 key
 - 至少一个可登录的平台账号
   - QQ：个人 QQ 号，供 `NapCat` 登录
   - 微信：个人微信号，供 `WeChatPadPro` 登录
@@ -84,7 +78,7 @@ newgrp docker
 
 ### 1.5 重要说明
 
-- 不能把只兼容 OpenAI 的 `base_url` 直接给当前 Docker 内的 Claude Code 使用
+- 不能把 OpenAI 协议地址直接给当前 Docker 内的 Claude Code 使用
 - 真实上游 key 只应保留在宿主机，不能直接注入 `claude-runner` 容器
 - 当前工程已经把真实 key 隔离在宿主机 `agent-runner` 的内置代理里
 
@@ -92,25 +86,23 @@ newgrp docker
 
 最重要的配置和脚本如下：
 
-- [deploy/dogbot.env.example](/home/dogdu/workspace/myQQbot/deploy/dogbot.env.example)
+- `deploy/dogbot.env.example`
   - 默认配置模板
 - `deploy/dogbot.env`
   - 你自己的实际部署配置
-- `deploy/myqqbot.env`
-  - 旧文件名，仍兼容，但建议迁移到 `dogbot.env`
-- [compose/docker-compose.yml](/home/dogdu/workspace/myQQbot/compose/docker-compose.yml)
+- `compose/docker-compose.yml`
   - `claude-runner` 容器定义
-- [compose/platform-stack.yml](/home/dogdu/workspace/myQQbot/compose/platform-stack.yml)
+- `compose/platform-stack.yml`
   - `napcat` / `astrbot` 容器定义
-- [compose/wechatpadpro-stack.yml](/home/dogdu/workspace/myQQbot/compose/wechatpadpro-stack.yml)
+- `compose/wechatpadpro-stack.yml`
   - `wechatpadpro` / MySQL / Redis 容器定义
-- [scripts/deploy_stack.sh](/home/dogdu/workspace/myQQbot/scripts/deploy_stack.sh)
+- `scripts/deploy_stack.sh`
   - 一键启动
-- [scripts/stop_stack.sh](/home/dogdu/workspace/myQQbot/scripts/stop_stack.sh)
+- `scripts/stop_stack.sh`
   - 一键停止
-- [scripts/start_agent_runner.sh](/home/dogdu/workspace/myQQbot/scripts/start_agent_runner.sh)
+- `scripts/start_agent_runner.sh`
   - 启动宿主机 `agent-runner`
-- [scripts/start_wechatpadpro_adapter.sh](/home/dogdu/workspace/myQQbot/scripts/start_wechatpadpro_adapter.sh)
+- `scripts/start_wechatpadpro_adapter.sh`
   - 启动宿主机微信适配器
 
 ## 3. 快速开始
@@ -119,12 +111,6 @@ newgrp docker
 
 ```bash
 cp deploy/dogbot.env.example deploy/dogbot.env
-```
-
-如果你仍然沿用旧名字，也可以：
-
-```bash
-cp deploy/dogbot.env.example deploy/myqqbot.env
 ```
 
 ### 3.2 编辑配置文件
@@ -159,7 +145,7 @@ sudo ./scripts/deploy_stack.sh deploy/dogbot.env
 
 推荐使用：
 
-- [deploy/dogbot.env.example](/home/dogdu/workspace/myQQbot/deploy/dogbot.env.example)
+- `deploy/dogbot.env.example`
 
 模板里已经为每个字段补了中文注释。下面只强调最重要的几组。
 
@@ -212,32 +198,24 @@ API_PROXY_AUTH_TOKEN=local-proxy-token
 - `API_PROXY_BIND_ADDR` 不能绑到 `127.0.0.1`，否则 Docker 内访问不到
 - `API_PROXY_AUTH_TOKEN` 不是上游真实 key，只是本地代理 token
 
-### 4.4 上游 provider 配置
+### 4.4 上游配置
 
-当前支持的思路是：
-
-- `packy`
-- `glm_official`
-- `minimax_official`
-
-例如：
+当前只保留一套 Claude 协议上游配置：
 
 ```env
-API_PROXY_ACTIVE_PROVIDER=packy
-API_PROXY_PACKY_BASE_URL=https://www.packyapi.com
-API_PROXY_PACKY_UPSTREAM_TOKEN=你的真实token
-API_PROXY_PACKY_AUTH_HEADER=x-api-key
+API_PROXY_UPSTREAM_BASE_URL=https://example.com
+API_PROXY_UPSTREAM_TOKEN=你的真实 token
+API_PROXY_UPSTREAM_AUTH_HEADER=x-api-key
+# API_PROXY_UPSTREAM_AUTH_SCHEME=
+# API_PROXY_UPSTREAM_MODEL=
 ```
 
-切换到 GLM 时，改成：
+说明：
 
-```env
-API_PROXY_ACTIVE_PROVIDER=glm_official
-API_PROXY_GLM_BASE_URL=https://open.bigmodel.cn/api/anthropic
-API_PROXY_GLM_UPSTREAM_TOKEN=你的GLM key
-API_PROXY_GLM_AUTH_HEADER=Authorization
-API_PROXY_GLM_AUTH_SCHEME=Bearer
-```
+- `API_PROXY_UPSTREAM_BASE_URL` 是 Claude 容器最终访问的模型源地址
+- `API_PROXY_UPSTREAM_TOKEN` 是真实上游 key，只保留在宿主机
+- `API_PROXY_UPSTREAM_AUTH_HEADER` 和 `API_PROXY_UPSTREAM_AUTH_SCHEME` 用来适配上游鉴权方式
+- `API_PROXY_UPSTREAM_MODEL` 可选，填写后会覆盖请求体里的模型名
 
 ## 5. NapCat 配置
 
@@ -266,7 +244,7 @@ ws://astrbot:6199/ws
 
 这部分现在由脚本自动写入：
 
-- [scripts/configure_napcat_ws.sh](/home/dogdu/workspace/myQQbot/scripts/configure_napcat_ws.sh)
+- `scripts/configure_napcat_ws.sh`
 
 正常情况下不需要你手动改容器内配置。
 
@@ -332,7 +310,7 @@ WeChatPadPro -> wechatpadpro-adapter -> agent-runner
 
 适配器启动脚本：
 
-- [scripts/start_wechatpadpro_adapter.sh](/home/dogdu/workspace/myQQbot/scripts/start_wechatpadpro_adapter.sh)
+- `scripts/start_wechatpadpro_adapter.sh`
 
 ## 8. Docker 资源限制
 
@@ -355,24 +333,18 @@ CLAUDE_CONTAINER_PIDS_LIMIT=256
 
 ### 9.1 改 key
 
-直接修改你的真实环境文件，例如：
+直接修改你的真实环境文件：
 
 ```env
-API_PROXY_PACKY_UPSTREAM_TOKEN=新的token
+API_PROXY_UPSTREAM_TOKEN=新的 token
 ```
 
-或：
+### 9.2 改模型源地址
+
+如果要切到另一个模型源，改这里：
 
 ```env
-API_PROXY_GLM_UPSTREAM_TOKEN=新的token
-```
-
-### 9.2 改 provider
-
-例如切到 GLM：
-
-```env
-API_PROXY_ACTIVE_PROVIDER=glm_official
+API_PROXY_UPSTREAM_BASE_URL=https://example.com
 ```
 
 ### 9.3 改模型
@@ -380,9 +352,7 @@ API_PROXY_ACTIVE_PROVIDER=glm_official
 如果上游支持模型字段：
 
 ```env
-API_PROXY_PACKY_MODEL=xxx
-API_PROXY_GLM_MODEL=xxx
-API_PROXY_MINIMAX_MODEL=xxx
+API_PROXY_UPSTREAM_MODEL=xxx
 ```
 
 ### 9.4 重新生效
@@ -396,11 +366,9 @@ sudo ./scripts/deploy_stack.sh deploy/dogbot.env
 
 ## 10. 需要特别注意的事情
 
-### 10.1 只能使用 Claude / Anthropic 兼容的 Base URL
+### 10.1 只能使用 Claude 协议的 Base URL
 
-现在 Docker 里的 Claude Code 调用的是：
-
-- Anthropic Messages 兼容接口
+现在 Docker 里的 Claude Code 调用的是 Claude 协议接口。
 
 所以你必须给它配置：
 
@@ -409,7 +377,7 @@ sudo ./scripts/deploy_stack.sh deploy/dogbot.env
 
 的上游地址。
 
-不能把只兼容 OpenAI 的地址直接塞给 Claude Code。
+不能把 OpenAI 协议地址直接塞给 Claude Code。
 
 ### 10.2 真实 key 不进 Docker
 
@@ -465,13 +433,8 @@ curl http://127.0.0.1:8787/healthz
   --text "hello from cron"
 ```
 
-## 12. 兼容说明
+## 12. 环境文件
 
-当前仓库已经把项目名统一成 `DogBot`，但为了不把现有环境直接改坏：
-
-- 脚本优先读取 `deploy/dogbot.env`
-- 若不存在，会自动回退到 `deploy/myqqbot.env`
-
-建议你后续逐步把本地配置迁移到：
+当前仓库统一使用：
 
 - `deploy/dogbot.env`

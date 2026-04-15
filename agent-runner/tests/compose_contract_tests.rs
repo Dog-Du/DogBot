@@ -27,7 +27,7 @@ fn compose_defines_required_claude_runner_limits() {
         "/var/run/docker.sock",
         "/root",
         "/home",
-        "PACKYAPI_KEY",
+        "API_PROXY_UPSTREAM_TOKEN",
         "MINIMAX_API_KEY",
     ];
 

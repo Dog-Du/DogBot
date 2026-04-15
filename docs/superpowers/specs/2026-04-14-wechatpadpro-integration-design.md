@@ -145,7 +145,7 @@ Exact origin strings should continue to come from AstrBot when available. The br
 
 ## Security
 
-- Real model-provider API keys stay on the host in `deploy/myqqbot.env`.
+- Real model-provider API keys stay on the host in `deploy/dogbot.env`.
 - `WeChatPadPro` credentials are separate from model-provider keys.
 - `claude-runner` continues to receive only the local proxy token.
 - No new host-sensitive mounts are exposed to the Claude container.
@@ -157,7 +157,7 @@ Implementation should verify:
 
 - deployment files parse cleanly
 - deploy scripts create WeChatPadPro directories when enabled
-- `myqqbot.env.example` contains all required WeChatPadPro fields
+- `dogbot.env.example` contains all required WeChatPadPro fields
 - structure checks still pass
 - Rust tests still pass unchanged
 

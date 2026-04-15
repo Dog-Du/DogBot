@@ -32,7 +32,7 @@ QQ Personal Account
   -> agent-runner (Rust, host service)
   -> claude-runner container
   -> local api-proxy on host
-  -> PackyAPI / MiniMax
+  -> custom compatible upstream / MiniMax
 ```
 
 ## Component Responsibilities
@@ -80,9 +80,9 @@ This service is the policy boundary for execution safety.
 ### api-proxy
 
 - runs on the host, not in the CLI container
-- stores `PACKYAPI_KEY` or direct `MINIMAX_API_KEY`
-- exposes an Anthropic-compatible endpoint for Claude CLI
-- can later expose an OpenAI-compatible endpoint for other clients
+- stores the real upstream API key
+- exposes a Claude protocol endpoint for Claude CLI
+- can later expose another protocol endpoint for other clients
 
 This prevents prompt injection from directly reading the real key from the CLI runtime.
 The first-pass network boundary is: the Claude container may reach the host `api-proxy` and arbitrary outbound internet, but must not rely on any other host-local service. On Linux hosts this is enforced with host firewall rules that match the Claude container source IP and reject traffic to other host-local addresses.
@@ -103,7 +103,7 @@ The first-pass network boundary is: the Claude container may reach the host `api
 4. Plugin sends the request to `agent-runner`.
 5. `agent-runner` ensures the Claude container is ready.
 6. `agent-runner` executes `claude` in the container with the configured workspace.
-7. Claude CLI calls the host `api-proxy`, which forwards to PackyAPI or MiniMax.
+7. Claude CLI calls the host `api-proxy`, which forwards to the configured upstream.
 8. `agent-runner` returns normalized output to AstrBot.
 9. AstrBot formats the result and replies through NapCat.
 
@@ -198,7 +198,7 @@ Allowed pattern:
 
 Disallowed pattern:
 
-- putting `PACKYAPI_KEY` or `MINIMAX_API_KEY` in the Claude container environment
+- putting the real upstream key in the Claude container environment
 - storing keys in `/workspace`
 - passing keys through prompts
 
