@@ -3,7 +3,14 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-env_file="${MYQQBOT_ENV_FILE:-$repo_root/deploy/myqqbot.env}"
+env_file="${DOGBOT_ENV_FILE:-${MYQQBOT_ENV_FILE:-}}"
+if [[ -z "$env_file" ]]; then
+  if [[ -f "$repo_root/deploy/dogbot.env" ]]; then
+    env_file="$repo_root/deploy/dogbot.env"
+  else
+    env_file="$repo_root/deploy/myqqbot.env"
+  fi
+fi
 
 usage() {
   cat <<'EOF'

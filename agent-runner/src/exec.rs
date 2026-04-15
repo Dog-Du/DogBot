@@ -71,12 +71,44 @@ impl ExecutionBackend for DockerRunner {
             })?;
 
         let started = Instant::now();
+        let first = self
+            .execute_once(&request.prompt, &validated, &session)
+            .await?;
+
+        if should_retry_with_fresh_session(&first, session.is_new) {
+            let reset_session = self
+                .session_store
+                .reset_session(
+                    &request.session_id,
+                    &request.platform,
+                    &request.conversation_id,
+                    &request.user_id,
+                )
+                .map_err(map_session_store_error)?;
+
+            let retried = self
+                .execute_once(&request.prompt, &validated, &reset_session)
+                .await?;
+            return Ok(with_duration(retried, started.elapsed().as_millis()));
+        }
+
+        Ok(with_duration(first, started.elapsed().as_millis()))
+    }
+}
+
+impl DockerRunner {
+    async fn execute_once(
+        &self,
+        prompt: &str,
+        validated: &ValidatedRunRequest,
+        session: &crate::session_store::SessionRecord,
+    ) -> Result<RunResponse, ErrorResponse> {
         let exec = self
             .runtime
             .create_claude_exec(
                 &self.container_spec.container_name,
                 &validated.cwd,
-                build_claude_command(&request.prompt, &session.claude_session_id, session.is_new),
+                build_claude_command(prompt, &session.claude_session_id, session.is_new),
             )
             .await
             .map_err(|err| ErrorResponse {
@@ -99,7 +131,7 @@ impl ExecutionBackend for DockerRunner {
                 stderr,
                 exit_code,
                 timed_out: false,
-                duration_ms: started.elapsed().as_millis(),
+                duration_ms: 0,
             }),
             Ok(Err(err)) => Err(ErrorResponse {
                 status: "error".into(),
@@ -132,6 +164,25 @@ impl ExecutionBackend for DockerRunner {
             }
         }
     }
+}
+
+fn with_duration(mut response: RunResponse, duration_ms: u128) -> RunResponse {
+    response.duration_ms = duration_ms;
+    response
+}
+
+fn should_retry_with_fresh_session(response: &RunResponse, is_new_session: bool) -> bool {
+    if is_new_session || response.timed_out || response.exit_code != 0 {
+        return false;
+    }
+
+    let stdout = response.stdout.trim();
+    let stderr = response.stderr.trim();
+    looks_like_missing_session(stdout) || looks_like_missing_session(stderr)
+}
+
+fn looks_like_missing_session(text: &str) -> bool {
+    text.contains("No conversation found with session ID:")
 }
 
 fn build_claude_command(
@@ -175,7 +226,8 @@ fn map_session_store_error(err: SessionStoreError) -> ErrorResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::build_claude_command;
+    use super::{build_claude_command, should_retry_with_fresh_session};
+    use crate::models::RunResponse;
 
     #[test]
     fn build_claude_command_uses_session_id_for_new_sessions() {
@@ -213,5 +265,33 @@ mod tests {
                 "hello".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn detects_missing_session_message_in_stdout() {
+        let response = RunResponse {
+            status: "ok".into(),
+            stdout: "No conversation found with session ID: abc".into(),
+            stderr: String::new(),
+            exit_code: 0,
+            timed_out: false,
+            duration_ms: 0,
+        };
+
+        assert!(should_retry_with_fresh_session(&response, false));
+    }
+
+    #[test]
+    fn does_not_retry_when_session_is_new() {
+        let response = RunResponse {
+            status: "ok".into(),
+            stdout: "No conversation found with session ID: abc".into(),
+            stderr: String::new(),
+            exit_code: 0,
+            timed_out: false,
+            duration_ms: 0,
+        };
+
+        assert!(!should_retry_with_fresh_session(&response, true));
     }
 }

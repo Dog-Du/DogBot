@@ -126,6 +126,48 @@ impl SessionStore {
         self.fetch_session(&conn, external_session_id)
     }
 
+    pub fn reset_session(
+        &self,
+        external_session_id: &str,
+        platform: &str,
+        conversation_id: &str,
+        user_id: &str,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        let conn = self.open_connection()?;
+        let now = epoch_now();
+        let existing = self
+            .fetch_session(&conn, external_session_id)?
+            .ok_or_else(|| SessionStoreError::SessionConflict {
+                external_session_id: external_session_id.to_string(),
+                platform: platform.to_string(),
+                conversation_id: conversation_id.to_string(),
+                user_id: user_id.to_string(),
+            })?;
+
+        ensure_session_identity(&existing, platform, conversation_id, user_id)?;
+
+        let claude_session_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "UPDATE sessions
+             SET claude_session_id = ?1,
+                 created_at_epoch_secs = ?2,
+                 last_used_at_epoch_secs = ?2
+             WHERE external_session_id = ?3",
+            params![claude_session_id, now, external_session_id],
+        )?;
+
+        Ok(SessionRecord {
+            external_session_id: external_session_id.to_string(),
+            claude_session_id,
+            platform: platform.to_string(),
+            conversation_id: conversation_id.to_string(),
+            user_id: user_id.to_string(),
+            created_at_epoch_secs: now,
+            last_used_at_epoch_secs: now,
+            is_new: true,
+        })
+    }
+
     fn initialize(&self) -> Result<(), SessionStoreError> {
         let conn = self.open_connection()?;
         conn.execute_batch(

@@ -1,65 +1,46 @@
-# Deployment Guide
+# DogBot 部署说明
 
-This document describes the current deployable stack in this repository:
+本文档说明如何部署当前仓库里的 `DogBot`。
+
+当前支持两条主要链路：
 
 ```text
 QQ
 -> NapCat
 -> AstrBot
+-> claude_runner_bridge
 -> agent-runner
--> claude-runner (Docker)
--> agent-runner built-in Anthropic-compatible proxy
--> upstream provider (Packy / GLM / MiniMax official)
-```
+-> claude-runner
+-> agent-runner 内置 Anthropic 兼容代理
+-> 上游模型服务
 
-Optional WeChat path:
-
-```text
-WeChat
--> WeChatPadPro
--> wechatpadpro-adapter
--> agent-runner
--> claude-runner (Docker)
--> agent-runner built-in Anthropic-compatible proxy
--> upstream provider
-```
-
-When AstrBot is not used for WeChat, the repository can run:
-
-```text
-WeChat
+微信
 -> WeChatPadPro
 -> wechatpadpro-adapter
 -> agent-runner
 -> claude-runner
+-> agent-runner 内置 Anthropic 兼容代理
+-> 上游模型服务
 ```
 
-Important boundary:
+## 1. 宿主机依赖
 
-- real upstream API keys stay on the host
-- the Docker Claude container does not receive real provider keys
-- the Docker Claude container only receives:
-  - `ANTHROPIC_BASE_URL=http://host.docker.internal:<proxy_port>`
-  - `ANTHROPIC_AUTH_TOKEN=<local proxy token>`
-
-## 1. Host Requirements
-
-Required on the host:
+必需：
 
 - Linux
 - Docker Engine
 - Docker Compose v2
-- Rust toolchain with `cargo`
+- Rust 工具链（`cargo`）
 - `uv`
 - `curl`
 - `sudo`
 
-Recommended:
+推荐：
 
 - `git`
 - `rg`
 
-Quick checks:
+快速检查：
 
 ```bash
 docker --version
@@ -68,140 +49,105 @@ cargo --version
 uv --version
 ```
 
-If your current user cannot access Docker, either:
+如果当前用户不能直接访问 Docker，可以：
 
 ```bash
 sudo usermod -aG docker "$USER"
 newgrp docker
 ```
 
-or run deploy commands with `sudo`.
+或者直接在部署命令前加 `sudo`。
 
-## 2. Important Files
+## 2. 重要文件
 
-The main files you need to know:
+最重要的配置和脚本如下：
 
-- `deploy/myqqbot.env.example`
-  - environment template
+- [deploy/dogbot.env.example](/home/dogdu/workspace/myQQbot/deploy/dogbot.env.example)
+  - 默认配置模板
+- `deploy/dogbot.env`
+  - 你自己的实际部署配置
 - `deploy/myqqbot.env`
-  - your real local deployment config
-- `compose/docker-compose.yml`
-  - Claude container definition
-- `compose/platform-stack.yml`
-  - NapCat and AstrBot containers
-- `compose/wechatpadpro-stack.yml`
-  - optional WeChatPadPro, MySQL, and Redis containers
-- `docker/claude-runner/Dockerfile`
-  - Claude image build
-- `astrbot/plugins/claude_runner_bridge/main.py`
-  - AstrBot bridge plugin
-- `scripts/deploy_stack.sh`
-  - full start script
-- `scripts/stop_stack.sh`
-  - full stop script
-- `scripts/send_session_message.sh`
-  - host-local proactive send helper
-- `scripts/start_wechatpadpro_adapter.sh`
-  - host-local WeChatPadPro adapter startup script
-- `scripts/prepare_wechatpadpro_login.sh`
-  - ensures a WeChatPadPro account key exists and prints QR login output
+  - 旧文件名，仍兼容，但建议迁移到 `dogbot.env`
+- [compose/docker-compose.yml](/home/dogdu/workspace/myQQbot/compose/docker-compose.yml)
+  - `claude-runner` 容器定义
+- [compose/platform-stack.yml](/home/dogdu/workspace/myQQbot/compose/platform-stack.yml)
+  - `napcat` / `astrbot` 容器定义
+- [compose/wechatpadpro-stack.yml](/home/dogdu/workspace/myQQbot/compose/wechatpadpro-stack.yml)
+  - `wechatpadpro` / MySQL / Redis 容器定义
+- [scripts/deploy_stack.sh](/home/dogdu/workspace/myQQbot/scripts/deploy_stack.sh)
+  - 一键启动
+- [scripts/stop_stack.sh](/home/dogdu/workspace/myQQbot/scripts/stop_stack.sh)
+  - 一键停止
+- [scripts/start_agent_runner.sh](/home/dogdu/workspace/myQQbot/scripts/start_agent_runner.sh)
+  - 启动宿主机 `agent-runner`
+- [scripts/start_wechatpadpro_adapter.sh](/home/dogdu/workspace/myQQbot/scripts/start_wechatpadpro_adapter.sh)
+  - 启动宿主机微信适配器
 
-## 3. Quick Start
+## 3. 快速开始
 
-1. Copy the env template:
+### 3.1 复制配置模板
 
 ```bash
-cp deploy/myqqbot.env.example deploy/myqqbot.env
+cp deploy/dogbot.env.example deploy/dogbot.env
 ```
 
-2. Edit `deploy/myqqbot.env`
-
-3. Start:
+如果你仍然沿用旧名字，也可以：
 
 ```bash
-./scripts/deploy_stack.sh deploy/myqqbot.env
+cp deploy/dogbot.env.example deploy/myqqbot.env
 ```
 
-4. Stop:
+### 3.2 编辑配置文件
 
-```bash
-./scripts/stop_stack.sh deploy/myqqbot.env
-```
+至少要改这些项：
 
-If Docker permissions are restricted:
-
-```bash
-sudo ./scripts/deploy_stack.sh deploy/myqqbot.env
-sudo ./scripts/stop_stack.sh deploy/myqqbot.env
-```
-
-If `ENABLE_WECHATPADPRO=1`, the same deploy command also starts:
-
-- `wechatpadpro_mysql`
-- `wechatpadpro_redis`
-- `wechatpadpro`
-- `wechatpadpro-adapter`
-
-It also:
-
-- generates `WECHATPADPRO_ACCOUNT_KEY` automatically if missing
-- requests a fresh WeChat login QR
-- writes QR output under `WECHATPADPRO_LOGIN_OUTPUT_DIR`
-- prints the QR image path and QR link in the terminal
-
-## 4. What Starts
-
-The stack starts:
-
-- local Rust `agent-runner`
-- local Anthropic-compatible proxy listener inside `agent-runner`
-- `claude-runner` Docker container
-- `napcat` Docker container
-- `astrbot` Docker container
-- optional host firewall policy for the Claude container
-
-`agent-runner` is one host process with two listeners:
-
+- 工作目录和状态目录
 - `AGENT_RUNNER_BIND_ADDR`
-  - `/healthz`
-  - `/v1/runs`
-  - `/v1/messages`
-- `API_PROXY_BIND_ADDR`
-  - Anthropic-compatible upstream proxy for Claude
+- 上游 provider 相关配置
+- 上游 key
+- QQ / 微信相关目录和端口
 
-## 5. Core Config File
+### 3.3 启动
 
-The most important file is:
-
-```text
-deploy/myqqbot.env
+```bash
+./scripts/deploy_stack.sh deploy/dogbot.env
 ```
 
-Everything important is controlled there:
+如果 Docker 权限不够：
 
-- workspace and state paths
-- Rust service ports
-- Claude container resources
-- upstream provider selection
-- provider API key
-- NapCat and AstrBot ports and data paths
-- optional WeChatPadPro ports, secrets, and state paths
+```bash
+sudo ./scripts/deploy_stack.sh deploy/dogbot.env
+```
 
-### 5.1 Claude Container
+### 3.4 停止
+
+```bash
+./scripts/stop_stack.sh deploy/dogbot.env
+```
+
+## 4. 配置文件说明
+
+推荐使用：
+
+- [deploy/dogbot.env.example](/home/dogdu/workspace/myQQbot/deploy/dogbot.env.example)
+
+模板里已经为每个字段补了中文注释。下面只强调最重要的几组。
+
+### 4.1 Claude 容器
 
 ```env
 CLAUDE_CONTAINER_NAME=claude-runner
-CLAUDE_IMAGE_NAME=myqqbot/claude-runner:local
+CLAUDE_IMAGE_NAME=dogbot/claude-runner:local
 CLAUDE_CODE_VERSION=2.1.104
 ```
 
-Meaning:
+含义：
 
-- container name
-- image tag
-- Claude Code version baked into the image
+- Claude 容器名
+- Claude 镜像名
+- 镜像内安装的 Claude Code 版本
 
-### 5.2 Workspace and State
+### 4.2 工作目录和状态目录
 
 ```env
 AGENT_WORKSPACE_DIR=/srv/agent-workdir
@@ -209,56 +155,158 @@ AGENT_STATE_DIR=/srv/agent-state
 SESSION_DB_PATH=/srv/agent-state/runner.db
 ```
 
-Recommended:
+建议：
 
-- keep `AGENT_WORKSPACE_DIR` for Claude-readable/writable project data
-- keep `AGENT_STATE_DIR` for:
-  - Claude persistent session state
-  - `runner.db`
-  - logs
-  - NapCat and AstrBot data if you choose to colocate them
+- `AGENT_WORKSPACE_DIR` 给 Agent 读写业务工作目录
+- `AGENT_STATE_DIR` 用来保存：
+  - Claude 会话状态
+  - SQLite 数据库
+  - 日志
+  - NapCat / AstrBot / WeChatPadPro 状态
 
-If you change these paths later, old state and session continuity may appear lost.
+如果你改这些路径，旧会话和旧状态看起来会像“丢了”。
 
-### 5.3 agent-runner Ports
+### 4.3 agent-runner 与内置代理
 
 ```env
 AGENT_RUNNER_BIND_ADDR=127.0.0.1:8787
 API_PROXY_BIND_ADDR=0.0.0.0:9000
-```
-
-`AGENT_RUNNER_BIND_ADDR` is for AstrBot.
-
-`API_PROXY_BIND_ADDR` is for Claude inside Docker, so it must be reachable from the host bridge. Do not bind it to `127.0.0.1`.
-
-Claude should always point to the local proxy:
-
-```env
 ANTHROPIC_BASE_URL=http://host.docker.internal:9000
 API_PROXY_AUTH_TOKEN=local-proxy-token
 ```
 
-`API_PROXY_AUTH_TOKEN` is not a real provider key. It is only the local token used between Claude and the host-local proxy.
+说明：
 
-### 5.4 Timeout and Queue
+- `AGENT_RUNNER_BIND_ADDR` 给 AstrBot / 微信 adapter 调用
+- `API_PROXY_BIND_ADDR` 给 Docker 里的 Claude 调用
+- `API_PROXY_BIND_ADDR` 不能绑到 `127.0.0.1`，否则 Docker 内访问不到
+- `API_PROXY_AUTH_TOKEN` 不是上游真实 key，只是本地代理 token
+
+### 4.4 上游 provider 配置
+
+当前支持的思路是：
+
+- `packy`
+- `glm_official`
+- `minimax_official`
+
+例如：
 
 ```env
-DEFAULT_TIMEOUT_SECS=120
-MAX_TIMEOUT_SECS=300
-MAX_CONCURRENT_RUNS=10
-MAX_QUEUE_DEPTH=20
-GLOBAL_RATE_LIMIT_PER_MINUTE=10
-USER_RATE_LIMIT_PER_MINUTE=3
-CONVERSATION_RATE_LIMIT_PER_MINUTE=5
+API_PROXY_ACTIVE_PROVIDER=packy
+API_PROXY_PACKY_BASE_URL=https://www.packyapi.com
+API_PROXY_PACKY_UPSTREAM_TOKEN=你的真实token
+API_PROXY_PACKY_AUTH_HEADER=x-api-key
 ```
 
-These values affect:
+切换到 GLM 时，改成：
 
-- command hard timeout
-- queue overflow behavior
-- anti-abuse rate limits
+```env
+API_PROXY_ACTIVE_PROVIDER=glm_official
+API_PROXY_GLM_BASE_URL=https://open.bigmodel.cn/api/anthropic
+API_PROXY_GLM_UPSTREAM_TOKEN=你的GLM key
+API_PROXY_GLM_AUTH_HEADER=Authorization
+API_PROXY_GLM_AUTH_SCHEME=Bearer
+```
 
-### 5.5 Claude Container Resources
+## 5. NapCat 配置
+
+### 5.1 WebUI
+
+默认端口：
+
+```text
+http://127.0.0.1:6099
+```
+
+### 5.2 登录 QQ
+
+- 打开 NapCat WebUI
+- 扫码登录
+
+### 5.3 反向 WebSocket
+
+当前工程要求 `NapCat` 把 OneBot 事件推给 `AstrBot`。
+
+目标地址：
+
+```text
+ws://astrbot:6199/ws
+```
+
+这部分现在由脚本自动写入：
+
+- [scripts/configure_napcat_ws.sh](/home/dogdu/workspace/myQQbot/scripts/configure_napcat_ws.sh)
+
+正常情况下不需要你手动改容器内配置。
+
+## 6. AstrBot 配置
+
+### 6.1 WebUI
+
+默认地址：
+
+```text
+http://127.0.0.1:6185
+```
+
+### 6.2 QQ 机器人
+
+在 AstrBot 里创建 `OneBot v11` 机器人，关键配置：
+
+- 反向 WebSocket 主机：`0.0.0.0`
+- 反向 WebSocket 端口：`6199`
+
+### 6.3 触发规则
+
+当前项目统一规则如下：
+
+- QQ 私聊：必须 `/agent ...`
+- QQ 群聊：必须 `@机器人 + /agent ...`
+- 微信私聊：必须 `/agent ...`
+- 微信群聊：必须 `@机器人名 + /agent ...`
+- `/agent-status` 保留
+
+## 7. WeChatPadPro 配置
+
+### 7.1 启用
+
+```env
+ENABLE_WECHATPADPRO=1
+```
+
+### 7.2 容器
+
+会额外启动：
+
+- `wechatpadpro`
+- `wechatpadpro_mysql`
+- `wechatpadpro_redis`
+
+### 7.3 登录
+
+部署脚本会自动：
+
+- 生成 `WECHATPADPRO_ACCOUNT_KEY`
+- 拉取登录二维码
+- 把二维码图片和元信息写到：
+  - `WECHATPADPRO_LOGIN_OUTPUT_DIR`
+
+### 7.4 微信适配器
+
+微信不经过 AstrBot，而是：
+
+```text
+WeChatPadPro -> wechatpadpro-adapter -> agent-runner
+```
+
+适配器启动脚本：
+
+- [scripts/start_wechatpadpro_adapter.sh](/home/dogdu/workspace/myQQbot/scripts/start_wechatpadpro_adapter.sh)
+
+## 8. Docker 资源限制
+
+关键字段：
 
 ```env
 CLAUDE_CONTAINER_CPU_CORES=4
@@ -267,636 +315,133 @@ CLAUDE_CONTAINER_DISK_GB=50
 CLAUDE_CONTAINER_PIDS_LIMIT=256
 ```
 
-Current reality:
+当前实际情况：
 
-- CPU, memory, and pids limits are enforced
-- disk size is still a target config value
-- Docker-layer disk quota is not currently enforced on this host filesystem
+- CPU / memory / pids 限制生效
+- `disk=50` 只是目标值，不一定是宿主机上的硬限制
+- 如果宿主机文件系统不支持 Docker 层磁盘配额，仍需要宿主机级别的限额方案
 
-### 5.6 NapCat
+## 9. 如何修改 API key 和模型
 
-```env
-NAPCAT_IMAGE=mlikiowa/napcat-docker:latest
-NAPCAT_CONTAINER_NAME=napcat
-NAPCAT_WEBUI_PORT=6099
-NAPCAT_ONEBOT_PORT=3001
-NAPCAT_UID=1000
-NAPCAT_GID=1000
-NAPCAT_QQ_DIR=/srv/napcat/qq
-NAPCAT_CONFIG_DIR=/srv/napcat/config
-```
+### 9.1 改 key
 
-`NAPCAT_QQ_DIR` stores login/runtime data.  
-`NAPCAT_CONFIG_DIR` stores NapCat config.
-
-### 5.7 AstrBot
+直接修改你的真实环境文件，例如：
 
 ```env
-ASTRBOT_IMAGE=soulter/astrbot:latest
-ASTRBOT_CONTAINER_NAME=astrbot
-ASTRBOT_WEBUI_PORT=6185
-ASTRBOT_QQ_BRIDGE_PORT=6199
-ASTRBOT_DATA_DIR=/srv/astrbot/data
-ASTRBOT_PLUGIN_DIR=../astrbot/plugins/claude_runner_bridge
-
-AGENT_RUNNER_BASE_URL=http://host.docker.internal:8787
-CLAUDE_BRIDGE_DEFAULT_CWD=/workspace
-CLAUDE_BRIDGE_TIMEOUT_SECS=120
-CLAUDE_BRIDGE_COMMAND_NAME=agent
-CLAUDE_BRIDGE_STATUS_COMMAND_NAME=agent-status
+API_PROXY_PACKY_UPSTREAM_TOKEN=新的token
 ```
 
-### 5.8 WeChatPadPro
-
-WeChatPadPro support is optional.
-
-Enable it with:
+或：
 
 ```env
-ENABLE_WECHATPADPRO=1
+API_PROXY_GLM_UPSTREAM_TOKEN=新的token
 ```
 
-Required settings:
+### 9.2 改 provider
 
-```env
-WECHATPADPRO_IMAGE=<set this to a real upstream image tag>
-WECHATPADPRO_HOST_PORT=38849
-WECHATPADPRO_ADMIN_KEY=<set a strong random value>
-WECHATPADPRO_DATA_DIR=/srv/wechatpadpro/data
-
-WECHATPADPRO_MYSQL_ROOT_PASSWORD=<required>
-WECHATPADPRO_MYSQL_DATABASE=weixin
-WECHATPADPRO_MYSQL_USER=weixin
-WECHATPADPRO_MYSQL_PASSWORD=<required>
-WECHATPADPRO_MYSQL_DIR=/srv/wechatpadpro/mysql
-
-WECHATPADPRO_REDIS_DIR=/srv/wechatpadpro/redis
-```
-
-Important notes:
-
-- this repository intentionally does not hardcode a default `WECHATPADPRO_IMAGE`
-- upstream image naming and distribution can change; set the exact image/tag from the current upstream release before enabling
-- deploy will fail fast if WeChatPadPro is enabled but required secrets or image are missing
-
-Adapter settings:
-
-```env
-WECHATPADPRO_BASE_URL=http://127.0.0.1:38849
-WECHATPADPRO_ACCOUNT_KEY=
-WECHATPADPRO_ADAPTER_HOST=0.0.0.0
-WECHATPADPRO_ADAPTER_PORT=18999
-WECHATPADPRO_ADAPTER_BIND_ADDR=0.0.0.0:18999
-WECHATPADPRO_ADAPTER_WEBHOOK_URL=http://host.docker.internal:18999/wechatpadpro/events
-WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=0
-WECHATPADPRO_WEBHOOK_INCLUDE_SELF_MESSAGE=false
-# WECHATPADPRO_WEBHOOK_SECRET=
-WECHATPADPRO_LOGIN_OUTPUT_DIR=/srv/agent-state/wechatpadpro-login
-WECHATPADPRO_DEFAULT_CWD=/workspace
-WECHATPADPRO_DEFAULT_TIMEOUT_SECS=120
-```
-
-### 5.9 Built-in Proxy and Upstream Provider
-
-The built-in proxy chooses one active provider:
-
-```env
-API_PROXY_ACTIVE_PROVIDER=packy
-```
-
-Supported provider config groups right now:
-
-- `API_PROXY_PACKY_*`
-- `API_PROXY_GLM_*`
-- `API_PROXY_MINIMAX_*`
-
-#### Packy Example
-
-```env
-API_PROXY_ACTIVE_PROVIDER=packy
-API_PROXY_PACKY_BASE_URL=https://www.packyapi.com
-API_PROXY_PACKY_UPSTREAM_TOKEN=your_real_packy_token
-API_PROXY_PACKY_AUTH_HEADER=x-api-key
-# API_PROXY_PACKY_AUTH_SCHEME=
-# API_PROXY_PACKY_MODEL=
-```
-
-#### GLM Example
-
-```env
-API_PROXY_ACTIVE_PROVIDER=glm_official
-API_PROXY_GLM_BASE_URL=https://open.bigmodel.cn/api/anthropic
-API_PROXY_GLM_UPSTREAM_TOKEN=your_real_glm_token
-API_PROXY_GLM_AUTH_HEADER=Authorization
-API_PROXY_GLM_AUTH_SCHEME=Bearer
-# API_PROXY_GLM_MODEL=
-```
-
-#### MiniMax Example
-
-```env
-API_PROXY_ACTIVE_PROVIDER=minimax_official
-API_PROXY_MINIMAX_BASE_URL=<your_minimax_anthropic_compatible_base_url>
-API_PROXY_MINIMAX_UPSTREAM_TOKEN=your_real_minimax_token
-API_PROXY_MINIMAX_AUTH_HEADER=Authorization
-API_PROXY_MINIMAX_AUTH_SCHEME=Bearer
-# API_PROXY_MINIMAX_MODEL=
-```
-
-## 6. Very Important Compatibility Rule
-
-The Claude container must talk to an Anthropic-compatible upstream path.
-
-That means:
-
-- the configured upstream `BASE_URL` must be compatible with Claude / Anthropic Messages API
-- not every OpenAI-compatible endpoint can be used here
-
-Examples that fit:
-
-- Packy's Claude-compatible route
-- GLM Anthropic-compatible route
-- MiniMax Anthropic-compatible route
-
-Examples that do not automatically fit:
-
-- a pure OpenAI-compatible `/v1/chat/completions` endpoint
-- a provider route intended only for Codex or OpenAI SDKs
-
-In short:
-
-- `Claude Code` requires a Claude/Anthropic-compatible `BASE_URL`
-- if you want OpenAI-compatible providers only, that is a different integration path
-
-## 7. NapCat Configuration
-
-### 7.1 Open NapCat WebUI
-
-Default:
-
-```text
-http://127.0.0.1:6099
-```
-
-If you are on a remote server, use SSH port forwarding from your local machine.
-
-### 7.2 Get WebUI Token if Needed
-
-NapCat often prints the WebUI token in container logs:
-
-```bash
-sudo docker logs --tail 200 napcat | rg -i 'token|webui|login'
-```
-
-### 7.3 Log in to QQ
-
-Use the NapCat WebUI to scan the QR code and log in with your QQ account.
-
-### 7.4 Configure Reverse WebSocket to AstrBot
-
-In NapCat WebUI, add a WebSocket client config:
-
-- type: `WebSockets客户端`
-- URL:
-
-```text
-ws://astrbot:6199/ws
-```
-
-- Token: leave empty unless you intentionally configured one
-- enable it
-- heartbeat: `1000`
-- reconnect: `1000`
-
-Important:
-
-- do not use `127.0.0.1` here
-- NapCat and AstrBot are Docker containers, so they should communicate by container name
-
-## 8. AstrBot Configuration
-
-### 8.1 Open AstrBot WebUI
-
-Default:
-
-```text
-http://127.0.0.1:6185
-```
-
-Typical default credentials are:
-
-- username: `astrbot`
-- password: `astrbot`
-
-### 8.2 Create the QQ Bot
-
-Inside AstrBot WebUI:
-
-1. Go to `机器人`
-2. Create a new bot
-3. Choose `OneBot v11`
-4. Fill:
-   - ID: any name, such as `DogBot`
-   - enable: checked
-   - reverse WebSocket host: `0.0.0.0`
-   - reverse WebSocket port: `6199`
-   - token: empty unless you want auth
-
-### 8.3 Bridge Plugin Behavior
-
-The current bridge plugin behavior is:
-
-- normal messages are forwarded to the agent by default
-- `/agent-status` is a special command
-- `/agent <prompt>` still works as a compatibility alias
-- QQ group replies automatically prepend `@sender`
-
-### 8.4 Optional WeChatPadPro Adapter
-
-The current public AstrBot image does not expose a usable `WeChatPadPro` platform adapter, so this repository uses a host-local `wechatpadpro-adapter` instead.
-
-WeChat flow is:
-
-```text
-WeChatPadPro -> wechatpadpro-adapter -> agent-runner -> claude-runner
-```
-
-The adapter:
-
-- receives webhook POST events from WeChatPadPro
-- forwards text messages to `agent-runner`
-- sends text replies back through WeChatPadPro `/message/SendTextMessage`
-
-Important:
-
-- because WeChatPadPro calls the adapter through `host.docker.internal`, the adapter must bind to a host-reachable address
-- do not bind it to `127.0.0.1`
-- use `0.0.0.0:18999` unless you have a stricter host routing setup
-
-The adapter needs `WECHATPADPRO_ACCOUNT_KEY`. This is not the same thing as `WECHATPADPRO_ADMIN_KEY`.
-
-Recommended setup:
-
-1. Start the stack with `ENABLE_WECHATPADPRO=1`
-2. Let deploy print a fresh QR image path and QR link
-3. Scan the QR code with the target WeChat account
-4. Optionally set `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1`
-5. Re-run deploy after login if webhook setup was skipped on the first pass
-
-## 9. Docker Configuration
-
-The main Claude container config lives in:
-
-- `compose/docker-compose.yml`
-
-The platform services live in:
-
-- `compose/platform-stack.yml`
-- `compose/wechatpadpro-stack.yml`
-
-### Claude Container Properties
-
-The Claude container currently has:
-
-- `cpus: "4.0"`
-- `mem_limit: 4g`
-- `memswap_limit: 4g`
-- `pids_limit: 256`
-- `read_only: true`
-- `tmpfs` for `/tmp` and `/run`
-- writable mounts only for:
-  - `/workspace`
-  - `/state`
-
-Container env intentionally includes only:
-
-- `ANTHROPIC_BASE_URL=http://host.docker.internal:<proxy_port>`
-- `ANTHROPIC_AUTH_TOKEN=<local proxy token>`
-
-It does not contain real Packy, GLM, or MiniMax tokens.
-
-## 10. WeChatPadPro Configuration
-
-WeChatPadPro is a non-official personal WeChat ingress layer. It is optional and separate from NapCat.
-
-The repository starts it as three services:
-
-- `wechatpadpro_mysql`
-- `wechatpadpro_redis`
-- `wechatpadpro`
-
-After deployment:
-
-1. Confirm the containers are healthy:
-
-```bash
-docker ps --filter name=wechatpadpro --filter name=wechatpadpro_mysql --filter name=wechatpadpro_redis
-```
-
-2. Check WeChatPadPro logs:
-
-```bash
-docker logs --tail 200 wechatpadpro
-```
-
-3. Confirm its API port is reachable:
-
-```bash
-curl http://127.0.0.1:38849
-```
-
-Expected result:
-
-- an HTTP response from WeChatPadPro
-- or at least a non-empty server response proving the port is bound
-
-This repository does not store QR codes or WeChat auth files in git.
-
-## 10.1 WeChatPadPro Adapter
-
-The host-local adapter receives webhook events and forwards text messages to `agent-runner`.
-
-Health check:
-
-```bash
-curl http://127.0.0.1:18999/healthz
-```
-
-Webhook endpoint:
-
-```text
-POST /wechatpadpro/events
-```
-
-The first pass only supports text private/group messages. Unsupported message types are ignored.
-
-If `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1` and `WECHATPADPRO_ACCOUNT_KEY` is set, deploy also pushes this webhook config to WeChatPadPro:
-
-- `URL`: `WECHATPADPRO_ADAPTER_WEBHOOK_URL`
-- `Enabled`: `true`
-- `IncludeSelfMessage`: `WECHATPADPRO_WEBHOOK_INCLUDE_SELF_MESSAGE`
-- `MessageTypes`: `["Text"]`
-- `Secret`: `WECHATPADPRO_WEBHOOK_SECRET`
-
-### 10.2 WeChat Login QR Workflow
-
-When WeChat is enabled, deploy runs:
-
-```bash
-./scripts/prepare_wechatpadpro_login.sh deploy/myqqbot.env
-```
-
-That script:
-
-- creates `WECHATPADPRO_ACCOUNT_KEY` automatically if it is missing
-- requests a fresh login QR from WeChatPadPro
-- writes:
-  - `wechatpadpro-login-qr.png`
-  - `wechatpadpro-login-meta.json`
-- prints:
-  - QR image path
-  - QR link
-  - QR image URL
-  - QR expiry time
-
-By default the files are stored under:
-
-```text
-WECHATPADPRO_LOGIN_OUTPUT_DIR
-```
-
-For example:
-
-```env
-WECHATPADPRO_LOGIN_OUTPUT_DIR=/srv/agent-state/wechatpadpro-login
-```
-
-If webhook auto-configuration fails right after deploy, the most common reason is:
-
-- the QR was generated, but the WeChat account has not finished scanning/logging in yet
-
-In that case:
-
-1. scan the printed QR
-2. wait for login to complete
-3. run deploy again
-
-## 11. How to Start and Stop
-
-### Start
-
-```bash
-./scripts/deploy_stack.sh deploy/myqqbot.env
-```
-
-If Docker access requires privilege:
-
-```bash
-sudo ./scripts/deploy_stack.sh deploy/myqqbot.env
-```
-
-### Stop
-
-```bash
-./scripts/stop_stack.sh deploy/myqqbot.env
-```
-
-### What the Start Script Does
-
-It will:
-
-- create required directories
-- start `agent-runner`
-- start `claude-runner`
-- start `napcat`
-- start `astrbot`
-- optionally apply host firewall rules for the Claude container
-
-## 12. How to Change API Key or Model
-
-### 11.1 Change API Key
-
-Edit the real host-side provider key in `deploy/myqqbot.env`.
-
-For example, Packy:
-
-```env
-API_PROXY_PACKY_UPSTREAM_TOKEN=your_new_packy_token
-```
-
-For GLM:
-
-```env
-API_PROXY_GLM_UPSTREAM_TOKEN=your_new_glm_token
-```
-
-For MiniMax:
-
-```env
-API_PROXY_MINIMAX_UPSTREAM_TOKEN=your_new_minimax_token
-```
-
-### 11.2 Change Model
-
-If your upstream supports a model field, edit the corresponding model entry:
-
-```env
-API_PROXY_PACKY_MODEL=...
-API_PROXY_GLM_MODEL=...
-API_PROXY_MINIMAX_MODEL=...
-```
-
-### 11.3 Change Active Provider
-
-Switch:
+例如切到 GLM：
 
 ```env
 API_PROXY_ACTIVE_PROVIDER=glm_official
 ```
 
-or:
+### 9.3 改模型
+
+如果上游支持模型字段：
 
 ```env
-API_PROXY_ACTIVE_PROVIDER=minimax_official
+API_PROXY_PACKY_MODEL=xxx
+API_PROXY_GLM_MODEL=xxx
+API_PROXY_MINIMAX_MODEL=xxx
 ```
 
-### 11.4 Apply Changes
+### 9.4 重新生效
 
-After changing provider config, restart the stack:
+改完后重启：
 
 ```bash
-./scripts/stop_stack.sh deploy/myqqbot.env
-sudo ./scripts/deploy_stack.sh deploy/myqqbot.env
+./scripts/stop_stack.sh deploy/dogbot.env
+sudo ./scripts/deploy_stack.sh deploy/dogbot.env
 ```
 
-This is the safest way to ensure:
+## 10. 需要特别注意的事情
 
-- `agent-runner` reloads provider config
-- the local proxy uses the new upstream
-- Claude container receives the correct local proxy auth env
+### 10.1 只能使用 Claude / Anthropic 兼容的 Base URL
 
-## 13. Verification Commands
+现在 Docker 里的 Claude Code 调用的是：
 
-### Check runner health
+- Anthropic Messages 兼容接口
+
+所以你必须给它配置：
+
+- `Anthropic-compatible`
+- 或 `Claude-compatible`
+
+的上游地址。
+
+不能把只兼容 OpenAI 的地址直接塞给 Claude Code。
+
+### 10.2 真实 key 不进 Docker
+
+真实 provider key 只放在宿主机环境变量里。  
+Docker 里的 `claude-runner` 只拿到：
+
+- `ANTHROPIC_BASE_URL=http://host.docker.internal:9000`
+- `ANTHROPIC_AUTH_TOKEN=local-proxy-token`
+
+### 10.3 QQ 登录态容易受重建影响
+
+避免无意义地重建 `napcat`。  
+只要 `napcat` 容器和数据目录不乱动，就不应该频繁要求重新扫码。
+
+### 10.4 WeChatPadPro 仍有自身稳定性问题
+
+当前已经确认过：
+
+- webhook 群聊链路可用
+- 某些场景下 DNS 和长连接稳定性会影响消息同步
+
+如果后续继续遇到微信私聊推送异常，优先排查：
+
+- `wechatpadpro` 容器 DNS
+- `GetSyncMsg / HttpSyncMsg` 是否能拿到消息
+
+## 11. 常用命令
+
+### 11.1 启动
+
+```bash
+./scripts/deploy_stack.sh deploy/dogbot.env
+```
+
+### 11.2 停止
+
+```bash
+./scripts/stop_stack.sh deploy/dogbot.env
+```
+
+### 11.3 检查 runner
 
 ```bash
 curl http://127.0.0.1:8787/healthz
 ```
 
-Adjust the port if you changed `AGENT_RUNNER_BIND_ADDR`.
-
-### Check local proxy listener
-
-This should return a non-200 response like `400` if the body is incomplete, but the response itself confirms the listener is alive:
-
-```bash
-curl -H 'x-api-key: local-proxy-token' \
-  -H 'content-type: application/json' \
-  -d '{"messages":[]}' \
-  http://127.0.0.1:9000/v1/messages
-```
-
-### Check container env does not include the real provider key
-
-```bash
-sudo docker exec claude-runner env | rg 'ANTHROPIC_(BASE_URL|AUTH_TOKEN|MODEL)|API_PROXY'
-```
-
-Expected:
-
-- `ANTHROPIC_BASE_URL=http://host.docker.internal:9000`
-- `ANTHROPIC_AUTH_TOKEN=local-proxy-token`
-
-Not expected:
-
-- your real Packy token
-- your real GLM token
-- your real MiniMax token
-
-### Check WeChatPadPro when enabled
-
-```bash
-docker logs --tail 100 wechatpadpro
-docker logs --tail 100 astrbot
-```
-
-Expected:
-
-- WeChatPadPro shows a healthy boot
-- AstrBot shows the WeChatPadPro adapter and QR/login prompts when configured
-
-## 14. Things to Watch Out For
-
-### 13.1 Provider Compatibility
-
-Only use a Claude/Anthropic-compatible upstream base URL for this stack.
-
-Do not assume that:
-
-- an OpenAI-compatible endpoint
-- a Codex-oriented endpoint
-- a provider-specific SDK endpoint
-
-will work with Claude Code.
-
-### 13.2 Packy Token Groups
-
-Packy token groups matter.
-
-Examples:
-
-- some token groups work with Claude Code
-- some token groups are intended for other routing or model groups and may not work correctly with Claude Code
-
-If Packy works with one token and fails with another, check the token group first.
-
-### 13.3 Real Key Placement
-
-The real upstream token belongs only in host env config.
-
-It should not be:
-
-- placed in Docker workspace files
-- committed into git
-- injected into prompts
-
-### 13.4 Disk Limit
-
-Current disk limit behavior is incomplete:
-
-- CPU, memory, pids, timeout, and writable path boundaries are active
-- service-level Docker disk quota is not currently enforced on this host filesystem
-
-### 13.5 Python Invocation
-
-For Python-based helpers, prefer:
-
-```bash
-uv run ...
-```
-
-not plain `python`.
-
-### 14.6 WeChatPadPro Risk and Host Constraints
-
-- WeChatPadPro is non-official and may trigger account risk, login churn, or protocol breakage.
-- Upstream AstrBot documentation notes the Docker route is Linux-oriented and not arm64-friendly.
-- Treat WeChatPadPro as experimental infrastructure, not a stable official API.
-
-## 15. Proactive Message MVP
-
-The current first-pass proactive send path is host-local and session-based:
+### 11.4 主动向已有会话发消息
 
 ```bash
 ./scripts/send_session_message.sh \
-  --env-file deploy/myqqbot.env \
+  --env-file deploy/dogbot.env \
   --session-id qq:private:123456 \
   --text "hello from cron"
 ```
 
-Optional flags:
+## 12. 兼容说明
 
-- `--reply-to <message_id>`
-- `--mention-user <user_id>`
+当前仓库已经把项目名统一成 `DogBot`，但为了不把现有环境直接改坏：
 
-This assumes the target `session_id` already exists in `agent-runner` state.
+- 脚本优先读取 `deploy/dogbot.env`
+- 若不存在，会自动回退到 `deploy/myqqbot.env`
+
+建议你后续逐步把本地配置迁移到：
+
+- `deploy/dogbot.env`

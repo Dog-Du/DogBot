@@ -14,6 +14,11 @@ class Settings:
     webhook_secret: str | None
     adapter_webhook_url: str | None
     auto_configure_webhook: bool
+    require_command_prefix: bool
+    require_group_mention: bool
+    bot_mention_names: tuple[str, ...]
+    command_name: str
+    status_command_name: str
     default_cwd: str
     default_timeout_secs: int
 
@@ -35,6 +40,23 @@ class Settings:
                 "WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK", "0"
             ).lower()
             in {"1", "true", "yes", "on"},
+            require_command_prefix=os.getenv(
+                "WECHATPADPRO_REQUIRE_COMMAND_PREFIX", "1"
+            ).lower()
+            in {"1", "true", "yes", "on"},
+            require_group_mention=os.getenv(
+                "WECHATPADPRO_REQUIRE_MENTION_IN_GROUP", "0"
+            ).lower()
+            in {"1", "true", "yes", "on"},
+            bot_mention_names=tuple(
+                name.strip()
+                for name in os.getenv("WECHATPADPRO_BOT_MENTION_NAMES", "").split(",")
+                if name.strip()
+            ),
+            command_name=os.getenv("WECHATPADPRO_COMMAND_NAME", "agent"),
+            status_command_name=os.getenv(
+                "WECHATPADPRO_STATUS_COMMAND_NAME", "agent-status"
+            ),
             default_cwd=os.getenv("WECHATPADPRO_DEFAULT_CWD", "/workspace"),
             default_timeout_secs=int(
                 os.getenv("WECHATPADPRO_DEFAULT_TIMEOUT_SECS", "120")

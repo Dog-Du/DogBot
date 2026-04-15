@@ -98,10 +98,13 @@ def load_plugin_module():
 
 
 class DummyMessage:
-    def __init__(self, *, group_id=None, session_id=None, message_id=None):
+    def __init__(
+        self, *, group_id=None, session_id=None, message_id=None, message=None
+    ):
         self.group_id = group_id
         self.session_id = session_id
         self.message_id = message_id
+        self.message = message or []
 
 
 class DummyEvent:
@@ -115,13 +118,17 @@ class DummyEvent:
         group_id=None,
         session_id=None,
         message_id="42",
+        components=None,
     ):
         self.message_str = message
         self._sender_id = sender_id
         self._platform = platform
         self.unified_msg_origin = unified_msg_origin
         self.message_obj = DummyMessage(
-            group_id=group_id, session_id=session_id, message_id=message_id
+            group_id=group_id,
+            session_id=session_id,
+            message_id=message_id,
+            message=components,
         )
 
     def get_sender_id(self):
@@ -130,11 +137,20 @@ class DummyEvent:
     def get_platform_name(self):
         return self._platform
 
+    def get_messages(self):
+        return self.message_obj.message
+
     def plain_result(self, text):
         return ("plain", text)
 
     def chain_result(self, chain):
         return ("chain", chain)
+
+    def set_result(self, result):
+        self.result = result
+
+    def stop_event(self):
+        self.stopped = True
 
 
 @pytest.fixture
@@ -143,14 +159,103 @@ def plugin():
     return module.ClaudeRunnerBridge(module.Context(), module.AstrBotConfig())
 
 
-def test_should_route_plain_messages_by_default(plugin):
-    assert plugin._should_route_to_agent("你好")
-    assert plugin._should_route_to_agent("/agent 你好")
+@pytest.fixture
+def qq_plugin():
+    module = load_plugin_module()
+    plugin = module.ClaudeRunnerBridge(module.Context(), module.AstrBotConfig())
+    plugin.qq_bot_id = "3472283357"
+    return plugin
+
+
+def test_should_not_route_private_messages_without_agent_command(plugin):
+    event = DummyEvent(message="你好")
+
+    assert not plugin._should_route_to_agent(event, "你好")
+    assert plugin._should_route_to_agent(event, "/agent 你好")
+
+
+def test_should_not_route_private_messages_with_plain_agent_text(plugin):
+    plain = type("Plain", (), {"text": "agent hello"})()
+    event = DummyEvent(message="agent hello", components=[plain])
+
+    assert not plugin._should_route_to_agent(event, "agent hello")
+
+
+def test_should_route_private_messages_when_raw_chain_keeps_slash(plugin):
+    plain = type("Plain", (), {"text": "/agent hello"})()
+    event = DummyEvent(message="agent hello", components=[plain])
+
+    assert plugin._should_route_to_agent(event, "agent hello")
 
 
 def test_should_not_route_special_slash_commands(plugin):
-    assert not plugin._should_route_to_agent("/agent-status")
-    assert not plugin._should_route_to_agent("/help")
+    event = DummyEvent(message="/help")
+
+    assert not plugin._should_route_to_agent(event, "/agent-status")
+    assert not plugin._should_route_to_agent(event, "/help")
+
+
+def test_should_not_route_plain_qq_group_messages_without_at(qq_plugin):
+    event = DummyEvent(
+        message="大家好",
+        platform="DogBot",
+        unified_msg_origin="DogBot:GroupMessage:965104090",
+        group_id="965104090",
+    )
+
+    assert not qq_plugin._should_route_to_agent(event, "大家好")
+
+
+def test_should_not_route_qq_group_messages_with_at_only(qq_plugin):
+    event = DummyEvent(
+        message="[At:3472283357] hello",
+        platform="DogBot",
+        unified_msg_origin="DogBot:GroupMessage:965104090",
+        group_id="965104090",
+    )
+
+    assert not qq_plugin._should_route_to_agent(event, "[At:3472283357] hello")
+
+
+def test_should_route_qq_group_messages_with_agent_command(qq_plugin):
+    event = DummyEvent(
+        message="/agent hello",
+        platform="DogBot",
+        unified_msg_origin="DogBot:GroupMessage:965104090",
+        group_id="965104090",
+    )
+
+    assert not qq_plugin._should_route_to_agent(event, "/agent hello")
+
+
+def test_should_route_qq_group_messages_with_at_and_agent_command(qq_plugin):
+    at = type("At", (), {"qq": "3472283357"})()
+    plain = type("Plain", (), {"text": " /agent hello"})()
+    event = DummyEvent(
+        message="agent hello",
+        platform="DogBot",
+        unified_msg_origin="DogBot:GroupMessage:965104090",
+        group_id="965104090",
+        components=[at, plain],
+    )
+
+    assert qq_plugin._should_route_to_agent(event, "agent hello")
+
+
+def test_success_result_mentions_group_sender_for_aiocqhttp_origin(plugin):
+    event = DummyEvent(
+        message="你好",
+        sender_id="u-9",
+        platform="DogBot",
+        unified_msg_origin="DogBot:GroupMessage:g-1",
+        group_id="g-1",
+    )
+
+    kind, chain = plugin._success_result(event, "已收到")
+
+    assert kind == "chain"
+    assert chain[0].qq == "u-9"
+    assert chain[1].text == "已收到"
 
 
 def test_build_payload_uses_unified_origin_for_private_sessions(plugin):

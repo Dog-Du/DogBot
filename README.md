@@ -1,112 +1,80 @@
-# myQQbot
+# DogBot
 
-Personal QQ bot stack built around:
+`DogBot` 是一个面向个人账号机器人的多平台 Agent 工程，当前已经落地两条接入链路：
 
-- `NapCat` for personal QQ access
-- optional `WeChatPadPro` for personal WeChat access
-- `AstrBot` for bot platform integration
-- `agent-runner` in Rust for Docker-managed Claude CLI execution
-- host-local Anthropic-compatible proxy, built into `agent-runner`, for PackyAPI or MiniMax access
+- `QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner`
+- `微信 -> WeChatPadPro -> wechatpadpro-adapter -> agent-runner -> claude-runner`
 
-The top priorities of this repository are:
+其中：
 
-1. hard CPU and memory limits for the CLI container
-2. hard command timeout enforcement in `agent-runner`
+- `agent-runner` 使用 Rust 编写，负责 Docker 容器管理、超时、限流、会话、消息回发和内置上游代理
+- `claude-runner` 在 Docker 中运行 Claude Code CLI
+- 真实模型密钥只保留在宿主机，不进入 Claude 容器
 
-## Planned Architecture
+## 项目目标
+
+这个仓库优先解决三件事：
+
+1. 把 CLI Agent 放进 Docker，限制 CPU、内存、进程数和宿主机暴露面
+2. 用统一的宿主机控制层管理超时、队列、限流和会话
+3. 让 QQ / 微信等不同平台都能复用同一套 Agent 执行后端
+
+## 当前架构
 
 ```text
-QQ -> NapCat -> AstrBot -> agent-runner -> claude-runner container -> agent-runner local proxy -> PackyAPI / MiniMax
-WeChat -> WeChatPadPro -> wechatpadpro-adapter -> agent-runner -> claude-runner container -> agent-runner local proxy -> PackyAPI / MiniMax
+QQ
+-> NapCat
+-> AstrBot
+-> claude_runner_bridge
+-> agent-runner
+-> claude-runner 容器
+-> agent-runner 内置 Anthropic 兼容代理
+-> Packy / GLM / MiniMax 等上游
+
+微信
+-> WeChatPadPro
+-> wechatpadpro-adapter
+-> agent-runner
+-> claude-runner 容器
+-> agent-runner 内置 Anthropic 兼容代理
+-> Packy / GLM / MiniMax 等上游
 ```
 
-## Planned Repository Layout
+## 仓库结构
 
 ```text
 .
 ├── README.md
-├── compose/
-│   ├── docker-compose.yml
-│   └── platform-stack.yml
-├── deploy/
-│   └── myqqbot.env.example
-├── docker/
-│   └── claude-runner/
-│       ├── Dockerfile
-│       └── entrypoint.sh
-├── agent-runner/
-│   ├── Cargo.toml
-│   └── src/
-├── astrbot/
-│   └── plugins/
-├── scripts/
-└── docs/
+├── agent-runner/                 # Rust 核心服务
+├── astrbot/                      # AstrBot 插件
+├── compose/                      # Docker Compose 编排
+├── deploy/                       # 配置模板与部署说明
+├── docker/claude-runner/         # Claude 容器镜像
+├── scripts/                      # 启停、配置、诊断脚本
+├── wechatpadpro_adapter/         # 宿主机微信适配器
+└── docs/                         # 设计文档
 ```
 
-Detailed deployment instructions are in:
+## 文档入口
 
-- `deploy/README.md`
+完整部署说明见：
 
-## v1 Scope
+- [deploy/README.md](/home/dogdu/workspace/myQQbot/deploy/README.md)
 
-- personal QQ account only
-- Claude CLI only
-- MiniMax as the primary upstream model path
-- host-local API proxy for secret isolation, served by the same `agent-runner` process
-- one approved writable workspace mount
-- strict timeout and resource controls
-- platform-neutral core request model, even though v1 only targets QQ
+默认配置模板见：
 
-## TODO
+- [deploy/dogbot.env.example](/home/dogdu/workspace/myQQbot/deploy/dogbot.env.example)
 
-- [x] create `compose/docker-compose.yml`
-- [x] define `claude-runner` container with `ubuntu:24.04`
-- [x] install `node`, `npm`, `claude`, and required shell tools in the image
-- [x] set Compose CPU limit for the CLI container
-- [x] set Compose memory limit for the CLI container
-- [x] set `pids_limit` for the CLI container
-- [x] mount only `/workspace` and `/state` as writable paths
-- [x] enable `read_only` root filesystem where compatible
-- [x] add `tmpfs` mount for `/tmp`
-- [x] scaffold Rust `agent-runner`
-- [x] implement `POST /v1/runs`
-- [x] keep the core `agent-runner` request schema platform-neutral with fields such as `platform`, `conversation_id`, `user_id`, and `session_id`
-- [x] implement command timeout enforcement in Rust
-- [x] implement forced termination on timeout
-- [x] capture and normalize stdout, stderr, exit code, and duration
-- [x] add health endpoint for runtime status
-- [x] add host-local `api-proxy` integration notes
-- [x] document secret handling so upstream keys never enter the CLI container
-- [x] add verification steps for CPU, memory, and timeout behavior
-- [x] make `agent-runner` auto-create the Claude container when it does not exist, not only start an existing container
-- [x] switch from one-shot `claude -p` execution to session-aware resume flow
-- [x] persist platform-neutral session metadata in SQLite under the host state directory, separate from the mounted Claude runtime state
-- [x] define `session_id` to Claude internal session mapping and resume lifecycle rules
-- [x] restrict Claude container access to host `api-proxy` only, while still allowing arbitrary outbound internet access
-- [x] document the host-side network assumptions so no other host service is exposed to the Claude container
-- [x] add bounded concurrency control for active CLI runs
-- [x] add bounded queue length and overflow behavior
-- [x] add global per-minute reply rate limiting
-- [x] add per-user and per-conversation rate limiting
-- [x] add AstrBot plugin that calls `agent-runner`
-- [x] define session mapping strategy for private chat
-- [ ] define error responses for queue saturation, rate limit, and container creation failure
-- [x] add bootstrap-style shell scripts for local startup and deployment
-- [ ] add versioned Claude upgrade and rollback workflow
-- [ ] add a minimal host-local shell entrypoint for proactive message sending, so cron jobs, webhooks, or manual scripts can send into an existing `session_id`
-- [ ] define the first-pass proactive message contract around `session_id`, `conversation_id`, and optional `reply_to_message_id`
-- [ ] document the MVP rule that proactive sending stays outside the Claude container and is triggered by a host-local script or controlled tool entrypoint
-- [ ] package the proactive send entrypoint as an Agent skill or tool wrapper after the shell path is proven useful
-- [ ] later split proactive outbound delivery into a dedicated outbox service when retries, scheduling, or cross-platform fan-out become necessary
+## 目前规则
 
-## Notes
+- QQ 私聊：必须 `/agent ...`
+- QQ 群聊：必须 `@机器人 + /agent ...`
+- 微信私聊：必须 `/agent ...`
+- 微信群聊：必须 `@机器人名 + /agent ...`
+- `/agent-status` 保留为状态检查命令
 
-- Real upstream API keys must stay on the host, not in the CLI container. The container only receives a local proxy token and a host-local proxy base URL.
-- `agent-runner` is the policy boundary for timeout and execution behavior.
-- Default container targets are `4 CPU`, `4GB` memory, and `50GB` writable storage where the Docker storage driver supports service-level size limits.
-- First-pass network policy is: allow outbound internet plus the host-local proxy port served by `agent-runner`, but deny reliance on any other host-local service.
-- `disk` limits still depend on Docker storage-driver support; if `storage_opt.size` is ignored on the host, host-side quota remains the fallback control.
-- Python-based AstrBot integration and smoke-test helpers should be run with `uv run ...`, not bare `python`.
-- Host firewall enforcement is implemented via `scripts/apply_runner_network_policy.sh` and `scripts/remove_runner_network_policy.sh`, and the full smoke path is in `scripts/smoke_test_claude_runner.sh`.
-- Proactive message sending is intentionally deferred as an improvement item. The near-term path is a small host-local script that targets an existing `session_id`, not a full outbox service inside the current runtime.
-- WeChatPadPro support is optional and enabled through `ENABLE_WECHATPADPRO=1`; it uses a host-local `wechatpadpro-adapter` because the current public AstrBot image does not expose a usable WeChatPadPro adapter.
+## 备注
+
+- 旧的 `deploy/myqqbot.env` 仍然兼容，脚本会优先找 `deploy/dogbot.env`，找不到时回退到旧文件名。
+- 旧的 `myqqbot/claude-runner:local` 镜像名已切换为 `dogbot/claude-runner:local`。
+- `WeChatPadPro` 当前仍有自身实现层面的不稳定点，尤其是 webhook 私聊推送与消息同步质量，需要继续观察。

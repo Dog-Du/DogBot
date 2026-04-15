@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-policy_chain="${POLICY_CHAIN:-MYQQBOT_RUNNER_POLICY}"
+policy_chain="${POLICY_CHAIN:-DOGBOT_RUNNER_POLICY}"
 
 if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
   echo "remove_runner_network_policy.sh must run as root." >&2

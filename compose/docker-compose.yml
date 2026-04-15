@@ -1,7 +1,7 @@
 services:
   claude-runner:
     container_name: ${CLAUDE_CONTAINER_NAME:-claude-runner} # default name expected by agent-runner
-    image: ${CLAUDE_IMAGE_NAME:-myqqbot/claude-runner:local}
+    image: ${CLAUDE_IMAGE_NAME:-dogbot/claude-runner:local}
     build:
       context: ..
       dockerfile: docker/claude-runner/Dockerfile

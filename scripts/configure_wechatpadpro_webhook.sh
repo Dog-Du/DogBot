@@ -3,7 +3,15 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-env_file="${1:-$repo_root/deploy/myqqbot.env}"
+default_env_file="$repo_root/deploy/dogbot.env"
+legacy_env_file="$repo_root/deploy/myqqbot.env"
+if [[ $# -ge 1 ]]; then
+  env_file="$1"
+elif [[ -f "$default_env_file" ]]; then
+  env_file="$default_env_file"
+else
+  env_file="$legacy_env_file"
+fi
 
 if [[ ! -f "$env_file" ]]; then
   echo "Missing env file: $env_file" >&2
@@ -28,16 +36,20 @@ callback_url="${WECHATPADPRO_ADAPTER_WEBHOOK_URL:-http://host.docker.internal:${
 base_url="${WECHATPADPRO_BASE_URL:-http://127.0.0.1:${WECHATPADPRO_HOST_PORT:-38849}}"
 include_self_message="${WECHATPADPRO_WEBHOOK_INCLUDE_SELF_MESSAGE:-false}"
 secret="${WECHATPADPRO_WEBHOOK_SECRET:-}"
+message_types_json="${WECHATPADPRO_WEBHOOK_MESSAGE_TYPES_JSON:-[\"1\"]}"
 
 payload="$(cat <<JSON
 {
   "URL": "$callback_url",
   "Enabled": true,
   "IncludeSelfMessage": $include_self_message,
-  "MessageTypes": ["Text"],
+  "MessageTypes": $message_types_json,
   "RetryCount": 3,
   "Timeout": 5,
-  "Secret": "$secret"
+  "Secret": "$secret",
+  "UseDirectStream": true,
+  "UseRedisSync": false,
+  "IndependentMode": true
 }
 JSON
 )"
@@ -49,6 +61,39 @@ response="$(curl --max-time 15 -sS -X POST \
 
 echo "$response"
 if ! grep -q '"Code":200' <<<"$response"; then
-  echo "WeChatPadPro webhook configuration failed." >&2
-  exit 1
+  echo "WeChatPadPro webhook configuration API did not return Code=200; attempting direct database sync." >&2
 fi
+
+if [[ -n "${WECHATPADPRO_MYSQL_ROOT_PASSWORD:-}" ]]; then
+  mysql_container="${WECHATPADPRO_MYSQL_CONTAINER_NAME:-wechatpadpro_mysql}"
+  mysql_database="${WECHATPADPRO_MYSQL_DATABASE:-weixin}"
+  escaped_callback_url="${callback_url//\'/\'\\\'\'}"
+  escaped_secret="${secret//\'/\'\\\'\'}"
+  escaped_types="${message_types_json//\'/\'\\\'\'}"
+  include_self_bit=0
+  if [[ "$include_self_message" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
+    include_self_bit=1
+  fi
+
+  docker_exec_cmd=(docker exec "$mysql_container" mysql -uroot "-p${WECHATPADPRO_MYSQL_ROOT_PASSWORD}" -D "$mysql_database" -e "
+    UPDATE webhook_config
+    SET url='${escaped_callback_url}',
+        secret='${escaped_secret}',
+        enabled=1,
+        timeout=5,
+        retry_count=3,
+        message_types='${escaped_types}',
+        include_self_message=${include_self_bit}
+    WHERE webhook_key='${WECHATPADPRO_ACCOUNT_KEY}';
+  ")
+
+  if ! "${docker_exec_cmd[@]}" >/dev/null 2>&1; then
+    if command -v sudo >/dev/null 2>&1; then
+      sudo "${docker_exec_cmd[@]}" >/dev/null 2>&1 || echo "warning: failed to sync webhook_config directly through MySQL" >&2
+    else
+      echo "warning: failed to sync webhook_config directly through MySQL" >&2
+    fi
+  fi
+fi
+
+echo "WeChatPadPro webhook configuration synced."

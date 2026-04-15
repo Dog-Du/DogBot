@@ -41,7 +41,7 @@ fn test_settings() -> agent_runner::config::Settings {
         default_timeout_secs: 120,
         max_timeout_secs: 300,
         container_name: "claude-runner".into(),
-        image_name: "myqqbot/claude-runner:local".into(),
+        image_name: "dogbot/claude-runner:local".into(),
         workspace_dir: "/tmp/agent-runner-tests/workdir".into(),
         state_dir: "/tmp/agent-runner-tests/state".into(),
         anthropic_base_url: "http://host.docker.internal:9000".into(),

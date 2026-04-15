@@ -3,7 +3,15 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-env_file="${1:-$repo_root/deploy/myqqbot.env}"
+default_env_file="$repo_root/deploy/dogbot.env"
+legacy_env_file="$repo_root/deploy/myqqbot.env"
+if [[ $# -ge 1 ]]; then
+  env_file="$1"
+elif [[ -f "$default_env_file" ]]; then
+  env_file="$default_env_file"
+else
+  env_file="$legacy_env_file"
+fi
 
 resolve_compose_cmd() {
   if docker compose version >/dev/null 2>&1; then
@@ -21,7 +29,7 @@ resolve_compose_cmd() {
 
 if [[ ! -f "$env_file" ]]; then
   echo "Missing env file: $env_file" >&2
-  echo "Copy deploy/myqqbot.env.example to deploy/myqqbot.env and edit it first." >&2
+  echo "请先复制 deploy/dogbot.env.example 为 deploy/dogbot.env，并完成本地配置。" >&2
   exit 1
 fi
 
@@ -104,6 +112,7 @@ mkdir -p \
 
 run_compose_up "$repo_root/compose/docker-compose.yml" claude-runner
 run_compose_up "$repo_root/compose/platform-stack.yml" napcat astrbot
+"$repo_root/scripts/configure_napcat_ws.sh" "$env_file"
 
 if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
   require_env WECHATPADPRO_IMAGE

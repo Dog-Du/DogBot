@@ -5,7 +5,7 @@ fn compose_defines_required_claude_runner_limits() {
     let compose =
         fs::read_to_string("../compose/docker-compose.yml").expect("failed to read compose file");
     let required = [
-        "image: ${CLAUDE_IMAGE_NAME:-myqqbot/claude-runner:local}",
+        "image: ${CLAUDE_IMAGE_NAME:-dogbot/claude-runner:local}",
         "cpus: \"4.0\"",
         "mem_limit: 4g",
         "memswap_limit: 4g",
@@ -35,6 +35,24 @@ fn compose_defines_required_claude_runner_limits() {
         assert!(
             !compose.contains(item),
             "compose should not expose forbidden entry: {item}"
+        );
+    }
+}
+
+#[test]
+fn dockerfile_bootstrap_repairs_claude_state_permissions() {
+    let dockerfile = fs::read_to_string("../docker/claude-runner/Dockerfile")
+        .expect("failed to read dockerfile");
+
+    let required = [
+        "mkdir -p /workspace /state /state/claude /state/claude/debug",
+        "chown -R claude:claude /state/claude",
+    ];
+
+    for item in required {
+        assert!(
+            dockerfile.contains(item),
+            "missing claude bootstrap contract entry: {item}"
         );
     }
 }

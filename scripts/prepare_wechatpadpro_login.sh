@@ -3,7 +3,25 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-env_file="${1:-$repo_root/deploy/myqqbot.env}"
+default_env_file="$repo_root/deploy/dogbot.env"
+legacy_env_file="$repo_root/deploy/myqqbot.env"
+if [[ $# -ge 1 ]]; then
+  env_file="$1"
+elif [[ -f "$default_env_file" ]]; then
+  env_file="$default_env_file"
+else
+  env_file="$legacy_env_file"
+fi
+
+resolve_uv_bin() {
+  if command -v uv >/dev/null 2>&1; then
+    command -v uv
+    return 0
+  fi
+
+  echo "uv not found. Please install uv first." >&2
+  return 1
+}
 
 if [[ ! -f "$env_file" ]]; then
   echo "Missing env file: $env_file" >&2
@@ -13,6 +31,8 @@ fi
 set -a
 source "$env_file"
 set +a
+
+uv_bin="$(resolve_uv_bin)"
 
 if [[ "${ENABLE_WECHATPADPRO:-0}" != "1" ]]; then
   echo "WeChatPadPro is disabled; skip login preparation."
@@ -39,7 +59,7 @@ ensure_account_key() {
     -H 'Content-Type: application/json' \
     -d '{"Count":1,"Days":365}')"
 
-  account_key="$(python3 - <<'PY' "$response"
+  account_key="$("$uv_bin" run python - <<'PY' "$response"
 import json, sys
 payload = json.loads(sys.argv[1])
 keys = ((payload.get("Data") or {}).get("authKeys") or [])
@@ -77,7 +97,7 @@ if ! response="$(request_login_qr "/login/GetLoginQrCodePadX" 2>/tmp/wechatpadpr
   fi
 fi
 
-python3 - <<'PY' "$response" "$login_dir" "$WECHATPADPRO_ACCOUNT_KEY"
+"$uv_bin" run python - <<'PY' "$response" "$login_dir" "$WECHATPADPRO_ACCOUNT_KEY"
 import base64
 import json
 import pathlib

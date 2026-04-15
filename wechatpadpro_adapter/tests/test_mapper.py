@@ -1,4 +1,4 @@
-from wechatpadpro_adapter.mapper import build_run_payload, unwrap_event
+from wechatpadpro_adapter.mapper import build_run_payload, extract_content, extract_sender, unwrap_event
 
 
 def test_private_text_event_maps_to_runner_payload():
@@ -22,6 +22,21 @@ def test_private_text_event_maps_to_runner_payload():
     assert payload["reply_to_message_id"] == "m-1"
 
 
+def test_private_text_without_is_group_stays_private():
+    event = {
+        "msgType": 1,
+        "content": "hello",
+        "fromUserName": "wxid_user",
+        "toUserName": "wxid_bot",
+    }
+
+    payload = build_run_payload(event, default_cwd="/workspace", timeout_secs=120)
+
+    assert payload["conversation_id"] == "wechatpadpro:private:wxid_user"
+    assert payload["session_id"] == "wechatpadpro:private:wxid_user"
+    assert payload["chat_type"] == "private"
+
+
 def test_group_text_event_maps_to_runner_payload():
     event = {
         "msgType": "Text",
@@ -37,6 +52,38 @@ def test_group_text_event_maps_to_runner_payload():
     assert payload["session_id"] == "wechatpadpro:group:room-123:user:wxid_user"
     assert payload["chat_type"] == "group"
     assert payload["timeout_secs"] == 90
+
+
+def test_group_message_uses_chatroom_sender_and_room_id():
+    event = {
+        "msgType": 1,
+        "content": "hi group",
+        "fromUserName": "123@chatroom",
+        "senderWxid": "wxid_user",
+    }
+
+    payload = build_run_payload(event, default_cwd="/workspace", timeout_secs=90)
+
+    assert payload["conversation_id"] == "wechatpadpro:group:123@chatroom"
+    assert payload["session_id"] == "wechatpadpro:group:123@chatroom:user:wxid_user"
+    assert payload["user_id"] == "wxid_user"
+    assert payload["chat_type"] == "group"
+
+
+def test_group_message_sent_by_bot_uses_chatroom_target_as_group_id():
+    event = {
+        "msgType": 1,
+        "content": "/agent hello",
+        "fromUserName": "wxid_bot",
+        "toUserName": "123@chatroom",
+    }
+
+    payload = build_run_payload(event, default_cwd="/workspace", timeout_secs=90)
+
+    assert payload["conversation_id"] == "wechatpadpro:group:123@chatroom"
+    assert payload["session_id"] == "wechatpadpro:group:123@chatroom:user:wxid_bot"
+    assert payload["user_id"] == "wxid_bot"
+    assert payload["chat_type"] == "group"
 
 
 def test_wrapped_message_event_unwraps_before_mapping():
@@ -68,3 +115,19 @@ def test_unwrap_event_prefers_message_payload():
     )
     assert event["content"] == "hello"
     assert event["uuid"] == "abc"
+
+
+def test_group_transport_prefix_is_normalized_from_content():
+    event = {
+        "msgType": 1,
+        "content": "wxid_user:\n/agent hello",
+        "fromUserName": "123@chatroom",
+    }
+
+    assert extract_content(event) == "/agent hello"
+    assert extract_sender(event) == "wxid_user"
+
+    payload = build_run_payload(event, default_cwd="/workspace", timeout_secs=60)
+    assert payload["conversation_id"] == "wechatpadpro:group:123@chatroom"
+    assert payload["session_id"] == "wechatpadpro:group:123@chatroom:user:wxid_user"
+    assert payload["prompt"] == "/agent hello"

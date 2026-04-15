@@ -45,11 +45,24 @@ class WeChatPadProClient:
 
         payload = build_text_reply(event, text)
         async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
-            return await client.post(
+            response = await client.post(
                 "/message/SendTextMessage",
                 params={"key": self.account_key},
                 json=payload,
             )
+        response.raise_for_status()
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise RuntimeError(
+                f"WeChatPadPro SendTextMessage returned non-JSON response: {response.text[:500]}"
+            ) from exc
+
+        if int(body.get("Code", 0)) != 200:
+            raise RuntimeError(
+                f"WeChatPadPro SendTextMessage failed: {body}"
+            )
+        return response
 
     async def configure_webhook(
         self,
@@ -66,10 +79,13 @@ class WeChatPadProClient:
             "URL": callback_url,
             "Enabled": True,
             "IncludeSelfMessage": include_self_message,
-            "MessageTypes": message_types or ["Text"],
+            "MessageTypes": message_types or ["1"],
             "RetryCount": 3,
             "Timeout": 5,
             "Secret": secret or "",
+            "UseDirectStream": True,
+            "UseRedisSync": False,
+            "IndependentMode": True,
         }
         async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
             return await client.post(

@@ -3,7 +3,15 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-env_file="${1:-$repo_root/deploy/myqqbot.env}"
+default_env_file="$repo_root/deploy/dogbot.env"
+legacy_env_file="$repo_root/deploy/myqqbot.env"
+if [[ $# -ge 1 ]]; then
+  env_file="$1"
+elif [[ -f "$default_env_file" ]]; then
+  env_file="$default_env_file"
+else
+  env_file="$legacy_env_file"
+fi
 
 resolve_rust_user_home() {
   local rust_user
@@ -66,7 +74,7 @@ nohup env \
   DEFAULT_TIMEOUT_SECS="${DEFAULT_TIMEOUT_SECS:-120}" \
   MAX_TIMEOUT_SECS="${MAX_TIMEOUT_SECS:-300}" \
   CLAUDE_CONTAINER_NAME="${CLAUDE_CONTAINER_NAME:-claude-runner}" \
-  CLAUDE_IMAGE_NAME="${CLAUDE_IMAGE_NAME:-myqqbot/claude-runner:local}" \
+  CLAUDE_IMAGE_NAME="${CLAUDE_IMAGE_NAME:-dogbot/claude-runner:local}" \
   AGENT_WORKSPACE_DIR="$AGENT_WORKSPACE_DIR" \
   AGENT_STATE_DIR="$AGENT_STATE_DIR" \
   ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-http://host.docker.internal:9000}" \

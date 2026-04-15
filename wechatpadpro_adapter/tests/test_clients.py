@@ -19,3 +19,20 @@ def test_private_reply_keeps_plain_text():
     payload = build_text_reply(event, "done")
     assert payload["MsgItem"][0]["TextContent"] == "done"
     assert payload["MsgItem"][0]["ToUserName"] == "wxid_user"
+
+
+def test_private_reply_without_is_group_does_not_target_self():
+    event = {"fromUserName": "wxid_user", "toUserName": "wxid_bot"}
+    payload = build_text_reply(event, "done")
+    assert payload["MsgItem"][0]["TextContent"] == "done"
+    assert payload["MsgItem"][0]["ToUserName"] == "wxid_user"
+
+
+def test_group_reply_sent_by_bot_targets_chatroom_from_to_user_name():
+    event = {
+        "fromUserName": "wxid_bot",
+        "toUserName": "room-1@chatroom",
+        "senderNickName": "DogDu",
+    }
+    payload = build_text_reply(event, "done")
+    assert payload["MsgItem"][0]["ToUserName"] == "room-1@chatroom"

@@ -8,7 +8,7 @@ fn settings_use_expected_defaults() {
     assert_eq!(settings.default_timeout_secs, 120);
     assert_eq!(settings.max_timeout_secs, 300);
     assert_eq!(settings.container_name, "claude-runner");
-    assert_eq!(settings.image_name, "myqqbot/claude-runner:local");
+    assert_eq!(settings.image_name, "dogbot/claude-runner:local");
     assert_eq!(settings.workspace_dir, "/srv/agent-workdir");
     assert_eq!(settings.state_dir, "/srv/agent-state");
     assert_eq!(

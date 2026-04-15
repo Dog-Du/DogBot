@@ -41,19 +41,36 @@ class ClaudeRunnerBridge(Star):
             "CLAUDE_BRIDGE_STATUS_COMMAND_NAME",
             config.get("status_command_name", "agent-status"),
         )
+        self.qq_bot_id = os.getenv(
+            "CLAUDE_BRIDGE_QQ_BOT_ID", str(config.get("qq_bot_id", ""))
+        ).strip()
 
     @filter.event_message_type(filter.EventMessageType.ALL)
-    async def on_all_message(self, event: AstrMessageEvent) -> MessageEventResult | None:
+    async def on_all_message(
+        self, event: AstrMessageEvent
+    ) -> MessageEventResult | None:
         raw_message = event.message_str.strip()
-        if not self._should_route_to_agent(raw_message):
+        logger.info(
+            "claude_runner_bridge saw message: origin=%s platform=%s text=%s",
+            getattr(event, "unified_msg_origin", ""),
+            self._platform_name(event),
+            raw_message,
+        )
+        if self._is_status_command(raw_message):
+            return await self.agent_status(event)
+        if not self._should_route_to_agent(event, raw_message):
             return None
 
-        return await self._forward_request(event, raw_message)
+        result = await self._forward_request(event, raw_message)
+        result.stop_event()
+        event.set_result(result)
+        event.stop_event()
+        return None
 
     async def _forward_request(
         self, event: AstrMessageEvent, raw_message: str
     ) -> MessageEventResult:
-        prompt = self._extract_prompt(raw_message, self.command_name)
+        prompt = self._extract_prompt(event, raw_message, self.command_name)
         if not prompt:
             return self._text_result(event, f"Usage: /{self.command_name} <prompt>")
 
@@ -86,8 +103,7 @@ class ClaudeRunnerBridge(Star):
 
         return self._text_result(event, self._format_error(data))
 
-    @filter.command("agent-status")
-    async def agent_status(self, event: AstrMessageEvent) -> MessageEventResult:
+    async def agent_status(self, event: AstrMessageEvent) -> MessageEventResult | None:
         try:
             async with httpx.AsyncClient(
                 base_url=self.agent_runner_base_url, timeout=5
@@ -95,13 +111,25 @@ class ClaudeRunnerBridge(Star):
                 response = await client.get("/healthz")
         except httpx.HTTPError as exc:
             logger.exception("agent-runner health check failed: %s", exc)
-            return self._text_result(event, "agent-runner unavailable")
+            result = self._text_result(event, "agent-runner unavailable")
+            result.stop_event()
+            event.set_result(result)
+            event.stop_event()
+            return None
 
         if response.is_success:
-            return self._text_result(event, "agent-runner ok")
-        return self._text_result(
+            result = self._text_result(event, "agent-runner ok")
+            result.stop_event()
+            event.set_result(result)
+            event.stop_event()
+            return None
+        result = self._text_result(
             event, f"agent-runner unhealthy: {response.status_code}"
         )
+        result.stop_event()
+        event.set_result(result)
+        event.stop_event()
+        return None
 
     def _build_payload(self, event: AstrMessageEvent, prompt: str) -> dict[str, Any]:
         platform = self._platform_name(event)
@@ -136,17 +164,32 @@ class ClaudeRunnerBridge(Star):
 
         return payload
 
-    def _should_route_to_agent(self, message: str) -> bool:
-        normalized = message.lstrip()
+    def _should_route_to_agent(self, event: AstrMessageEvent, message: str) -> bool:
+        normalized = self._normalize_message_for_routing(event, message)
         if not normalized:
             return False
         if self._is_status_command(normalized):
             return False
-        if self._is_agent_alias(normalized):
-            return True
-        if normalized.startswith(("/", "!", "！")):
+        if self._is_qq_group_message(event):
+            return self._is_addressed_to_qq_bot(event, message) and self._matches_agent_command(
+                event, normalized
+            )
+        return self._matches_agent_command(event, normalized)
+
+    def _is_qq_group_message(self, event: AstrMessageEvent) -> bool:
+        if self._group_id(event) is None:
             return False
-        return True
+        origin = str(getattr(event, "unified_msg_origin", "") or "")
+        if ":GroupMessage:" in origin:
+            return True
+        return self._platform_name(event) == "qq"
+
+    def _is_addressed_to_qq_bot(self, event: AstrMessageEvent, message: str) -> bool:
+        if not self.qq_bot_id:
+            return False
+        if f"[At:{self.qq_bot_id}]" in message:
+            return True
+        return f"[At:{self.qq_bot_id}]" in self._raw_chain_text(event)
 
     def _is_status_command(self, message: str) -> bool:
         prefixes = (
@@ -164,13 +207,70 @@ class ClaudeRunnerBridge(Star):
         )
         return any(message == prefix or message.startswith(f"{prefix} ") for prefix in prefixes)
 
-    def _extract_prompt(self, message: str, command_name: str) -> str:
-        normalized = message.lstrip()
-        prefixes = (f"/{command_name}", f"！{command_name}", f"!{command_name}")
+    def _matches_agent_command(self, event: AstrMessageEvent, message: str) -> bool:
+        if self._is_agent_alias(message):
+            return True
+
+        raw_chain_text = self._raw_chain_text(event)
+        if not raw_chain_text:
+            return False
+
+        raw_without_mentions = self._strip_leading_qq_mentions(raw_chain_text)
+        return raw_without_mentions.startswith(f"/{self.command_name}") and (
+            message == self.command_name or message.startswith(f"{self.command_name} ")
+        )
+
+    def _extract_prompt(
+        self, event: AstrMessageEvent, message: str, command_name: str
+    ) -> str:
+        normalized = self._strip_leading_qq_mentions(message)
+        prefixes = (
+            f"/{command_name}",
+            f"！{command_name}",
+            f"!{command_name}",
+        )
         for prefix in prefixes:
             if normalized.startswith(prefix):
                 return normalized[len(prefix) :].strip()
+        if normalized.startswith(f"{command_name} "):
+            raw_without_mentions = self._strip_leading_qq_mentions(
+                self._raw_chain_text(event)
+            )
+            if raw_without_mentions.startswith(f"/{command_name}"):
+                return normalized[len(command_name) :].strip()
         return normalized.strip()
+
+    def _raw_chain_text(self, event: AstrMessageEvent) -> str:
+        parts: list[str] = []
+        try:
+            messages = event.get_messages()
+        except AttributeError:
+            return ""
+
+        for component in messages:
+            qq = getattr(component, "qq", None)
+            text = getattr(component, "text", None)
+            if qq is not None:
+                parts.append(f"[At:{qq}]")
+            elif isinstance(text, str):
+                parts.append(text)
+        return "".join(parts).strip()
+
+    def _normalize_message_for_routing(
+        self, event: AstrMessageEvent, message: str
+    ) -> str:
+        if self._is_qq_group_message(event):
+            return self._strip_leading_qq_mentions(message)
+        return message.lstrip()
+
+    def _strip_leading_qq_mentions(self, message: str) -> str:
+        normalized = message.lstrip()
+        while normalized.startswith("[At:"):
+            closing_index = normalized.find("]")
+            if closing_index == -1:
+                break
+            normalized = normalized[closing_index + 1 :].lstrip()
+        return normalized
 
     def _format_error(self, data: dict[str, Any]) -> str:
         error_code = str(data.get("error_code", "unknown"))
@@ -190,8 +290,7 @@ class ClaudeRunnerBridge(Star):
 
     def _text_result(self, event: AstrMessageEvent, message: str) -> MessageEventResult:
         group_id = self._group_id(event)
-        platform = self._platform_name(event)
-        if group_id and platform == "qq":
+        if group_id and self._is_qq_group_message(event):
             return event.chain_result(
                 [Comp.At(qq=str(event.get_sender_id())), Comp.Plain(message)]
             )

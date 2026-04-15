@@ -51,3 +51,22 @@ fn session_store_rejects_identity_mismatch_for_existing_external_session() {
 
     assert!(err.to_string().contains("already belongs"));
 }
+
+#[test]
+fn session_store_reset_session_rotates_claude_session_id() {
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("runner.db");
+    let store = SessionStore::open(&db_path).unwrap();
+
+    let first = store
+        .get_or_create_session("qq-user-1", "qq", "private:1", "1")
+        .unwrap();
+    let reset = store
+        .reset_session("qq-user-1", "qq", "private:1", "1")
+        .unwrap();
+    let fetched = store.get_session("qq-user-1").unwrap().unwrap();
+
+    assert_ne!(first.claude_session_id, reset.claude_session_id);
+    assert_eq!(reset.claude_session_id, fetched.claude_session_id);
+    assert!(reset.is_new);
+}

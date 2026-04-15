@@ -56,7 +56,7 @@ impl Settings {
         let image_name = env_map
             .get("CLAUDE_IMAGE_NAME")
             .cloned()
-            .unwrap_or_else(|| "myqqbot/claude-runner:local".to_string());
+            .unwrap_or_else(|| "dogbot/claude-runner:local".to_string());
         let workspace_dir = env_map
             .get("AGENT_WORKSPACE_DIR")
             .cloned()

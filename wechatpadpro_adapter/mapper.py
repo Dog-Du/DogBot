@@ -1,6 +1,32 @@
 from __future__ import annotations
 
+import re
 from typing import Any
+
+
+TRANSPORT_PREFIX_RE = re.compile(
+    r"^\s*(?P<sender>[A-Za-z0-9_@-]+):\s*\n(?P<body>.+)$",
+    re.S,
+)
+
+def extract_raw_content(event: dict[str, Any]) -> str:
+    return str(
+        event.get("content")
+        or event.get("Content")
+        or event.get("text")
+        or event.get("TextContent")
+        or ""
+    ).strip()
+
+
+def parse_transport_prefixed_content(event: dict[str, Any]) -> tuple[str | None, str]:
+    raw = extract_raw_content(event)
+    if not raw:
+        return (None, "")
+    match = TRANSPORT_PREFIX_RE.match(raw)
+    if not match:
+        return (None, raw)
+    return (match.group("sender").strip(), match.group("body").strip())
 
 
 def unwrap_event(payload: dict[str, Any]) -> dict[str, Any]:
@@ -25,41 +51,73 @@ def unwrap_event(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def extract_content(event: dict[str, Any]) -> str:
-    return str(
-        event.get("content")
-        or event.get("Content")
-        or event.get("text")
-        or event.get("TextContent")
-        or ""
-    ).strip()
+    _sender, content = parse_transport_prefixed_content(event)
+    return content
 
 
 def extract_sender(event: dict[str, Any]) -> str:
-    return str(
+    sender = str(
         event.get("senderWxid")
         or event.get("senderWxId")
-        or event.get("fromUserName")
+        or event.get("senderId")
+        or ""
+    ).strip()
+    if sender:
+        return sender
+
+    prefixed_sender, _content = parse_transport_prefixed_content(event)
+    if prefixed_sender:
+        return prefixed_sender
+
+    from_user = str(
+        event.get("fromUserName")
         or event.get("fromUsername")
         or event.get("FromUserName")
         or ""
     ).strip()
+    if from_user.endswith("@chatroom"):
+        return ""
+    return from_user
 
 
 def extract_group_id(event: dict[str, Any]) -> str:
-    return str(
+    group_id = str(
         event.get("roomId")
         or event.get("chatroomId")
         or event.get("chatRoomName")
         or event.get("fromChatRoom")
         or event.get("fromGroup")
-        or event.get("toUserName")
         or ""
     ).strip()
+    if group_id:
+        return group_id
+
+    from_user = str(
+        event.get("fromUserName")
+        or event.get("fromUsername")
+        or event.get("FromUserName")
+        or ""
+    ).strip()
+    if from_user.endswith("@chatroom"):
+        return from_user
+
+    to_user = str(
+        event.get("toUserName")
+        or event.get("toUsername")
+        or event.get("ToUserName")
+        or ""
+    ).strip()
+    if to_user.endswith("@chatroom"):
+        return to_user
+
+    return ""
 
 
 def is_group_event(event: dict[str, Any]) -> bool:
     explicit = event.get("isGroup")
     if explicit is not None:
+        if isinstance(explicit, str):
+            return explicit.strip().lower() in {"1", "true", "yes", "on"}
         return bool(explicit)
 
     group_id = extract_group_id(event)

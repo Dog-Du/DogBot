@@ -30,6 +30,7 @@ services:
       CLAUDE_BRIDGE_TIMEOUT_SECS: ${CLAUDE_BRIDGE_TIMEOUT_SECS:-120}
       CLAUDE_BRIDGE_COMMAND_NAME: ${CLAUDE_BRIDGE_COMMAND_NAME:-agent}
       CLAUDE_BRIDGE_STATUS_COMMAND_NAME: ${CLAUDE_BRIDGE_STATUS_COMMAND_NAME:-agent-status}
+      CLAUDE_BRIDGE_QQ_BOT_ID: ${CLAUDE_BRIDGE_QQ_BOT_ID:-}
     volumes:
       - "${ASTRBOT_DATA_DIR:-/srv/astrbot/data}:/AstrBot/data"
       - "${ASTRBOT_PLUGIN_DIR:-../astrbot/plugins/claude_runner_bridge}:/AstrBot/data/plugins/claude_runner_bridge"

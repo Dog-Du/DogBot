@@ -3,7 +3,15 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-env_file="${1:-$repo_root/deploy/myqqbot.env}"
+default_env_file="$repo_root/deploy/dogbot.env"
+legacy_env_file="$repo_root/deploy/myqqbot.env"
+if [[ $# -ge 1 ]]; then
+  env_file="$1"
+elif [[ -f "$default_env_file" ]]; then
+  env_file="$default_env_file"
+else
+  env_file="$legacy_env_file"
+fi
 
 resolve_compose_cmd() {
   if docker compose version >/dev/null 2>&1; then
@@ -65,6 +73,8 @@ if [[ -f "$wechatpadpro_adapter_pid_file" ]]; then
   fi
   rm -f "$wechatpadpro_adapter_pid_file"
 fi
+
+pkill -f 'uvicorn wechatpadpro_adapter.app:create_app' >/dev/null 2>&1 || true
 
 if [[ "${APPLY_NETWORK_POLICY:-1}" == "1" ]]; then
   if [[ ${EUID:-$(id -u)} -eq 0 ]]; then

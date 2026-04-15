@@ -35,10 +35,10 @@ RUN useradd --system --create-home --home-dir /workspace claude \
 RUN printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -euo pipefail' \
-    'mkdir -p /workspace /state /state/claude' \
+    'mkdir -p /workspace /state /state/claude /state/claude/debug' \
     'chown claude:claude /workspace' \
     'chown claude:claude /state' \
-    'chown claude:claude /state/claude' \
+    'chown -R claude:claude /state/claude' \
     'touch /state/claude/.keep' \
     'chown claude:claude /state/claude/.keep' \
     > /usr/local/bin/claude-bootstrap.sh \

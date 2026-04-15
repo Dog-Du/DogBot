@@ -10,7 +10,7 @@ files=(
   "astrbot/plugins/claude_runner_bridge/README.md"
   "astrbot/plugins/claude_runner_bridge/requirements.txt"
   "compose/platform-stack.yml"
-  "deploy/myqqbot.env.example"
+  "deploy/dogbot.env.example"
   "scripts/deploy_stack.sh"
   "scripts/stop_stack.sh"
   "scripts/start_agent_runner.sh"
@@ -67,7 +67,7 @@ ensure_pattern "astrbot/plugins/claude_runner_bridge/main.py" "@register" || pat
 ensure_pattern "astrbot/plugins/claude_runner_bridge/main.py" "agent-runner" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/platform-stack.yml" "soulter/astrbot:latest" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/platform-stack.yml" "mlikiowa/napcat-docker:latest" || pattern_errors=$((pattern_errors+1))
-ensure_pattern "deploy/myqqbot.env.example" "AGENT_RUNNER_BIND_ADDR" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "deploy/dogbot.env.example" "AGENT_RUNNER_BIND_ADDR" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/deploy_stack.sh" "docker compose --env-file" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/start_agent_runner.sh" "build --release --manifest-path" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/apply_runner_network_policy.sh" "INPUT" || pattern_errors=$((pattern_errors+1))

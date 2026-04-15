@@ -6,7 +6,7 @@ fn container_spec_matches_runner_defaults() {
     let spec = agent_runner::docker_client::ContainerSpec::from_settings(&settings);
 
     assert_eq!(spec.container_name, "claude-runner");
-    assert_eq!(spec.image_name, "myqqbot/claude-runner:local");
+    assert_eq!(spec.image_name, "dogbot/claude-runner:local");
     assert_eq!(spec.workspace_dir, "/srv/agent-workdir");
     assert_eq!(spec.state_dir, "/srv/agent-state");
     assert_eq!(spec.anthropic_base_url, "http://host.docker.internal:9000");
@@ -26,7 +26,7 @@ fn create_container_config_carries_runtime_limits_and_mounts() {
     let config = spec.create_config();
     let host_config = config.host_config.expect("host config");
 
-    assert_eq!(config.image.as_deref(), Some("myqqbot/claude-runner:local"));
+    assert_eq!(config.image.as_deref(), Some("dogbot/claude-runner:local"));
     assert_eq!(config.working_dir.as_deref(), Some("/workspace"));
     let env = config.env.as_ref().expect("env");
     let required_env = [

@@ -3,7 +3,7 @@ set -euo pipefail
 
 container_name="${CLAUDE_CONTAINER_NAME:-claude-runner}"
 api_proxy_port="${API_PROXY_PORT:-9000}"
-policy_chain="${POLICY_CHAIN:-MYQQBOT_RUNNER_POLICY}"
+policy_chain="${POLICY_CHAIN:-DOGBOT_RUNNER_POLICY}"
 
 require_root() {
   if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
