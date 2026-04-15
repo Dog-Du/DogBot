@@ -23,24 +23,48 @@ QQ
 -> 上游模型服务
 ```
 
-## 1. 宿主机依赖
+## 1. 部署依赖
 
-必需：
+下面这些是当前仓库部署 `DogBot` 所需的完整前置条件。
 
-- Linux
-- Docker Engine
-- Docker Compose v2
-- Rust 工具链（`cargo`）
+### 1.1 必需软件
+
+- `Linux`
+  - 当前部署方案默认以 Linux 宿主机为目标
 - `uv`
+  - 用来运行 Python 相关脚本、适配器和测试
+- `Docker Engine`
+  - 用来运行 `claude-runner`、`NapCat`、`AstrBot`、`WeChatPadPro`
+- `Docker Compose v2`
+  - 用来编排多个容器栈
+- `Rust` / `cargo`
+  - 用来编译和运行宿主机上的 `agent-runner`
 - `curl`
+  - 用于接口联调、健康检查和脚本诊断
 - `sudo`
+  - 某些 Docker、iptables、网络策略和系统级操作需要 root 权限
 
-推荐：
+### 1.2 必需外部条件
+
+- 一个可用的 `Claude / Anthropic 协议兼容模型源`
+  - 当前 Docker 内的 Claude Code 只能直接使用：
+    - `Anthropic-compatible`
+    - 或 `Claude-compatible`
+    的接口
+  - 例如：
+    - `PackyAPI` 的 Claude 兼容入口
+    - `GLM` 官方 Anthropic 兼容入口
+    - `MiniMax` 官方 Anthropic 兼容入口
+- 至少一个可登录的平台账号
+  - QQ：个人 QQ 号，供 `NapCat` 登录
+  - 微信：个人微信号，供 `WeChatPadPro` 登录
+
+### 1.3 可选但推荐
 
 - `git`
 - `rg`
 
-快速检查：
+### 1.4 快速检查
 
 ```bash
 docker --version
@@ -57,6 +81,12 @@ newgrp docker
 ```
 
 或者直接在部署命令前加 `sudo`。
+
+### 1.5 重要说明
+
+- 不能把只兼容 OpenAI 的 `base_url` 直接给当前 Docker 内的 Claude Code 使用
+- 真实上游 key 只应保留在宿主机，不能直接注入 `claude-runner` 容器
+- 当前工程已经把真实 key 隔离在宿主机 `agent-runner` 的内置代理里
 
 ## 2. 重要文件
 
