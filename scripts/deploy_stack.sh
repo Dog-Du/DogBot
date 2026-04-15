@@ -6,7 +6,54 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 # shellcheck source=./lib/common.sh
 source "$script_dir/lib/common.sh"
 
-env_file="$(dogbot_resolve_env_file "${1:-}")"
+selected_qq=""
+selected_wechat=""
+explicit_selection=0
+env_file_override=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --qq)
+      selected_qq=1
+      explicit_selection=1
+      shift
+      ;;
+    --no-qq)
+      selected_qq=0
+      explicit_selection=1
+      shift
+      ;;
+    --wechat)
+      selected_wechat=1
+      explicit_selection=1
+      shift
+      ;;
+    --no-wechat)
+      selected_wechat=0
+      explicit_selection=1
+      shift
+      ;;
+    --env-file)
+      env_file_override="$2"
+      shift 2
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+    *)
+      if [[ -z "$env_file_override" ]]; then
+        env_file_override="$1"
+      else
+        echo "Unexpected argument: $1" >&2
+        exit 1
+      fi
+      shift
+      ;;
+  esac
+done
+
+env_file="$(dogbot_resolve_env_file "${env_file_override:-}")"
 if ! dogbot_require_env_file "$env_file"; then
   echo "Missing env file: $env_file" >&2
   echo "请先复制 deploy/dogbot.env.example 为 deploy/dogbot.env，并完成本地配置。" >&2
@@ -14,6 +61,35 @@ if ! dogbot_require_env_file "$env_file"; then
 fi
 
 dogbot_load_env_file "$env_file"
+runtime_state_file="$(dogbot_runtime_state_file)"
+
+if [[ $explicit_selection -eq 0 ]]; then
+  if [[ -t 0 ]]; then
+    if dogbot_prompt_yes_no "是否启用 QQ？" "$(dogbot_bool_to_flag "${ENABLE_QQ:-1}")"; then
+      selected_qq=1
+    else
+      selected_qq=0
+    fi
+
+    if dogbot_prompt_yes_no "是否启用微信？" "$(dogbot_bool_to_flag "${ENABLE_WECHATPADPRO:-0}")"; then
+      selected_wechat=1
+    else
+      selected_wechat=0
+    fi
+  else
+    selected_qq="$(dogbot_bool_to_flag "${ENABLE_QQ:-1}")"
+    selected_wechat="$(dogbot_bool_to_flag "${ENABLE_WECHATPADPRO:-0}")"
+  fi
+fi
+
+ENABLE_QQ="${selected_qq:-$(dogbot_bool_to_flag "${ENABLE_QQ:-1}")}"
+ENABLE_WECHATPADPRO="${selected_wechat:-$(dogbot_bool_to_flag "${ENABLE_WECHATPADPRO:-0}")}"
+
+if [[ "${ENABLE_QQ}" != "1" && "${ENABLE_WECHATPADPRO}" != "1" ]]; then
+  rm -f "$runtime_state_file"
+  echo "未选择任何平台，已退出，不执行部署。"
+  exit 0
+fi
 
 print_compose_failure_hint() {
   local stderr_file="$1"
@@ -78,11 +154,17 @@ mkdir -p \
   "${WECHATPADPRO_REDIS_DIR:-/srv/wechatpadpro/redis}" \
   "${AGENT_RUNNER_LOG_DIR:-${AGENT_STATE_DIR:-/srv/agent-state}/logs}"
 
+dogbot_save_runtime_state "$runtime_state_file"
+
 "$repo_root/scripts/start_agent_runner.sh" "$env_file"
 
 run_compose_up "$repo_root/compose/docker-compose.yml" claude-runner
-run_compose_up "$repo_root/compose/platform-stack.yml" napcat astrbot
-"$repo_root/scripts/configure_napcat_ws.sh" "$env_file"
+
+if [[ "${ENABLE_QQ}" == "1" ]]; then
+  run_compose_up "$repo_root/compose/platform-stack.yml" napcat astrbot
+  "$repo_root/scripts/configure_napcat_ws.sh" "$env_file"
+  "$repo_root/scripts/prepare_napcat_login.sh" "$env_file"
+fi
 
 if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
   dogbot_require_env WECHATPADPRO_IMAGE
@@ -116,8 +198,10 @@ if [[ "${APPLY_NETWORK_POLICY:-1}" == "1" ]]; then
 fi
 
 echo "Deployment finished."
-echo "NapCat WebUI: http://127.0.0.1:${NAPCAT_WEBUI_PORT:-6099}"
-echo "AstrBot WebUI: http://127.0.0.1:${ASTRBOT_WEBUI_PORT:-6185}"
+if [[ "${ENABLE_QQ}" == "1" ]]; then
+  echo "NapCat WebUI: http://127.0.0.1:${NAPCAT_WEBUI_PORT:-6099}"
+  echo "AstrBot WebUI: http://127.0.0.1:${ASTRBOT_WEBUI_PORT:-6185}"
+fi
 if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
   echo "WeChatPadPro API: http://127.0.0.1:${WECHATPADPRO_HOST_PORT:-38849}"
   echo "WeChatPadPro adapter: http://${WECHATPADPRO_ADAPTER_BIND_ADDR:-127.0.0.1:18999}"

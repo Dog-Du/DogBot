@@ -39,10 +39,13 @@ QQ
 
 ```text
 .
+├── deploy_stack.sh              # 根目录部署入口
+├── stop_stack.sh                # 根目录停止入口
 ├── README.md
 ├── agent-runner/                 # Rust 核心服务
 ├── astrbot/                      # AstrBot 插件
 ├── compose/                      # Docker Compose 编排
+│   └── README.md                 # 高级用户的 compose 说明
 ├── deploy/                       # 配置模板与部署说明
 ├── docker/claude-runner/         # Claude 容器镜像
 ├── scripts/                      # 启停、配置、诊断脚本
@@ -59,6 +62,24 @@ QQ
 默认配置模板见：
 
 - `deploy/dogbot.env.example`
+
+## 部署入口
+
+普通用户只需要关心两件事：
+
+- `deploy/dogbot.env`
+- `./deploy_stack.sh` / `./stop_stack.sh`
+
+`compose/` 目录默认不需要修改；如果你确实需要自定义容器层行为，请查看 `compose/README.md`。
+
+当前部署脚本支持两种使用方式：
+
+- 无参数运行 `./deploy_stack.sh`
+  - 进入交互式平台选择
+- 显式传参
+  - `./deploy_stack.sh --qq`
+  - `./deploy_stack.sh --wechat`
+  - `./deploy_stack.sh --qq --wechat`
 
 ## 部署依赖
 

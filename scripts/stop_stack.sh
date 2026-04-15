@@ -8,6 +8,8 @@ source "$script_dir/lib/common.sh"
 
 env_file="$(dogbot_resolve_env_file "${1:-}")"
 dogbot_load_env_file "$env_file"
+runtime_state_file="$(dogbot_runtime_state_file)"
+dogbot_load_runtime_state_if_present "$runtime_state_file"
 
 if ! compose_cmd="$(dogbot_resolve_compose_cmd)"; then
   echo "Docker Compose is not available." >&2
@@ -19,13 +21,17 @@ if [[ "$compose_cmd" == "docker compose" ]]; then
   if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
     docker compose --env-file "$env_file" -f "$repo_root/compose/wechatpadpro-stack.yml" down
   fi
-  docker compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" down
+  if [[ "${ENABLE_QQ:-1}" == "1" ]]; then
+    docker compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" down
+  fi
   docker compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" down
 else
   if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
     docker-compose --env-file "$env_file" -f "$repo_root/compose/wechatpadpro-stack.yml" down
   fi
-  docker-compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" down
+  if [[ "${ENABLE_QQ:-1}" == "1" ]]; then
+    docker-compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" down
+  fi
   docker-compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" down
 fi
 
@@ -56,5 +62,7 @@ if [[ "${APPLY_NETWORK_POLICY:-1}" == "1" ]]; then
     sudo "$repo_root/scripts/remove_runner_network_policy.sh"
   fi
 fi
+
+rm -f "$runtime_state_file"
 
 echo "Stack stopped."

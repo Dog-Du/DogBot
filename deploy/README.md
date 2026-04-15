@@ -2,6 +2,21 @@
 
 本文档说明如何部署当前仓库里的 `DogBot`。
 
+当前部署遵循三条原则：
+
+1. 用户只修改 `deploy/dogbot.env`
+2. 用户只通过 `./deploy_stack.sh` 启动
+3. 用户只通过 `./stop_stack.sh` 停止
+
+当前 `./deploy_stack.sh` 支持两种模式：
+
+- 无参数运行
+  - 进入交互式平台选择
+- 显式参数运行
+  - `--qq`
+  - `--wechat`
+  - `--qq --wechat`
+
 当前支持两条主要链路：
 
 ```text
@@ -82,66 +97,103 @@ newgrp docker
 - 真实上游 key 只应保留在宿主机，不能直接注入 `claude-runner` 容器
 - 当前工程已经把真实 key 隔离在宿主机 `agent-runner` 的内置代理里
 
-## 2. 重要文件
+## 2. 配置与入口
+
+正常情况下，用户只需要关心下面三个入口：
+
+- `deploy/dogbot.env`
+- `./deploy_stack.sh`
+- `./stop_stack.sh`
+
+`compose/` 目录默认不需要修改；如果你确实要调整容器层行为，请查看 `compose/README.md`。
+
+## 3. 重要文件
 
 最重要的配置和脚本如下：
 
-- `deploy/dogbot.env.example`
-  - 默认配置模板
 - `deploy/dogbot.env`
   - 你自己的实际部署配置
+- `deploy/dogbot.env.example`
+  - 默认配置模板
+- `./deploy_stack.sh`
+  - 根目录部署入口
+- `./stop_stack.sh`
+  - 根目录停止入口
 - `compose/docker-compose.yml`
   - `claude-runner` 容器定义
 - `compose/platform-stack.yml`
   - `napcat` / `astrbot` 容器定义
 - `compose/wechatpadpro-stack.yml`
   - `wechatpadpro` / MySQL / Redis 容器定义
-- `scripts/deploy_stack.sh`
-  - 一键启动
-- `scripts/stop_stack.sh`
-  - 一键停止
 - `scripts/start_agent_runner.sh`
   - 启动宿主机 `agent-runner`
 - `scripts/start_wechatpadpro_adapter.sh`
   - 启动宿主机微信适配器
 
-## 3. 快速开始
+## 4. 快速开始
 
-### 3.1 复制配置模板
+### 4.1 复制配置模板
 
 ```bash
 cp deploy/dogbot.env.example deploy/dogbot.env
 ```
 
-### 3.2 编辑配置文件
+### 4.2 编辑配置文件
 
 至少要改这些项：
 
 - 工作目录和状态目录
 - `AGENT_RUNNER_BIND_ADDR`
-- 上游 provider 相关配置
+- 上游配置
 - 上游 key
 - QQ / 微信相关目录和端口
 
-### 3.3 启动
+### 4.3 启动
 
 ```bash
-./scripts/deploy_stack.sh deploy/dogbot.env
+./deploy_stack.sh
+```
+
+默认会进入交互式平台选择：
+
+- 询问是否启用 QQ
+- 询问是否启用微信
+- 如果选择了对应平台，会自动准备登录二维码
+
+也可以显式指定平台：
+
+```bash
+./deploy_stack.sh --qq
+./deploy_stack.sh --wechat
+./deploy_stack.sh --qq --wechat
 ```
 
 如果 Docker 权限不够：
 
 ```bash
-sudo ./scripts/deploy_stack.sh deploy/dogbot.env
+sudo ./deploy_stack.sh
 ```
 
-### 3.4 停止
+如果你希望显式指定配置文件，也可以：
 
 ```bash
-./scripts/stop_stack.sh deploy/dogbot.env
+./deploy_stack.sh deploy/dogbot.env
+./deploy_stack.sh --qq --env-file deploy/dogbot.env
 ```
 
-## 4. 配置文件说明
+### 4.4 停止
+
+```bash
+./stop_stack.sh
+```
+
+如果你希望显式指定配置文件，也可以：
+
+```bash
+./stop_stack.sh deploy/dogbot.env
+```
+
+## 5. 配置文件说明
 
 推荐使用：
 
@@ -149,7 +201,7 @@ sudo ./scripts/deploy_stack.sh deploy/dogbot.env
 
 模板里已经为每个字段补了中文注释。下面只强调最重要的几组。
 
-### 4.1 Claude 容器
+### 5.1 Claude 容器
 
 ```env
 CLAUDE_CONTAINER_NAME=claude-runner
@@ -163,7 +215,7 @@ CLAUDE_CODE_VERSION=2.1.104
 - Claude 镜像名
 - 镜像内安装的 Claude Code 版本
 
-### 4.2 工作目录和状态目录
+### 5.2 工作目录和状态目录
 
 ```env
 AGENT_WORKSPACE_DIR=/srv/agent-workdir
@@ -182,7 +234,7 @@ SESSION_DB_PATH=/srv/agent-state/runner.db
 
 如果你改这些路径，旧会话和旧状态看起来会像“丢了”。
 
-### 4.3 agent-runner 与内置代理
+### 5.3 agent-runner 与内置代理
 
 ```env
 AGENT_RUNNER_BIND_ADDR=127.0.0.1:8787
@@ -198,7 +250,7 @@ API_PROXY_AUTH_TOKEN=local-proxy-token
 - `API_PROXY_BIND_ADDR` 不能绑到 `127.0.0.1`，否则 Docker 内访问不到
 - `API_PROXY_AUTH_TOKEN` 不是上游真实 key，只是本地代理 token
 
-### 4.4 上游配置
+### 5.4 上游配置
 
 当前只保留一套 Claude 协议上游配置：
 
@@ -231,6 +283,9 @@ http://127.0.0.1:6099
 
 - 打开 NapCat WebUI
 - 扫码登录
+- 部署脚本也会自动准备 NapCat 登录二维码：
+  - 如果本机安装了 `qrencode`，会直接在终端打印二维码
+  - 同时保留二维码图片和原始登录链接
 
 ### 5.3 反向 WebSocket
 
@@ -297,6 +352,7 @@ ENABLE_WECHATPADPRO=1
 
 - 生成 `WECHATPADPRO_ACCOUNT_KEY`
 - 拉取登录二维码
+- 如果本机安装了 `qrencode`，会直接在终端打印二维码
 - 把二维码图片和元信息写到：
   - `WECHATPADPRO_LOGIN_OUTPUT_DIR`
 
@@ -360,8 +416,8 @@ API_PROXY_UPSTREAM_MODEL=xxx
 改完后重启：
 
 ```bash
-./scripts/stop_stack.sh deploy/dogbot.env
-sudo ./scripts/deploy_stack.sh deploy/dogbot.env
+./stop_stack.sh
+sudo ./deploy_stack.sh
 ```
 
 ## 10. 需要特别注意的事情
@@ -409,13 +465,13 @@ Docker 里的 `claude-runner` 只拿到：
 ### 11.1 启动
 
 ```bash
-./scripts/deploy_stack.sh deploy/dogbot.env
+./deploy_stack.sh
 ```
 
 ### 11.2 停止
 
 ```bash
-./scripts/stop_stack.sh deploy/dogbot.env
+./stop_stack.sh
 ```
 
 ### 11.3 检查 runner
