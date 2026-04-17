@@ -11,8 +11,9 @@ mk_fake_runtime() {
   local case_dir="$2"
   local login_dir="$case_dir/napcat-login"
   local state_dir="$case_dir/state"
+  local qq_dir="$case_dir/napcat-qq"
 
-  mkdir -p "$login_dir" "$state_dir" "$case_dir/bin"
+  mkdir -p "$login_dir" "$state_dir" "$case_dir/bin" "$qq_dir"
   printf 'stale-qr\n' >"$login_dir/napcat-login-qr.png"
   cat >"$login_dir/napcat-login-meta.txt" <<EOF
 container=stale
@@ -37,7 +38,16 @@ case "\$1" in
           fi
         fi
         ;;
-      existing-log-reuse)
+      historical-log-filtering)
+        if [[ "\$*" == *"--since"* ]]; then
+          if (( count >= 2 )); then
+            printf 'scan https://txz.qq.com/p?k=fresh-link\n'
+          fi
+        else
+          printf 'scan https://txz.qq.com/p?k=stale-link\n'
+        fi
+        ;;
+      fallback-account-log-success)
         if [[ "\$*" != *"--since"* ]]; then
           printf 'scan https://txz.qq.com/p?k=existing-link\n'
         fi
@@ -47,6 +57,9 @@ case "\$1" in
       slow-login-budget)
         sleep 1
         printf 'scan https://txz.qq.com/p?k=slow-link\n'
+        ;;
+      bounded-request-timeout-recovers)
+        printf 'scan https://txz.qq.com/p?k=bounded-link\n'
         ;;
     esac
     ;;
@@ -61,9 +74,6 @@ case "\$1" in
     ;;
   cp)
     case "\$case_name" in
-      existing-log-reuse)
-        printf 'existing-qr\n' >"\${@: -1}"
-        ;;
       *)
         printf 'fresh-qr\n' >"\${@: -1}"
         ;;
@@ -90,32 +100,59 @@ done
 count=\$((\$(cat "\$state_dir/login_count" 2>/dev/null || echo 0) + 1))
 echo "\$count" >"\$state_dir/login_count"
 
-case "\$case_name" in
-  fresh-qr-success)
-    if (( count < 3 )); then
-      printf '{"status":"failed","retcode":1,"data":{}}\n'
-    else
+  case "\$case_name" in
+    fresh-qr-success)
+      if (( count < 3 )); then
+        printf '{"status":"failed","retcode":1,"data":{}}\n'
+      else
       printf '{"status":"ok","retcode":0,"data":{"user_id":3472283357}}\n'
     fi
     ;;
-  existing-log-reuse)
-    if (( count == 1 )); then
-      printf '{"status":"failed","retcode":1,"data":{}}\n'
-    else
-      printf '{"status":"ok","retcode":0,"data":{"user_id":3472283357}}\n'
-    fi
-    ;;
+    historical-log-filtering)
+      if (( count < 3 )); then
+        printf '{"status":"failed","retcode":1,"data":{}}\n'
+      else
+        printf '{"status":"ok","retcode":0,"data":{"user_id":3472283357}}\n'
+      fi
+      ;;
   already-logged-in)
     printf '{"status":"ok","retcode":0,"data":{"user_id":3472283357}}\n'
     ;;
-  slow-login-budget)
-    echo "\$max_time" >"\$state_dir/login_timeout"
-    if [[ "\$max_time" != "1" ]]; then
-      sleep 2
-    fi
-    printf '{"status":"failed","retcode":1,"data":{}}\n'
-    ;;
-esac
+    slow-login-budget)
+      echo "\$max_time" >"\$state_dir/login_timeout"
+      if [[ "\$max_time" != "1" ]]; then
+        sleep 2
+      fi
+      printf '{"status":"failed","retcode":1,"data":{}}\n'
+      ;;
+    fallback-account-log-success)
+      if (( count < 2 )); then
+        printf '{"status":"failed","retcode":1,"data":{}}\n'
+      else
+        mkdir -p "$qq_dir/nt_qq_dbtest/nt_data/log"
+        printf 'qq-online\n' >"$qq_dir/nt_qq_dbtest/nt_data/log/qq-log_2026-04-17-19.qqxlog"
+        printf '{"status":"failed","retcode":1,"data":{}}\n'
+      fi
+      ;;
+    bounded-request-timeout-recovers)
+      if (( count == 1 )); then
+        echo "\$max_time" >"\$state_dir/first_login_timeout"
+        python3 - <<'PY' "\$max_time"
+import sys
+value = float(sys.argv[1])
+raise SystemExit(0 if value <= 1.0 else 1)
+PY
+        if [[ \$? -ne 0 ]]; then
+          sleep 2
+          printf '{"status":"failed","retcode":1,"data":{}}\n'
+        else
+          printf '{"status":"failed","retcode":1,"data":{}}\n'
+        fi
+      else
+        printf '{"status":"ok","retcode":0,"data":{"user_id":3472283357}}\n'
+      fi
+      ;;
+  esac
 EOF
 
   chmod +x "$case_dir/bin/docker" "$case_dir/bin/curl"
@@ -132,6 +169,7 @@ run_case() {
   local env_file="$case_dir/dogbot.env"
   local login_dir="$case_dir/napcat-login"
   local state_dir="$case_dir/state"
+  local qq_dir="$case_dir/napcat-qq"
 
   mkdir -p "$case_dir"
   mk_fake_runtime "$case_name" "$case_dir"
@@ -141,6 +179,7 @@ ENABLE_QQ=1
 NAPCAT_CONTAINER_NAME=napcat
 NAPCAT_API_BASE_URL=http://127.0.0.1:3001
 NAPCAT_LOGIN_OUTPUT_DIR=$login_dir
+NAPCAT_QQ_DIR=$qq_dir
 DOGBOT_LOGIN_TIMEOUT_SECS=$login_timeout
 DOGBOT_WAIT_INTERVAL_SECS=$wait_interval
 EOF
@@ -168,7 +207,7 @@ EOF
     exit 1
   }
 
-  if [[ "$case_name" != "already-logged-in" && ! -f "$state_dir/exec_test_seen" ]]; then
+  if [[ "$case_name" != "already-logged-in" && "$case_name" != "fallback-account-log-success" && ! -f "$state_dir/exec_test_seen" ]]; then
     echo "FAIL: case '$case_name' did not validate qrcode presence through docker exec test -f" >&2
     exit 1
   fi
@@ -193,11 +232,16 @@ EOF
       fi
       grep -q 'fresh-qr' "$login_dir/napcat-login-qr.png"
       ;;
-    existing-log-reuse)
+    historical-log-filtering)
       grep -q 'NapCat login confirmed.' <<<"$output"
-      grep -q 'NapCat login URL: https://txz.qq.com/p?k=existing-link' <<<"$output"
-      grep -q 'login_url=https://txz.qq.com/p?k=existing-link' "$login_dir/napcat-login-meta.txt"
-      grep -q 'existing-qr' "$login_dir/napcat-login-qr.png"
+      grep -q 'NapCat login URL: https://txz.qq.com/p?k=fresh-link' <<<"$output"
+      if grep -q 'https://txz.qq.com/p?k=stale-link' <<<"$output"; then
+        echo "FAIL: case '$case_name' should ignore stale QR URLs from historical logs" >&2
+        echo "$output" >&2
+        exit 1
+      fi
+      grep -q 'login_url=https://txz.qq.com/p?k=fresh-link' "$login_dir/napcat-login-meta.txt"
+      grep -q 'fresh-qr' "$login_dir/napcat-login-qr.png"
       ;;
     already-logged-in)
       if grep -q 'NapCat login URL:' <<<"$output"; then
@@ -214,10 +258,29 @@ if not (0.0 < value < 1.0):
     raise SystemExit(f"expected /get_login_info --max-time to be < 1.0s near the deadline, got {value}")
 PY
       ;;
+    bounded-request-timeout-recovers)
+      python3 - <<'PY' "$state_dir/first_login_timeout"
+from pathlib import Path
+value = float(Path(__import__("sys").argv[1]).read_text().strip())
+if not (0.0 < value <= 1.0):
+    raise SystemExit(f"expected first /get_login_info --max-time to be <= 1.0s, got {value}")
+PY
+      grep -q 'NapCat login URL: https://txz.qq.com/p?k=bounded-link' <<<"$output"
+      ;;
+    fallback-account-log-success)
+      if grep -q 'NapCat login URL:' <<<"$output"; then
+        echo "FAIL: case '$case_name' should confirm login from runtime state without reusing historical QR output" >&2
+        echo "$output" >&2
+        exit 1
+      fi
+      grep -q 'qq-online' "$qq_dir/nt_qq_dbtest/nt_data/log/qq-log_2026-04-17-19.qqxlog"
+      ;;
   esac
 }
 
 run_case fresh-qr-success 0 "NapCat login confirmed."
-run_case existing-log-reuse 0 "NapCat login confirmed."
+run_case historical-log-filtering 0 "NapCat login confirmed."
 run_case already-logged-in 0 "NapCat login confirmed."
 run_case slow-login-budget 1 "NapCat login did not complete within 1 seconds." 1 0.05
+run_case bounded-request-timeout-recovers 0 "NapCat login confirmed." 2 0.05
+run_case fallback-account-log-success 0 "NapCat login confirmed."

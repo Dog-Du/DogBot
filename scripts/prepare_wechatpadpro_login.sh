@@ -20,6 +20,7 @@ mkdir -p "$login_dir"
 login_timeout_secs="${DOGBOT_LOGIN_TIMEOUT_SECS:-100}"
 deadline_epoch="$(dogbot_deadline_in "$login_timeout_secs")"
 deadline_epoch_ns="$(( $(date +%s%N) + login_timeout_secs * 1000000000 ))"
+login_started_at_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 wechatpadpro_remaining_request_timeout() {
   local remaining_ns=$(( deadline_epoch_ns - $(date +%s%N) ))
@@ -54,7 +55,16 @@ ensure_account_key() {
     exit 1
   fi
 
+  generate_account_key "Generated"
+}
+
+generate_account_key() {
+  local action_word="$1"
   local response account_key request_timeout
+  if [[ -z "${WECHATPADPRO_ADMIN_KEY:-}" ]]; then
+    echo "WECHATPADPRO_ADMIN_KEY is not set." >&2
+    exit 1
+  fi
   request_timeout="$(wechatpadpro_remaining_request_timeout)" || {
     echo "WeChatPadPro login did not complete within ${login_timeout_secs} seconds." >&2
     exit 1
@@ -80,7 +90,11 @@ PY
   else
     printf '\nWECHATPADPRO_ACCOUNT_KEY=%s\n' "$account_key" >>"$env_file"
   fi
-  echo "Generated WECHATPADPRO_ACCOUNT_KEY and persisted it to $env_file"
+  echo "${action_word} WECHATPADPRO_ACCOUNT_KEY and persisted it to $env_file"
+}
+
+refresh_account_key() {
+  generate_account_key "Refreshed"
 }
 
 request_login_qr() {
@@ -136,14 +150,19 @@ print(meta_path)
 PY
 }
 
-fetch_login_qr() {
-  local response qr_info_output qr_link png_path meta_path
-  : >"$login_err_log"
-  response="$(request_login_qr "/login/GetLoginQrCodePadX" 2>>"$login_err_log")" \
-    || response="$(request_login_qr "/login/GetLoginQrCodeNewX" 2>>"$login_err_log")" \
-    || return 1
+try_fetch_login_qr_endpoint() {
+  local endpoint="$1"
+  local response
+  response="$(request_login_qr "$endpoint" 2>>"$login_err_log")" || return 1
+  write_login_artifacts "$response" 2>>"$login_err_log"
+}
 
-  qr_info_output="$(write_login_artifacts "$response")" || return 1
+fetch_login_qr() {
+  local qr_info_output qr_link png_path meta_path
+  : >"$login_err_log"
+  qr_info_output="$(try_fetch_login_qr_endpoint "/login/GetLoginQrCodePadX")" \
+    || qr_info_output="$(try_fetch_login_qr_endpoint "/login/GetLoginQrCodeNewX")" \
+    || return 1
   mapfile -t qr_info <<<"$qr_info_output"
   qr_link="${qr_info[0]}"
   png_path="${qr_info[1]}"
@@ -158,6 +177,25 @@ fetch_login_qr() {
   fi
 }
 
+fetch_login_qr_with_key_recovery() {
+  if fetch_login_qr; then
+    return 0
+  fi
+
+  if [[ -z "${WECHATPADPRO_ADMIN_KEY:-}" ]]; then
+    return 1
+  fi
+
+  if (( account_key_refresh_count >= account_key_refresh_limit )); then
+    return 1
+  fi
+
+  refresh_account_key
+  account_key_refresh_count=$((account_key_refresh_count + 1))
+  last_qr_link=""
+  fetch_login_qr
+}
+
 current_login_state() {
   local response request_timeout
   request_timeout="$(wechatpadpro_remaining_request_timeout)" || return 1
@@ -165,12 +203,17 @@ current_login_state() {
   "$uv_bin" run python - <<'PY' "$response"
 import json, sys
 payload = json.loads(sys.argv[1])
+code = str(payload.get("Code") or "")
 text = str(payload.get("Text") or "")
 data = payload.get("Data") or {}
 status = str(data.get("Status") or data.get("status") or "")
 wxid = str(data.get("wxid") or data.get("Wxid") or "")
 combined = f"{text} {status}".lower()
-if "验证码" in text or "辅助" in text:
+if code == "-2" or "不存在" in text:
+    print("stale-key")
+elif "退出微信" in text or "已退出" in text or "logged out" in combined:
+    print("logged-out")
+elif "验证码" in text or "辅助" in text:
     print("verify-required")
 elif "过期" in text or "expired" in combined:
     print("expired")
@@ -179,6 +222,27 @@ elif "已登录" in text or "在线" in text or "已绑定" in text or "online" 
 else:
     print("pending")
 PY
+}
+
+recent_wechatpadpro_diag_logs() {
+  if [[ -n "${WECHATPADPRO_DIAG_LOG_FILE:-}" ]]; then
+    [[ -f "$WECHATPADPRO_DIAG_LOG_FILE" ]] || return 1
+    tail -n 200 "$WECHATPADPRO_DIAG_LOG_FILE"
+    return 0
+  fi
+
+  command -v docker >/dev/null 2>&1 || return 1
+
+  local container_name="${WECHATPADPRO_CONTAINER_NAME:-wechatpadpro}"
+  docker logs --since "$login_started_at_iso" "$container_name" 2>&1 || return 1
+}
+
+current_login_blocker() {
+  local blocker_line
+  blocker_line="$(recent_wechatpadpro_diag_logs | rg -m1 '当前客户端版本过低|版本过低' || true)"
+  if [[ -n "$blocker_line" ]]; then
+    printf 'client-version-too-low\t%s\n' "$blocker_line"
+  fi
 }
 
 report_qr_failure() {
@@ -200,24 +264,44 @@ report_qr_failure() {
 }
 
 qr_prepared=0
+account_key_refresh_count=0
+account_key_refresh_limit=3
 
 while (( $(date +%s) < deadline_epoch )); do
+  blocker_info="$(current_login_blocker 2>/dev/null || true)"
+  if [[ -n "$blocker_info" ]]; then
+    blocker_type="${blocker_info%%$'\t'*}"
+    blocker_detail="${blocker_info#*$'\t'}"
+    case "$blocker_type" in
+      client-version-too-low)
+        echo "WeChatPadPro login blocked: current client version is too low." >&2
+        exit 1
+        ;;
+    esac
+  fi
+
   case "$(current_login_state 2>/dev/null || echo pending)" in
     online)
       echo "WeChatPadPro account is already logged in for key: $WECHATPADPRO_ACCOUNT_KEY"
       exit 0
       ;;
     expired)
-      fetch_login_qr || report_qr_failure refresh
+      fetch_login_qr_with_key_recovery || report_qr_failure refresh
       qr_prepared=1
       ;;
     verify-required)
       echo "WeChatPadPro login requires additional verification." >&2
       exit 1
       ;;
-    pending)
+    logged-out)
       if [[ "$qr_prepared" != "1" ]]; then
-        fetch_login_qr || report_qr_failure fetch
+        fetch_login_qr_with_key_recovery || report_qr_failure fetch
+        qr_prepared=1
+      fi
+      ;;
+    stale-key|pending)
+      if [[ "$qr_prepared" != "1" ]]; then
+        fetch_login_qr_with_key_recovery || report_qr_failure fetch
         qr_prepared=1
       fi
       ;;

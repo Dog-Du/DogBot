@@ -49,7 +49,7 @@ fi
   export NAPCAT_API_BASE_URL="${NAPCAT_API_BASE_URL:-http://127.0.0.1:3001}"
   export NAPCAT_ACCESS_TOKEN="${NAPCAT_ACCESS_TOKEN:-}"
 
-  exec setsid "$uv_bin" run --with fastapi --with uvicorn --with httpx python -m uvicorn \
+  exec setsid "$uv_bin" run --with fastapi --with uvicorn --with httpx --with websockets python -m uvicorn \
     qq_adapter.app:create_app \
     --factory \
     --host "$host" \

@@ -34,6 +34,9 @@ case "\$*" in
         fi
         printf '{\"Code\":200,\"Data\":{\"authKeys\":[\"test-account-key\"]}}\n'
         ;;
+      stale-key-regenerates)
+        printf '{\"Code\":200,\"Data\":{\"authKeys\":[\"fresh-account-key\"]}}\n'
+        ;;
       *)
         printf '{\"Code\":200,\"Data\":{\"authKeys\":[\"test-account-key\"]}}\n'
         ;;
@@ -48,6 +51,19 @@ case "\$*" in
           printf '{\"Code\":200,\"Data\":{\"qrCodeBase64\":\"data:image/png;base64,Zmlyc3Q=\",\"QrLink\":\"first-link\",\"QrCodeUrl\":\"first-url\",\"expiredTime\":30,\"Key\":\"test-account-key\"}}\\n'
         else
           printf '{\"Code\":200,\"Data\":{\"qrCodeBase64\":\"data:image/png;base64,c2Vjb25k\",\"QrLink\":\"second-link\",\"QrCodeUrl\":\"second-url\",\"expiredTime\":30,\"Key\":\"test-account-key\"}}\\n'
+        fi
+        ;;
+      stale-status-newx-success)
+        printf '{\"Code\":300,\"Text\":\"检查扫码状态失败！err:SendCheckLoginQrcodeRequest err: wxconn.isConnected == false\"}\n'
+        ;;
+      padx-fallback-to-newx)
+        printf '{\"Code\":300,\"Text\":\"padx failed\"}\n'
+        ;;
+      stale-key-regenerates)
+        if [[ "\$*" == *"fresh-account-key"* ]]; then
+          printf '{\"Code\":300,\"Text\":\"padx failed\"}\n'
+        else
+          printf '{\"Code\":300,\"Text\":\"获取二维码失败！err:DecodePackHeader err: len(respData) <= 32\"}\n'
         fi
         ;;
       already-logged-in-qr-fails)
@@ -66,6 +82,19 @@ case "\$*" in
     ;;
   *"/login/GetLoginQrCodeNewX"*)
     case "$case_name" in
+      stale-status-newx-success)
+        printf '{\"Code\":200,\"Data\":{\"qrCodeBase64\":\"data:image/png;base64,c3RhbGU=\",\"QrLink\":\"stale-link\",\"QrCodeUrl\":\"stale-url\",\"expiredTime\":30,\"Key\":\"test-account-key\"}}\\n'
+        ;;
+      padx-fallback-to-newx)
+        printf '{\"Code\":200,\"Data\":{\"qrCodeBase64\":\"data:image/png;base64,bmV3eA==\",\"QrLink\":\"newx-link\",\"QrCodeUrl\":\"newx-url\",\"expiredTime\":30,\"Key\":\"test-account-key\"}}\\n'
+        ;;
+      stale-key-regenerates)
+        if [[ "\$*" == *"fresh-account-key"* ]]; then
+          printf '{\"Code\":200,\"Data\":{\"qrCodeBase64\":\"data:image/png;base64,ZnJlc2g=\",\"QrLink\":\"fresh-link\",\"QrCodeUrl\":\"fresh-url\",\"expiredTime\":30,\"Key\":\"fresh-account-key\"}}\\n'
+        else
+          printf '{\"Code\":300,\"Text\":\"获取二维码失败！err:DecodePackHeader err: len(respData) <= 32\"}\n'
+        fi
+        ;;
       already-logged-in-qr-fails)
         exit 1
         ;;
@@ -90,8 +119,35 @@ case "\$*" in
           printf '{\"Code\":200,\"Text\":\"已登录\",\"Data\":{\"Status\":\"online\",\"wxid\":\"wxid_bot\"}}\\n'
         fi
         ;;
+      stale-status-newx-success)
+        if (( status_count == 1 )); then
+          printf '{\"Code\":-2,\"Data\":null,\"Text\":\"test-account-key 该链接不存在！\"}\n'
+        else
+          printf '{\"Code\":200,\"Text\":\"已登录\",\"Data\":{\"Status\":\"online\",\"wxid\":\"wxid_bot\"}}\\n'
+        fi
+        ;;
+      padx-fallback-to-newx)
+        if (( status_count == 1 )); then
+          printf '{\"Code\":200,\"Text\":\"等待扫码\",\"Data\":{\"Status\":\"pending\"}}\\n'
+        else
+          printf '{\"Code\":200,\"Text\":\"已登录\",\"Data\":{\"Status\":\"online\",\"wxid\":\"wxid_bot\"}}\\n'
+        fi
+        ;;
       already-logged-in-qr-fails)
         printf '{\"Code\":200,\"Text\":\"已登录\",\"Data\":{\"Status\":\"online\",\"wxid\":\"wxid_bot\"}}\\n'
+        ;;
+      stale-key-regenerates)
+        if [[ "\$*" == *"stale-account-key"* ]]; then
+          printf '{\"Code\":-2,\"Data\":null,\"Text\":\"stale-account-key 该链接不存在！\"}\n'
+        else
+          fresh_status_count=\$((\$(cat "\$state_dir/fresh_status_count" 2>/dev/null || echo 0) + 1))
+          echo "\$fresh_status_count" >"\$state_dir/fresh_status_count"
+          if (( fresh_status_count == 1 )); then
+            printf '{\"Code\":200,\"Text\":\"等待扫码\",\"Data\":{\"Status\":\"pending\"}}\\n'
+          else
+            printf '{\"Code\":200,\"Text\":\"已登录\",\"Data\":{\"Status\":\"online\",\"wxid\":\"wxid_bot\"}}\\n'
+          fi
+        fi
         ;;
       generate-key-budget)
         printf '{\"Code\":200,\"Text\":\"已登录\",\"Data\":{\"Status\":\"online\",\"wxid\":\"wxid_bot\"}}\\n'
@@ -149,15 +205,30 @@ run_case() {
   local state_dir="$case_dir/state"
   local admin_key_line="WECHATPADPRO_ADMIN_KEY=test-admin-key"
   local account_key_line="WECHATPADPRO_ACCOUNT_KEY=test-account-key"
+  local diag_log_line=""
 
   mkdir -p "$case_dir"
   login_dir="$(mk_fake_runner "$case_name" "$case_dir")"
   case "$case_name" in
-    already-logged-in-qr-fails|invalid-qr-payload|verify-required|timeout-pending|base-url-slow|slow-status-budget)
+    already-logged-in-qr-fails|invalid-qr-payload|verify-required|timeout-pending|base-url-slow|slow-status-budget|client-version-too-low)
       admin_key_line=""
       ;;
     generate-key-budget)
       account_key_line=""
+      ;;
+    stale-key-regenerates)
+      account_key_line="WECHATPADPRO_ACCOUNT_KEY=stale-account-key"
+      ;;
+  esac
+  case "$case_name" in
+    client-version-too-low)
+      cat >"$state_dir/wechatpadpro.log" <<'EOF'
+2026-04-17 11:39:39: <e>
+<ShowType>1</ShowType>
+<Content><![CDATA[当前客户端版本过低，请前往应用商店升级到最新版本客户端后再登录。]]></Content>
+</e>
+EOF
+      diag_log_line="WECHATPADPRO_DIAG_LOG_FILE=$state_dir/wechatpadpro.log"
       ;;
   esac
   cat >"$env_file" <<EOF
@@ -168,6 +239,7 @@ WECHATPADPRO_BASE_URL=http://127.0.0.1:38849
 WECHATPADPRO_LOGIN_OUTPUT_DIR=$login_dir
 DOGBOT_LOGIN_TIMEOUT_SECS=$login_timeout
 DOGBOT_WAIT_INTERVAL_SECS=$wait_interval
+$diag_log_line
 EOF
 
   local output
@@ -203,6 +275,16 @@ EOF
       grep -q '"qr_link": "second-link"' "$login_dir/wechatpadpro-login-meta.json"
       printf 'c2Vjb25k' | base64 -d | cmp -s - "$login_dir/wechatpadpro-login-qr.png"
       ;;
+    stale-status-newx-success)
+      grep -q 'WeChatPadPro QR link: stale-link' <<<"$output"
+      grep -q '^WECHATPADPRO_ACCOUNT_KEY=test-account-key$' "$env_file"
+      printf 'c3RhbGU=' | base64 -d | cmp -s - "$login_dir/wechatpadpro-login-qr.png"
+      ;;
+    padx-fallback-to-newx)
+      grep -q 'WeChatPadPro QR link: newx-link' <<<"$output"
+      grep -q '"qr_link": "newx-link"' "$login_dir/wechatpadpro-login-meta.json"
+      printf 'bmV3eA==' | base64 -d | cmp -s - "$login_dir/wechatpadpro-login-qr.png"
+      ;;
     already-logged-in-qr-fails)
       if [[ -f "$state_dir/qr_count" ]]; then
         echo "FAIL: case '$case_name' should not request a QR code when status is already online" >&2
@@ -232,6 +314,18 @@ if not (0.0 < value < 1.0):
 PY
       grep -q '^WECHATPADPRO_ACCOUNT_KEY=test-account-key$' "$env_file"
       ;;
+    stale-key-regenerates)
+      grep -q 'WeChatPadPro QR link: fresh-link' <<<"$output"
+      grep -q '^WECHATPADPRO_ACCOUNT_KEY=fresh-account-key$' "$env_file"
+      printf 'ZnJlc2g=' | base64 -d | cmp -s - "$login_dir/wechatpadpro-login-qr.png"
+      ;;
+    client-version-too-low)
+      if grep -Fq '<Content><![CDATA[' <<<"$output"; then
+        echo "FAIL: case '$case_name' should not print raw XML blocker details" >&2
+        echo "$output" >&2
+        exit 1
+      fi
+      ;;
   esac
 
   if compgen -G "$repo_root/wechatpadpro_login_err.*.log" >/dev/null; then
@@ -242,6 +336,8 @@ PY
 }
 
 run_case success-refresh-online 0 "WeChatPadPro QR link: second-link" 5 0.1
+run_case stale-status-newx-success 0 "WeChatPadPro QR link: stale-link" 5 0.1
+run_case padx-fallback-to-newx 0 "WeChatPadPro QR link: newx-link" 5 0.1
 
 run_case already-logged-in-qr-fails 0 "WeChatPadPro account is already logged in for key: test-account-key" 5 0.1
 run_case invalid-qr-payload 1 "Failed to fetch WeChatPadPro login QR." 5 0.1
@@ -249,4 +345,6 @@ run_case verify-required 1 "WeChatPadPro login requires additional verification.
 run_case timeout-pending 1 "WeChatPadPro login did not complete within 1 seconds." 1 0.05
 run_case base-url-slow 1 "WeChatPadPro API did not become ready at http://127.0.0.1:38849 within 1 seconds." 1 0.05
 run_case slow-status-budget 1 "WeChatPadPro login did not complete within 1 seconds." 1 0.05
+run_case client-version-too-low 1 "WeChatPadPro login blocked: current client version is too low."
 run_case generate-key-budget 0 "Generated WECHATPADPRO_ACCOUNT_KEY and persisted it to" 1 0.05
+run_case stale-key-regenerates 0 "WeChatPadPro QR link: fresh-link" 5 0.1
