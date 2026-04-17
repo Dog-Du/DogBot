@@ -69,6 +69,12 @@ QQ
 - `deploy/dogbot.env`
 - `./deploy_stack.sh` / `./stop_stack.sh`
 
+如果你想把运行态产物收敛到一个目录下，推荐使用同一个 `runtime/` 根目录：
+
+- `runtime/agent-workspace`
+- `runtime/agent-state`
+- `runtime/agent-state/wechatpadpro-data/`
+
 `compose/` 目录默认不需要修改；如果你确实需要自定义容器层行为，请查看 `compose/README.md`。
 
 当前部署脚本支持两种使用方式：
@@ -126,9 +132,6 @@ QQ
 - [ ] 历史消息持久化
   - 对 QQ、微信等平台的消息做统一入库
   - 为后续上下文补全、长期记忆、检索和审计提供基础
-- [ ] 清理 AstrBot 遗留
-  - 删除不再使用的插件和部署残留
-  - 彻底收敛到双 adapter 架构
 - [ ] Agent 内容管理与记忆管理
   - 对 `skill`、`memory`、`system prompt` 等内容做结构化管理
   - 减少上下文污染，提升长期可维护性

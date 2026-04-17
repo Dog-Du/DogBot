@@ -40,14 +40,21 @@ payload="$(cat <<JSON
 JSON
 )"
 
-response="$(curl --max-time 15 -sS -X POST \
+api_configured=0
+db_synced=0
+
+if response="$(curl --max-time 15 -sS -X POST \
   "${base_url}/webhook/Config?key=${WECHATPADPRO_ACCOUNT_KEY}" \
   -H 'Content-Type: application/json' \
-  -d "$payload")"
-
-echo "$response"
-if ! grep -q '"Code":200' <<<"$response"; then
-  echo "WeChatPadPro webhook configuration API did not return Code=200; attempting direct database sync." >&2
+  -d "$payload")"; then
+  echo "$response"
+  if grep -q '"Code":200' <<<"$response"; then
+    api_configured=1
+  else
+    echo "WeChatPadPro webhook configuration API did not return Code=200; attempting direct database sync." >&2
+  fi
+else
+  echo "WeChatPadPro webhook configuration API request failed; attempting direct database sync." >&2
 fi
 
 if [[ -n "${WECHATPADPRO_MYSQL_ROOT_PASSWORD:-}" ]]; then
@@ -73,13 +80,24 @@ if [[ -n "${WECHATPADPRO_MYSQL_ROOT_PASSWORD:-}" ]]; then
     WHERE webhook_key='${WECHATPADPRO_ACCOUNT_KEY}';
   ")
 
-  if ! "${docker_exec_cmd[@]}" >/dev/null 2>&1; then
+  if "${docker_exec_cmd[@]}" >/dev/null 2>&1; then
+    db_synced=1
+  else
     if command -v sudo >/dev/null 2>&1; then
-      sudo "${docker_exec_cmd[@]}" >/dev/null 2>&1 || echo "warning: failed to sync webhook_config directly through MySQL" >&2
+      if sudo "${docker_exec_cmd[@]}" >/dev/null 2>&1; then
+        db_synced=1
+      else
+        echo "warning: failed to sync webhook_config directly through MySQL" >&2
+      fi
     else
       echo "warning: failed to sync webhook_config directly through MySQL" >&2
     fi
   fi
+fi
+
+if [[ "$api_configured" != "1" && "$db_synced" != "1" ]]; then
+  echo "WeChatPadPro webhook configuration failed." >&2
+  exit 1
 fi
 
 echo "WeChatPadPro webhook configuration synced."

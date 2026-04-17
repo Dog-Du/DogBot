@@ -159,7 +159,8 @@ cp deploy/dogbot.env.example deploy/dogbot.env
 
 - 询问是否启用 QQ
 - 询问是否启用微信
-- 如果选择了对应平台，会自动准备登录二维码
+- 如果选择了对应平台，会自动准备登录二维码并阻塞等待扫码
+- 若 100 秒内未完成扫码，部署脚本会退出
 
 也可以显式指定平台：
 
@@ -219,19 +220,21 @@ CLAUDE_CODE_VERSION=2.1.104
 ### 5.2 工作目录和状态目录
 
 ```env
-AGENT_WORKSPACE_DIR=/srv/agent-workdir
-AGENT_STATE_DIR=/srv/agent-state
-SESSION_DB_PATH=/srv/agent-state/runner.db
+AGENT_WORKSPACE_DIR=/srv/dogbot/runtime/agent-workspace
+AGENT_STATE_DIR=/srv/dogbot/runtime/agent-state
+SESSION_DB_PATH=/srv/dogbot/runtime/agent-state/runner.db
 ```
 
 建议：
 
 - `AGENT_WORKSPACE_DIR` 给 Agent 读写业务工作目录
+- 建议把 `AGENT_WORKSPACE_DIR` 和 `AGENT_STATE_DIR` 放到同一个 `runtime/` 根目录下
 - `AGENT_STATE_DIR` 用来保存：
   - Claude 会话状态
   - SQLite 数据库
   - 日志
   - NapCat / WeChatPadPro 状态
+- `WeChatPadPro` 的 `data/mysql/redis` 目录也建议放到 `AGENT_STATE_DIR/wechatpadpro-data/`
 
 如果你改这些路径，旧会话和旧状态看起来会像“丢了”。
 
@@ -287,6 +290,7 @@ http://127.0.0.1:6099
 - 部署脚本也会自动准备 NapCat 登录二维码：
   - 如果本机安装了 `qrencode`，会直接在终端打印二维码
   - 同时保留二维码图片和原始登录链接
+  - 脚本会阻塞等待扫码；若 100 秒内未完成扫码会退出
 
 ### 5.3 反向 WebSocket
 
@@ -306,7 +310,7 @@ ws://host.docker.internal:19000/napcat/ws
 
 ## 7. QQ adapter 配置
 
-QQ 不再经过 AstrBot，而是：
+QQ 链路为：
 
 ```text
 NapCat -> qq-adapter -> agent-runner
@@ -357,9 +361,11 @@ ENABLE_WECHATPADPRO=1
 
 - 生成 `WECHATPADPRO_ACCOUNT_KEY`
 - 拉取登录二维码
+- 如果二维码过期，脚本会刷新本地二维码文件
 - 如果本机安装了 `qrencode`，会直接在终端打印二维码
 - 把二维码图片和元信息写到：
   - `WECHATPADPRO_LOGIN_OUTPUT_DIR`
+- 阻塞等待扫码；若 100 秒内未完成扫码会退出
 
 ### 9.4 微信适配器
 

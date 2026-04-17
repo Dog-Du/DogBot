@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/../.." && pwd)"
+tmpdir_root="$(mktemp -d)"
+trap 'rm -rf "$tmpdir_root"' EXIT
+
+mk_fake_runtime() {
+  local case_name="$1"
+  local case_dir="$2"
+  local login_dir="$case_dir/napcat-login"
+  local state_dir="$case_dir/state"
+
+  mkdir -p "$login_dir" "$state_dir" "$case_dir/bin"
+  printf 'stale-qr\n' >"$login_dir/napcat-login-qr.png"
+  cat >"$login_dir/napcat-login-meta.txt" <<EOF
+container=stale
+login_url=https://txz.qq.com/p?k=stale-link
+qr_png_path=$login_dir/stale-qr.png
+generated_at=2025-01-01T00:00:00Z
+EOF
+
+  cat >"$case_dir/bin/docker" <<EOF
+#!/usr/bin/env bash
+state_dir="$state_dir"
+case_name="$case_name"
+case "\$1" in
+  logs)
+    count=\$((\$(cat "\$state_dir/log_count" 2>/dev/null || echo 0) + 1))
+    echo "\$count" >"\$state_dir/log_count"
+    case "\$case_name" in
+      fresh-qr-success)
+        if [[ "\$*" == *"--since"* ]]; then
+          if (( count >= 2 )); then
+            printf 'scan https://txz.qq.com/p?k=fresh-link\n'
+          fi
+        fi
+        ;;
+      existing-log-reuse)
+        if [[ "\$*" != *"--since"* ]]; then
+          printf 'scan https://txz.qq.com/p?k=existing-link\n'
+        fi
+        ;;
+      already-logged-in)
+        ;;
+      slow-login-budget)
+        sleep 1
+        printf 'scan https://txz.qq.com/p?k=slow-link\n'
+        ;;
+    esac
+    ;;
+  exec)
+    if [[ "\$3" == "test" ]]; then
+      if [[ "\$case_name" == "already-logged-in" ]]; then
+        exit 1
+      fi
+      echo "1" >"\$state_dir/exec_test_seen"
+      exit 0
+    fi
+    ;;
+  cp)
+    case "\$case_name" in
+      existing-log-reuse)
+        printf 'existing-qr\n' >"\${@: -1}"
+        ;;
+      *)
+        printf 'fresh-qr\n' >"\${@: -1}"
+        ;;
+    esac
+    ;;
+  *)
+    ;;
+esac
+EOF
+
+  cat >"$case_dir/bin/curl" <<EOF
+#!/usr/bin/env bash
+state_dir="$state_dir"
+case_name="$case_name"
+max_time=""
+previous_arg=""
+for arg in "\$@"; do
+  if [[ "\$previous_arg" == "--max-time" ]]; then
+    max_time="\$arg"
+  fi
+  previous_arg="\$arg"
+done
+
+count=\$((\$(cat "\$state_dir/login_count" 2>/dev/null || echo 0) + 1))
+echo "\$count" >"\$state_dir/login_count"
+
+case "\$case_name" in
+  fresh-qr-success)
+    if (( count < 3 )); then
+      printf '{"status":"failed","retcode":1,"data":{}}\n'
+    else
+      printf '{"status":"ok","retcode":0,"data":{"user_id":3472283357}}\n'
+    fi
+    ;;
+  existing-log-reuse)
+    if (( count == 1 )); then
+      printf '{"status":"failed","retcode":1,"data":{}}\n'
+    else
+      printf '{"status":"ok","retcode":0,"data":{"user_id":3472283357}}\n'
+    fi
+    ;;
+  already-logged-in)
+    printf '{"status":"ok","retcode":0,"data":{"user_id":3472283357}}\n'
+    ;;
+  slow-login-budget)
+    echo "\$max_time" >"\$state_dir/login_timeout"
+    if [[ "\$max_time" != "1" ]]; then
+      sleep 2
+    fi
+    printf '{"status":"failed","retcode":1,"data":{}}\n'
+    ;;
+esac
+EOF
+
+  chmod +x "$case_dir/bin/docker" "$case_dir/bin/curl"
+}
+
+run_case() {
+  local case_name="$1"
+  local expected_exit_code="$2"
+  local expected_message="$3"
+  local login_timeout="${4:-5}"
+  local wait_interval="${5:-0.1}"
+
+  local case_dir="$tmpdir_root/$case_name"
+  local env_file="$case_dir/dogbot.env"
+  local login_dir="$case_dir/napcat-login"
+  local state_dir="$case_dir/state"
+
+  mkdir -p "$case_dir"
+  mk_fake_runtime "$case_name" "$case_dir"
+
+  cat >"$env_file" <<EOF
+ENABLE_QQ=1
+NAPCAT_CONTAINER_NAME=napcat
+NAPCAT_API_BASE_URL=http://127.0.0.1:3001
+NAPCAT_LOGIN_OUTPUT_DIR=$login_dir
+DOGBOT_LOGIN_TIMEOUT_SECS=$login_timeout
+DOGBOT_WAIT_INTERVAL_SECS=$wait_interval
+EOF
+
+  local output
+  local status
+  set +e
+  output="$(
+    PATH="$case_dir/bin:$PATH" \
+      UV_BIN="$(command -v uv)" \
+      "$repo_root/scripts/prepare_napcat_login.sh" "$env_file" 2>&1
+  )"
+  status=$?
+  set -e
+
+  if [[ "$status" -ne "$expected_exit_code" ]]; then
+    echo "FAIL: case '$case_name' expected exit $expected_exit_code but got $status" >&2
+    echo "$output" >&2
+    exit 1
+  fi
+
+  grep -q "$expected_message" <<<"$output" || {
+    echo "FAIL: case '$case_name' missing expected output '$expected_message'" >&2
+    echo "$output" >&2
+    exit 1
+  }
+
+  if [[ "$case_name" != "already-logged-in" && ! -f "$state_dir/exec_test_seen" ]]; then
+    echo "FAIL: case '$case_name' did not validate qrcode presence through docker exec test -f" >&2
+    exit 1
+  fi
+
+  case "$case_name" in
+    fresh-qr-success)
+      local login_count
+      login_count="$(cat "$state_dir/login_count" 2>/dev/null || echo 0)"
+      grep -q 'NapCat login confirmed.' <<<"$output"
+      grep -q 'NapCat login URL: https://txz.qq.com/p?k=fresh-link' <<<"$output"
+      grep -q 'login_url=https://txz.qq.com/p?k=fresh-link' "$login_dir/napcat-login-meta.txt"
+      grep -q 'container=napcat' "$login_dir/napcat-login-meta.txt"
+      grep -q "qr_png_path=$login_dir/napcat-login-qr.png" "$login_dir/napcat-login-meta.txt"
+      grep -q 'generated_at=' "$login_dir/napcat-login-meta.txt"
+      if grep -q 'login_url=https://txz.qq.com/p?k=stale-link' "$login_dir/napcat-login-meta.txt"; then
+        echo "napcat-login-meta.txt still contains stale login_url" >&2
+        exit 1
+      fi
+      if [[ "$login_count" -ne 3 ]]; then
+        echo "Expected exactly 3 login polls, got: $login_count" >&2
+        exit 1
+      fi
+      grep -q 'fresh-qr' "$login_dir/napcat-login-qr.png"
+      ;;
+    existing-log-reuse)
+      grep -q 'NapCat login confirmed.' <<<"$output"
+      grep -q 'NapCat login URL: https://txz.qq.com/p?k=existing-link' <<<"$output"
+      grep -q 'login_url=https://txz.qq.com/p?k=existing-link' "$login_dir/napcat-login-meta.txt"
+      grep -q 'existing-qr' "$login_dir/napcat-login-qr.png"
+      ;;
+    already-logged-in)
+      if grep -q 'NapCat login URL:' <<<"$output"; then
+        echo "FAIL: case '$case_name' should not require a QR when login is already confirmed" >&2
+        echo "$output" >&2
+        exit 1
+      fi
+      ;;
+    slow-login-budget)
+      python3 - <<'PY' "$state_dir/login_timeout"
+from pathlib import Path
+value = float(Path(__import__("sys").argv[1]).read_text().strip())
+if not (0.0 < value < 1.0):
+    raise SystemExit(f"expected /get_login_info --max-time to be < 1.0s near the deadline, got {value}")
+PY
+      ;;
+  esac
+}
+
+run_case fresh-qr-success 0 "NapCat login confirmed."
+run_case existing-log-reuse 0 "NapCat login confirmed."
+run_case already-logged-in 0 "NapCat login confirmed."
+run_case slow-login-budget 1 "NapCat login did not complete within 1 seconds." 1 0.05

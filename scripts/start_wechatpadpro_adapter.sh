@@ -18,22 +18,12 @@ port="${WECHATPADPRO_ADAPTER_PORT:-18999}"
 agent_runner_base_url="${WECHATPADPRO_AGENT_RUNNER_BASE_URL:-${AGENT_RUNNER_BASE_URL:-http://127.0.0.1:11451}}"
 agent_runner_base_url="${agent_runner_base_url/host.docker.internal/127.0.0.1}"
 
-find_listener_pid() {
-  local port="$1"
-  if command -v lsof >/dev/null 2>&1; then
-    lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -n1
-    return 0
-  fi
-
-  ss -ltnp "( sport = :$port )" 2>/dev/null | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' | head -n1
-}
-
 if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" >/dev/null 2>&1; then
   echo "wechatpadpro-adapter already running with pid $(cat "$pid_file")"
   exit 0
 fi
 
-if existing_pid="$(find_listener_pid "$port")" && [[ -n "${existing_pid:-}" ]]; then
+if existing_pid="$(dogbot_find_listener_pid "$port")" && [[ -n "${existing_pid:-}" ]]; then
   echo "$existing_pid" >"$pid_file"
   echo "wechatpadpro-adapter already listening on :$port with pid $existing_pid"
   exit 0
@@ -66,10 +56,7 @@ fi
 ) >>"$log_dir/wechatpadpro-adapter.log" 2>&1 < /dev/null &
 
 adapter_pid=$!
-sleep 2
-
-listener_pid="$(find_listener_pid "$port")"
-if [[ -z "${listener_pid:-}" ]] || ! kill -0 "$listener_pid" >/dev/null 2>&1; then
+if ! listener_pid="$(dogbot_wait_for_listener_pid "$port" 30)"; then
   echo "wechatpadpro-adapter failed to start. See $log_dir/wechatpadpro-adapter.log" >&2
   rm -f "$pid_file"
   exit 1

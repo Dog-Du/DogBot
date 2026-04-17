@@ -164,6 +164,7 @@ if [[ "${ENABLE_QQ}" == "1" ]]; then
   "$repo_root/scripts/start_qq_adapter.sh" "$env_file"
   run_compose_up "$repo_root/compose/platform-stack.yml" napcat
   "$repo_root/scripts/configure_napcat_ws.sh" "$env_file"
+  echo "Waiting up to ${DOGBOT_LOGIN_TIMEOUT_SECS:-100}s for NapCat login..."
   "$repo_root/scripts/prepare_napcat_login.sh" "$env_file"
 fi
 
@@ -175,6 +176,7 @@ if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
 
   run_compose_up "$repo_root/compose/wechatpadpro-stack.yml"
   "$repo_root/scripts/start_wechatpadpro_adapter.sh" "$env_file"
+  echo "Waiting up to ${DOGBOT_LOGIN_TIMEOUT_SECS:-100}s for WeChatPadPro login..."
   "$repo_root/scripts/prepare_wechatpadpro_login.sh" "$env_file"
   if [[ "${WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK:-0}" == "1" ]]; then
     if ! "$repo_root/scripts/configure_wechatpadpro_webhook.sh" "$env_file"; then

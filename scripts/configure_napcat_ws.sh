@@ -1,31 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-  echo "Usage: $0 <env-file>" >&2
-  exit 1
-fi
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./lib/common.sh
+source "$script_dir/lib/common.sh"
 
-ENV_FILE="$1"
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "env file not found: $ENV_FILE" >&2
-  exit 1
-fi
-
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
-
-if ! command -v uv >/dev/null 2>&1; then
-  echo "uv not found. Please install uv first." >&2
+env_file="$(dogbot_resolve_env_file "${1:-}")"
+dogbot_load_env_file "$env_file"
+if ! uv_bin="$(dogbot_resolve_uv_bin)"; then
   exit 1
 fi
 
 NAPCAT_CONTAINER_NAME="${NAPCAT_CONTAINER_NAME:-napcat}"
-NAPCAT_CONFIG_DIR="${NAPCAT_CONFIG_DIR:-$ROOT_DIR/agent-state/napcat-config}"
+NAPCAT_CONFIG_DIR="${NAPCAT_CONFIG_DIR:-$dogbot_repo_root/agent-state/napcat-config}"
 NAPCAT_WS_CLIENT_URL="${NAPCAT_WS_CLIENT_URL:-ws://host.docker.internal:19000/napcat/ws}"
 NAPCAT_WS_CLIENT_TOKEN="${NAPCAT_WS_CLIENT_TOKEN:-}"
 NAPCAT_WS_CLIENT_RECONNECT_MS="${NAPCAT_WS_CLIENT_RECONNECT_MS:-1000}"
@@ -40,7 +27,7 @@ fi
 CONFIG_FILE="$NAPCAT_CONFIG_DIR/onebot11_${QQ_ADAPTER_QQ_BOT_ID}.json"
 mkdir -p "$NAPCAT_CONFIG_DIR"
 
-uv run python - <<PY
+"$uv_bin" run python - <<PY
 import json
 from pathlib import Path
 

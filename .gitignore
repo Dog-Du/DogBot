@@ -4,6 +4,7 @@ agent-runner/target/
 .env
 deploy/dogbot.env
 deploy/myqqbot.env
+runtime/
 wechatpadpro-data/
 agent-state/
 agent-workspace/

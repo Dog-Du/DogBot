@@ -16,10 +16,29 @@ files=(
   "scripts/stop_stack.sh"
   "scripts/start_agent_runner.sh"
   "scripts/start_qq_adapter.sh"
+  "scripts/start_wechatpadpro_adapter.sh"
   "scripts/configure_napcat_ws.sh"
+  "scripts/prepare_napcat_login.sh"
+  "scripts/prepare_wechatpadpro_login.sh"
+  "scripts/configure_wechatpadpro_webhook.sh"
   "scripts/apply_runner_network_policy.sh"
   "scripts/remove_runner_network_policy.sh"
-  "scripts/smoke_test_claude_runner.sh"
+  "scripts/tests/smoke_test_claude_runner.sh"
+  "scripts/tests/test_common.sh"
+  "scripts/tests/test_prepare_napcat_login.sh"
+  "scripts/tests/test_prepare_wechatpadpro_login.sh"
+)
+
+executable_scripts=(
+  "scripts/deploy_stack.sh"
+  "scripts/stop_stack.sh"
+  "scripts/start_agent_runner.sh"
+  "scripts/start_qq_adapter.sh"
+  "scripts/start_wechatpadpro_adapter.sh"
+  "scripts/configure_napcat_ws.sh"
+  "scripts/prepare_napcat_login.sh"
+  "scripts/configure_wechatpadpro_webhook.sh"
+  "scripts/prepare_wechatpadpro_login.sh"
 )
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,6 +55,21 @@ done
 if [[ ${#missing[@]} -gt 0 ]]; then
   echo "Structure check failed: missing files:" >&2
   for path in "${missing[@]}"; do
+    echo "  - $path" >&2
+  done
+  exit 1
+fi
+
+non_executable=()
+for script in "${executable_scripts[@]}"; do
+  if [[ ! -x "$repo_root/$script" ]]; then
+    non_executable+=("$script")
+  fi
+done
+
+if [[ ${#non_executable[@]} -gt 0 ]]; then
+  echo "Structure check failed: scripts missing executable bit:" >&2
+  for path in "${non_executable[@]}"; do
     echo "  - $path" >&2
   done
   exit 1
@@ -70,12 +104,13 @@ ensure_pattern "qq_adapter/app.py" "/napcat/ws" || pattern_errors=$((pattern_err
 ensure_pattern "qq_adapter/napcat_client.py" "/send_group_msg" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/platform-stack.yml" "mlikiowa/napcat-docker:latest" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/configure_napcat_ws.sh" "host.docker.internal:19000/napcat/ws" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/configure_napcat_ws.sh" "dogbot_resolve_uv_bin" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "deploy/dogbot.env.example" "AGENT_RUNNER_BIND_ADDR" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/deploy_stack.sh" "docker compose --env-file" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/start_agent_runner.sh" "build --release --manifest-path" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/start_qq_adapter.sh" "qq_adapter.app:create_app" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/apply_runner_network_policy.sh" "INPUT" || pattern_errors=$((pattern_errors+1))
-ensure_pattern "scripts/smoke_test_claude_runner.sh" "resolve_uv_bin" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/tests/smoke_test_claude_runner.sh" "resolve_uv_bin" || pattern_errors=$((pattern_errors+1))
 
 if [[ $pattern_errors -gt 0 ]]; then
   echo "Structure check failed due to missing scaffold markers." >&2
@@ -88,7 +123,15 @@ bash -n "$repo_root/scripts/deploy_stack.sh"
 bash -n "$repo_root/scripts/stop_stack.sh"
 bash -n "$repo_root/scripts/start_agent_runner.sh"
 bash -n "$repo_root/scripts/start_qq_adapter.sh"
-bash -n "$repo_root/scripts/smoke_test_claude_runner.sh"
+bash -n "$repo_root/scripts/start_wechatpadpro_adapter.sh"
+bash -n "$repo_root/scripts/configure_napcat_ws.sh"
+bash -n "$repo_root/scripts/prepare_napcat_login.sh"
+bash -n "$repo_root/scripts/prepare_wechatpadpro_login.sh"
+bash -n "$repo_root/scripts/configure_wechatpadpro_webhook.sh"
+bash -n "$repo_root/scripts/tests/smoke_test_claude_runner.sh"
+bash "$repo_root/scripts/tests/test_common.sh"
+bash "$repo_root/scripts/tests/test_prepare_napcat_login.sh"
+bash "$repo_root/scripts/tests/test_prepare_wechatpadpro_login.sh"
 uv run python -m py_compile "$repo_root/qq_adapter/app.py"
 
 echo "Structure check passed. All required files are present."

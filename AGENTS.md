@@ -14,7 +14,7 @@
 当前已经落地两条链路：
 
 ```text
-QQ -> NapCat -> AstrBot -> claude_runner_bridge -> agent-runner -> claude-runner
+QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner
 微信 -> WeChatPadPro -> wechatpadpro-adapter -> agent-runner -> claude-runner
 ```
 
@@ -44,10 +44,9 @@ QQ -> NapCat -> AstrBot -> claude_runner_bridge -> agent-runner -> claude-runner
 
 - `NapCat`
   - 负责 QQ 登录和 OneBot
-- `AstrBot`
-  - 当前只用于 QQ 平台编排
-- `claude_runner_bridge`
-  - AstrBot 插件，负责把 QQ 事件转给 `agent-runner`
+- `qq_adapter`
+  - 宿主机 Python 服务
+  - 负责把 QQ 事件转给 `agent-runner`
 
 ### 微信接入层
 
@@ -69,8 +68,8 @@ QQ -> NapCat -> AstrBot -> claude_runner_bridge -> agent-runner -> claude-runner
 
 - `agent-runner/`
   - Rust 核心服务
-- `astrbot/plugins/claude_runner_bridge/`
-  - QQ 插件逻辑
+- `qq_adapter/`
+  - QQ 适配器
 - `wechatpadpro_adapter/`
   - 微信适配器
 - `compose/`
@@ -93,13 +92,11 @@ QQ -> NapCat -> AstrBot -> claude_runner_bridge -> agent-runner -> claude-runner
 
 - `WeChatPadPro` 仍然存在自身不稳定点
   - 尤其是私聊推送、同步流和 DNS 稳定性
-- QQ 目前仍依赖 `AstrBot`
 - 历史消息持久化还没真正落地
 
 ## 7. 后续方向
 
 - 历史消息持久化
-- 去除 AstrBot，让 QQ 也改成薄 adapter
 - Agent 内容管理与记忆管理
 - 支持 `Codex`、`OpenCode`
 - 整理部署与使用体验
@@ -112,5 +109,5 @@ QQ -> NapCat -> AstrBot -> claude_runner_bridge -> agent-runner -> claude-runner
 2. `deploy/README.md`
 3. `deploy/dogbot.env.example`
 4. `agent-runner/`
-5. `astrbot/plugins/claude_runner_bridge/`
+5. `qq_adapter/`
 6. `wechatpadpro_adapter/`

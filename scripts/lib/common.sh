@@ -5,7 +5,7 @@ dogbot_repo_root="$(cd "$dogbot_script_dir/.." && pwd)"
 dogbot_default_env_file="$dogbot_repo_root/deploy/dogbot.env"
 
 dogbot_resolve_env_file() {
-  if [[ $# -ge 1 ]]; then
+  if [[ $# -ge 1 && -n "${1:-}" ]]; then
     printf '%s\n' "$1"
   else
     printf '%s\n' "$dogbot_default_env_file"
@@ -40,6 +40,78 @@ dogbot_require_env() {
     echo "Missing required environment variable: $key" >&2
     return 1
   fi
+}
+
+dogbot_find_listener_pid() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -n1
+    return 0
+  fi
+
+  ss -ltnp "( sport = :$port )" 2>/dev/null | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' | head -n1
+}
+
+dogbot_wait_for_listener_pid() {
+  local port="$1"
+  local timeout_secs="${2:-30}"
+  local attempts=$(( timeout_secs * 2 ))
+  local attempt=0
+  local listener_pid=""
+
+  while (( attempt < attempts )); do
+    listener_pid="$(dogbot_find_listener_pid "$port")"
+    if [[ -n "$listener_pid" ]] && kill -0 "$listener_pid" >/dev/null 2>&1; then
+      printf '%s\n' "$listener_pid"
+      return 0
+    fi
+
+    sleep 0.5
+    attempt=$(( attempt + 1 ))
+  done
+
+  return 1
+}
+
+dogbot_wait_for_http_ok() {
+  local url="$1"
+  local timeout_secs="${2:-30}"
+  local attempts=$timeout_secs
+  local attempt=0
+
+  while (( attempt < attempts )); do
+    if curl -fsSL --max-time 5 -o /dev/null "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    sleep 1
+    attempt=$(( attempt + 1 ))
+  done
+
+  return 1
+}
+
+dogbot_deadline_in() {
+  local timeout_secs="${1:-0}"
+  printf '%s\n' "$(( $(date +%s) + timeout_secs ))"
+}
+
+dogbot_wait_until_deadline() {
+  local deadline_epoch="$1"
+  shift
+  local interval_secs="${DOGBOT_WAIT_INTERVAL_SECS:-1}"
+
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+
+    if (( $(date +%s) >= deadline_epoch )); then
+      return 1
+    fi
+
+    sleep "$interval_secs"
+  done
 }
 
 dogbot_resolve_compose_cmd() {
