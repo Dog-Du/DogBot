@@ -8,10 +8,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BROWSER_DOWNLOADS_DIR=/workspace/downloads
 
 ARG CLAUDE_CODE_VERSION=2.1.104
+ARG CODEX_VERSION=0.121.0
+ARG OPENCODE_VERSION=1.4.7
 ARG PLAYWRIGHT_CLI_VERSION=0.1.8
 ARG PLAYWRIGHT_MCP_VERSION=0.0.70
-ARG YQ_VERSION=v4.53.2
-ARG UV_VERSION=0.11.7
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -89,26 +89,13 @@ RUN mkdir -p /etc/apt/keyrings \
   && apt-get install -y --no-install-recommends nodejs \
   && npm install -g \
     @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+    @opencode-ai@${OPENCODE_VERSION} \
+    @openai/codex@${CODEX_VERSION} \
     @playwright/cli@${PLAYWRIGHT_CLI_VERSION} \
     @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
   && corepack enable \
-  && playwright install --with-deps chromium \
-  && arch="$(dpkg --print-architecture)" \
-  && case "${arch}" in \
-      amd64) yq_arch='amd64'; uv_arch='x86_64-unknown-linux-gnu' ;; \
-      arm64) yq_arch='arm64'; uv_arch='aarch64-unknown-linux-gnu' ;; \
-      *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
-     esac \
-  && curl -fsSL -o /usr/local/bin/yq \
-    "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${yq_arch}" \
-  && chmod +x /usr/local/bin/yq \
-  && curl -fsSL -o /tmp/uv.tar.gz \
-    "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_arch}.tar.gz" \
-  && tar -xzf /tmp/uv.tar.gz -C /tmp \
-  && install -m 0755 "/tmp/uv-${uv_arch}/uv" /usr/local/bin/uv \
-  && install -m 0755 "/tmp/uv-${uv_arch}/uvx" /usr/local/bin/uvx \
+  && npx playwright install --with-deps chromium \
   && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
-  && rm -rf /tmp/uv.tar.gz "/tmp/uv-${uv_arch}" \
   && rm -rf /var/lib/apt/lists/*
 
 COPY docker/claude-runner/entrypoint.sh /usr/local/bin/entrypoint.sh
