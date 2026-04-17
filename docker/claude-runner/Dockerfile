@@ -1,18 +1,84 @@
 FROM ubuntu:24.04
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PLAYWRIGHT_SKIP_BROWSER_GC=1 \
+    XDG_CACHE_HOME=/state/browser-cache \
+    BROWSER_PROFILE_DIR=/state/browser-profile \
+    BROWSER_DOWNLOADS_DIR=/workspace/downloads
 
 ARG CLAUDE_CODE_VERSION=2.1.104
+ARG PLAYWRIGHT_CLI_VERSION=0.1.8
+ARG PLAYWRIGHT_MCP_VERSION=0.0.70
+ARG YQ_VERSION=v4.53.2
+ARG UV_VERSION=0.11.7
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
-    curl \
-    git \
-    gnupg \
     bash \
-    tini \
+    curl \
+    wget \
+    aria2 \
+    git \
+    git-lfs \
+    openssh-client \
+    gnupg \
     sudo \
-  && rm -rf /var/lib/apt/lists/*
+    tini \
+    less \
+    file \
+    tree \
+    coreutils \
+    findutils \
+    grep \
+    sed \
+    gawk \
+    diffutils \
+    patch \
+    procps \
+    psmisc \
+    lsof \
+    strace \
+    rsync \
+    ripgrep \
+    fd-find \
+    jq \
+    miller \
+    sqlite3 \
+    csvkit \
+    zip \
+    unzip \
+    xz-utils \
+    p7zip-full \
+    dnsutils \
+    iputils-ping \
+    netcat-openbsd \
+    inetutils-telnet \
+    openssl \
+    build-essential \
+    make \
+    pkgconf \
+    python-is-python3 \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-venv \
+    poppler-utils \
+    pandoc \
+    antiword \
+    catdoc \
+    ffmpeg \
+    tesseract-ocr \
+    imagemagick \
+    libxml2-utils \
+    xvfb \
+    w3m \
+    xdg-utils \
+    fonts-dejavu-core \
+    fonts-liberation \
+    fonts-noto-cjk \
+    fonts-noto-color-emoji \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /etc/apt/keyrings \
   && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
@@ -21,24 +87,52 @@ RUN mkdir -p /etc/apt/keyrings \
     > /etc/apt/sources.list.d/nodesource.list \
   && apt-get update \
   && apt-get install -y --no-install-recommends nodejs \
-  && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+  && npm install -g \
+    @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+    @playwright/cli@${PLAYWRIGHT_CLI_VERSION} \
+    @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
+  && corepack enable \
+  && playwright install --with-deps chromium \
+  && arch="$(dpkg --print-architecture)" \
+  && case "${arch}" in \
+      amd64) yq_arch='amd64'; uv_arch='x86_64-unknown-linux-gnu' ;; \
+      arm64) yq_arch='arm64'; uv_arch='aarch64-unknown-linux-gnu' ;; \
+      *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL -o /usr/local/bin/yq \
+    "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${yq_arch}" \
+  && chmod +x /usr/local/bin/yq \
+  && curl -fsSL -o /tmp/uv.tar.gz \
+    "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_arch}.tar.gz" \
+  && tar -xzf /tmp/uv.tar.gz -C /tmp \
+  && install -m 0755 "/tmp/uv-${uv_arch}/uv" /usr/local/bin/uv \
+  && install -m 0755 "/tmp/uv-${uv_arch}/uvx" /usr/local/bin/uvx \
+  && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+  && rm -rf /tmp/uv.tar.gz "/tmp/uv-${uv_arch}" \
   && rm -rf /var/lib/apt/lists/*
 
 COPY docker/claude-runner/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 RUN useradd --system --create-home --home-dir /workspace claude \
-  && mkdir -p /workspace /state/claude \
-  && chown claude:claude /workspace /state/claude \
+  && mkdir -p \
+    /ms-playwright \
+    /workspace \
+    /workspace/downloads \
+    /state/claude \
+    /state/browser-profile \
+    /state/browser-cache \
+  && chown -R claude:claude /ms-playwright \
+  && chown claude:claude /workspace /workspace/downloads /state/claude /state/browser-profile /state/browser-cache \
   && chown claude:claude /state
 
 RUN printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -euo pipefail' \
-    'mkdir -p /workspace /state /state/claude /state/claude/debug' \
-    'chown claude:claude /workspace' \
+    'mkdir -p /workspace /workspace/downloads /state /state/claude /state/claude/debug /state/browser-profile /state/browser-cache' \
+    'chown claude:claude /workspace /workspace/downloads' \
     'chown claude:claude /state' \
-    'chown -R claude:claude /state/claude' \
+    'chown -R claude:claude /state/claude /state/browser-profile /state/browser-cache' \
     'touch /state/claude/.keep' \
     'chown claude:claude /state/claude/.keep' \
     > /usr/local/bin/claude-bootstrap.sh \

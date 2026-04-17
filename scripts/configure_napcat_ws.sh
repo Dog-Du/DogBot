@@ -13,6 +13,8 @@ fi
 
 NAPCAT_CONTAINER_NAME="${NAPCAT_CONTAINER_NAME:-napcat}"
 NAPCAT_CONFIG_DIR="${NAPCAT_CONFIG_DIR:-$dogbot_repo_root/agent-state/napcat-config}"
+NAPCAT_ONEBOT_PORT="${NAPCAT_ONEBOT_PORT:-3001}"
+NAPCAT_HTTP_TOKEN="${NAPCAT_ACCESS_TOKEN:-}"
 NAPCAT_WS_CLIENT_URL="${NAPCAT_WS_CLIENT_URL:-ws://host.docker.internal:19000/napcat/ws}"
 NAPCAT_WS_CLIENT_TOKEN="${NAPCAT_WS_CLIENT_TOKEN:-}"
 NAPCAT_WS_CLIENT_RECONNECT_MS="${NAPCAT_WS_CLIENT_RECONNECT_MS:-1000}"
@@ -40,6 +42,18 @@ else:
 network = data.setdefault("network", {})
 for key in ("httpServers", "httpSseServers", "httpClients", "websocketServers", "plugins"):
     network.setdefault(key, [])
+
+network["httpServers"] = [{
+    "name": "dogbot-http",
+    "enable": True,
+    "port": int(${NAPCAT_ONEBOT_PORT@Q}),
+    "host": "0.0.0.0",
+    "enableCors": True,
+    "enableWebsocket": False,
+    "messagePostFormat": "array",
+    "token": ${NAPCAT_HTTP_TOKEN@Q},
+    "debug": False,
+}]
 
 network["websocketClients"] = [{
     "name": "qq-adapter",
