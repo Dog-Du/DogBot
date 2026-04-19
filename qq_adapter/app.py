@@ -48,6 +48,12 @@ def create_app() -> FastAPI:
                     status_command_name=settings.status_command_name,
                     bot_id=settings.qq_bot_id,
                 )
+                if (
+                    command is None
+                    and inbound_status != "status"
+                    and inbound_mode != "status"
+                ):
+                    continue
 
                 if (
                     inbound_status == "status"
@@ -57,9 +63,7 @@ def create_app() -> FastAPI:
                     health = await runner.healthz()
                     text = "agent-runner ok" if health.get("status") == "ok" else "agent-runner unavailable"
                 else:
-                    prompt = str(inbound_payload.get("normalized_text") or "").strip()
-                    if command is not None and command.get("mode") == "run":
-                        prompt = command.get("prompt", "")
+                    prompt = command.get("prompt", "")
                     payload = build_run_payload(
                         event,
                         platform_account_id=settings.platform_account_id,

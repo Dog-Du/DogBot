@@ -67,6 +67,41 @@ def test_private_agent_command_runs_and_replies(monkeypatch):
     assert calls["private"] == ("1", "pong")
 
 
+def test_private_inbound_accepted_without_legacy_command_match_is_ignored(monkeypatch):
+    calls = {}
+
+    async def fake_inbound(self, payload):
+        calls["inbound"] = payload
+        return {"status": "accepted"}
+
+    async def fake_run(self, payload, timeout_secs):
+        calls["run"] = payload
+        return {"stdout": "pong", "stderr": ""}
+
+    async def fake_send_private(self, user_id, message):
+        calls["private"] = (user_id, message)
+
+    monkeypatch.setattr("qq_adapter.runner_client.AgentRunnerClient.send_inbound_message", fake_inbound)
+    monkeypatch.setattr("qq_adapter.runner_client.AgentRunnerClient.run", fake_run)
+    monkeypatch.setattr("qq_adapter.napcat_client.NapCatClient.send_private_msg", fake_send_private)
+
+    app = create_app()
+    client = TestClient(app)
+    with client.websocket_connect("/napcat/ws") as websocket:
+        websocket.send_json(
+            {
+                "post_type": "message",
+                "message_type": "private",
+                "raw_message": "请帮我 /agent 总结一下",
+                "user_id": 1,
+            }
+        )
+
+    assert calls["inbound"]["normalized_text"] == "请帮我 /agent 总结一下"
+    assert "run" not in calls
+    assert "private" not in calls
+
+
 def test_group_requires_at_and_agent(monkeypatch):
     calls = {}
 
