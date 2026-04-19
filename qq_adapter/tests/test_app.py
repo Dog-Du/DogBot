@@ -139,6 +139,59 @@ def test_group_requires_at_and_agent(monkeypatch):
     assert calls["group"] == ("2", "1", "pong")
 
 
+def test_group_enablement_triggers_limited_history_backfill(monkeypatch):
+    calls = {"history": 0, "forwarded": 0}
+
+    async def fake_history(self, group_id: str, count: int = 50):
+        calls["history"] += 1
+        assert group_id == "2"
+        assert count == 50
+        return [
+            {
+                "message_id": 1,
+                "raw_message": "old text",
+                "user_id": 7,
+                "group_id": 2,
+            }
+        ]
+
+    async def fake_inbound(self, payload):
+        calls["forwarded"] += 1
+        return {"status": "accepted"}
+
+    async def fake_run(self, payload, timeout_secs):
+        calls["payload"] = payload
+        return {"stdout": "pong", "stderr": ""}
+
+    async def fake_send_group(self, group_id, user_id, message):
+        calls["group"] = (group_id, user_id, message)
+
+    monkeypatch.setattr("qq_adapter.napcat_client.NapCatClient.get_group_msg_history", fake_history)
+    monkeypatch.setattr("qq_adapter.runner_client.AgentRunnerClient.send_inbound_message", fake_inbound)
+    monkeypatch.setattr("qq_adapter.runner_client.AgentRunnerClient.run", fake_run)
+    monkeypatch.setattr("qq_adapter.napcat_client.NapCatClient.send_group_msg", fake_send_group)
+    monkeypatch.setenv("QQ_ADAPTER_QQ_BOT_ID", "123")
+
+    app = create_app()
+    client = TestClient(app)
+    with client.websocket_connect("/napcat/ws") as websocket:
+        websocket.send_json(
+            {
+                "post_type": "message",
+                "message_type": "group",
+                "raw_message": "[CQ:at,qq=123] /agent hello",
+                "group_id": 2,
+                "user_id": 1,
+                "message_id": 99,
+            }
+        )
+
+    assert calls["payload"]["prompt"] == "hello"
+    assert calls["group"] == ("2", "1", "pong")
+    assert calls["history"] == 1
+    assert calls["forwarded"] == 2
+
+
 def test_group_without_at_is_ignored(monkeypatch):
     calls = {}
 

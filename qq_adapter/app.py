@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .config import Settings
+from .history_sync import sync_group_history
 from .mapper import build_inbound_payload, build_run_payload, classify_message
 from .napcat_client import NapCatClient
 from .runner_client import AgentRunnerClient
@@ -16,12 +18,42 @@ def create_app() -> FastAPI:
     settings = Settings.from_env()
     runner = AgentRunnerClient(settings.agent_runner_base_url)
     napcat = NapCatClient(settings.napcat_api_base_url, settings.napcat_access_token)
+    backfilled_group_ids: set[str] = set()
+    backfill_lock = asyncio.Lock()
 
     app = FastAPI()
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    async def maybe_backfill_group_history(event: dict[str, object]) -> None:
+        if str(event.get("message_type") or "") != "group":
+            return
+
+        group_id = str(event.get("group_id") or "").strip()
+        if not group_id:
+            return
+
+        current_message_id = str(event.get("message_id") or "").strip() or None
+
+        async with backfill_lock:
+            if group_id in backfilled_group_ids:
+                return
+            backfilled_group_ids.add(group_id)
+
+        try:
+            await sync_group_history(
+                napcat,
+                runner,
+                group_id=group_id,
+                platform_account_id=settings.platform_account_id,
+                current_message_id=current_message_id,
+            )
+        except Exception:
+            logger.exception("qq adapter history backfill failed for group %s", group_id)
+            async with backfill_lock:
+                backfilled_group_ids.discard(group_id)
 
     @app.websocket("/napcat/ws")
     async def napcat_ws(websocket: WebSocket) -> None:
@@ -80,12 +112,15 @@ def create_app() -> FastAPI:
                         text = (str(result.get("stdout") or "").strip() or str(result.get("stderr") or "").strip())
 
                     if not text:
+                        await maybe_backfill_group_history(event)
                         continue
 
                     if str(event.get("message_type") or "") == "group":
                         await napcat.send_group_msg(str(event["group_id"]), str(event["user_id"]), text)
                     else:
                         await napcat.send_private_msg(str(event["user_id"]), text)
+
+                    await maybe_backfill_group_history(event)
                 except Exception:
                     logger.exception("qq adapter failed to process message event")
                     continue
