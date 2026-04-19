@@ -34,6 +34,14 @@ QQ
 -> Claude 协议模型源
 ```
 
+当前 `agent-runner` 内部已经收敛出一层控制面，负责：
+
+- identity / session 归一化
+- scope 与权限判定
+- memory candidate 与内容加载
+- inbound trigger 解析
+- 历史消息采集、检索和 retention cleanup
+
 ## 仓库结构
 
 ```text
@@ -42,6 +50,7 @@ QQ
 ├── stop_stack.sh                # 根目录停止入口
 ├── README.md
 ├── agent-runner/                 # Rust 核心服务
+├── content/                      # policy / resource / skill 仓库内容
 ├── compose/                      # Docker Compose 编排
 │   └── README.md                 # 高级用户的 compose 说明
 ├── deploy/                       # 配置模板与部署说明
@@ -61,6 +70,10 @@ QQ
 默认配置模板见：
 
 - `deploy/dogbot.env.example`
+
+控制面联调说明见：
+
+- `docs/control-plane-integration.md`
 
 ## 部署入口
 
@@ -119,25 +132,37 @@ QQ
 - `git`
 - `rg`
 
-## 目前规则
+## 当前规则
+
+当前用户可见触发规则仍然保持显式命令：
 
 - QQ 私聊：必须 `/agent ...`
 - QQ 群聊：必须 `@机器人 + /agent ...`
 - 微信私聊：必须 `/agent ...`
 - 微信群聊：必须 `@机器人名 + /agent ...`
 - `/agent-status` 保留为状态检查命令
-- 默认会使用 AI Agent 的默认模型，可以进入容器中修改默认模型
-## 后续 TODO
 
-- [ ] 历史消息持久化
-  - 对 QQ、微信等平台的消息做统一入库
-  - 为后续上下文补全、长期记忆、检索和审计提供基础
-- [ ] Agent 内容管理与记忆管理
-  - 对 `skill`、`memory`、`system prompt` 等内容做结构化管理
-  - 减少上下文污染，提升长期可维护性
-- [ ] 支持 `Codex`、`OpenCode` 等
-  - 除 Claude Code 外，扩展更多 CLI Agent 后端
-  - 保持统一的运行、会话和资源限制边界
+补充说明：
+
+- `agent-runner` 内部的 normalized trigger resolver 已经支持更宽松的识别
+- 但两个 adapter 当前仍保留兼容性的本地 command gate
+- 联调和验收应以当前显式命令规则为准
+
+## 当前已落地
+
+- [x] Agent 内容管理与记忆管理主干
+  - 四层 scope：`user-private` / `conversation-shared` / `platform-account-shared` / `bot-global-admin`
+  - `control.db` 落地 memory candidate、authorization 和 control-plane 对象
+  - `content/` 目录承载仓库管理的 policy / resource / skill
+- [x] 触发识别与基础回复链路
+  - QQ / WeChat 统一先走 `/v1/inbound-messages`
+  - 规范化 inbound message、mention/reply 元数据和 runner-side trigger resolver 已落地
+  - QQ / WeChat 的 reply / mention 回发链路已整理
+- [x] 历史消息基础版
+  - 首次有效触发会启用当前会话的 history ingest
+  - QQ 群聊支持有限 backfill
+  - WeChat 支持启用后的 realtime mirror
+  - 当前 conversation 的 history evidence pack 会注入 `/v1/runs`
 
 ## 近期已收敛
 
@@ -146,3 +171,11 @@ QQ
   - `deploy_stack.sh` / `stop_stack.sh` 跑通并补齐脚本级回归检查
   - `QQ/Wechat` 登录流程支持二维码刷新、阻塞等待、超时退出和回发链路修复
   - 移除 `astrbot` 依赖及相关历史运行链路
+
+## 后续 TODO
+
+- [ ] 主动消息 / automation / outbox
+- [ ] 更完整的记忆审批与共享写权限治理
+- [ ] WeChat 历史回填
+- [ ] 图片链路端到端发送
+- [ ] 支持 `Codex`、`OpenCode` 等更多 CLI Agent 后端

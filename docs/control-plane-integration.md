@@ -1,0 +1,240 @@
+# DogBot Control Plane 联调说明
+
+本文档对应 2026-04-19 这一轮 `A/B/C` 控制面改造，覆盖：
+
+- A. 记忆 / 内容 / skill / 权限 / 会话隔离
+- B. 触发识别 / 回复表现 / QQ微信交互细节
+- C. 历史消息采集 / 存储 / 检索注入
+
+目标不是重复设计文档，而是给部署和联调提供一个可执行的检查清单。
+
+## 1. 当前落地范围
+
+本轮已经落地的主干能力：
+
+- `agent-runner` 内嵌 control-plane 子系统
+  - `identity/session`
+  - `context`
+  - `history`
+  - `trigger resolver`
+- 统一 scope 模型
+  - `user-private`
+  - `conversation-shared`
+  - `platform-account-shared`
+  - `bot-global-admin`
+- `memory candidate` 落库
+  - Claude 输出中的 `dogbot-memory` fenced block 会被 best-effort 解析并写入 `control.db`
+- inbound-first 链路
+  - QQ / WeChat adapter 会先把规范化后的消息发送给 `agent-runner /v1/inbound-messages`
+- 历史消息基础版
+  - 首次有效触发会启用当前会话的 history ingest
+  - QQ 群聊首次启用后会做一次有界 backfill
+  - WeChat 目前只做启用后的 realtime mirror
+  - `/v1/runs` 会把当前 conversation 的 history evidence pack 注入 prompt
+- retention cleanup
+  - 请求路径会按节流周期 opportunistic 清理过期 history
+
+## 2. 当前边界
+
+为了避免把设计态和现态混淆，当前联调以这几条为准：
+
+- 用户可见触发仍然保持显式命令
+  - QQ 私聊：`/agent ...`
+  - QQ 群聊：`@机器人 + /agent ...`
+  - 微信私聊：`/agent ...`
+  - 微信群聊：`@机器人名 + /agent ...`
+  - `/agent-status` 保留
+- `agent-runner` 的 `TriggerResolver` 已经支持更宽松的规范化识别
+  - 私聊中正文任意位置出现 `/agent`
+  - 群聊中正文任意位置出现 `/agent` 且满足 mention/reply
+- 但两个 adapter 目前仍保留兼容性的本地 command gate
+  - 所以联调时不要把“reply 中带 `/agent` 就能直接执行”当成现态
+- markdown 降级和 media action 校验已经有基础实现
+  - 但图片出站仍未完成整条生产链路
+  - 本轮不要把“Agent 已经可以端到端发图”当成验收项
+
+## 3. 运行态文件
+
+本轮新增或需要重点关注的运行态对象：
+
+- `runner.db`
+  - Claude session 映射和消息回发 session 依赖
+- `control.db`
+  - `memory_candidates`
+  - `conversation_authorizations`
+  - control-plane 对象表
+- `history.db`
+  - `message_store`
+  - `message_attachment`
+  - `asset_store`
+  - `conversation_ingest_state`
+- `content/`
+  - 仓库管理的 policy / resource / skill 目录
+
+建议路径：
+
+```text
+/srv/dogbot/runtime/agent-state/runner.db
+/srv/dogbot/runtime/agent-state/control.db
+/srv/dogbot/runtime/agent-state/history.db
+/srv/dogbot/content/
+```
+
+## 4. 关键配置
+
+至少确认下面这些配置已经显式设置或理解其默认值：
+
+```env
+AGENT_RUNNER_BIND_ADDR=127.0.0.1:8787
+SESSION_DB_PATH=/srv/dogbot/runtime/agent-state/runner.db
+CONTROL_PLANE_DB_PATH=/srv/dogbot/runtime/agent-state/control.db
+HISTORY_DB_PATH=/srv/dogbot/runtime/agent-state/history.db
+DOGBOT_CONTENT_ROOT=/srv/dogbot/content
+DOGBOT_ADMIN_ACTOR_IDS=qq:user:10001,wechat:user:wxid_admin
+
+QQ_PLATFORM_ACCOUNT_ID=qq:bot_uin:123456
+WECHATPADPRO_PLATFORM_ACCOUNT_ID=wechatpadpro:account:wxid_bot_1
+```
+
+说明：
+
+- `DOGBOT_ADMIN_ACTOR_IDS` 决定谁拥有管理员写权限
+- `QQ_PLATFORM_ACCOUNT_ID` / `WECHATPADPRO_PLATFORM_ACCOUNT_ID` 决定 platform-account scope 的隔离键
+- `DOGBOT_CONTENT_ROOT` 推荐使用绝对路径，避免工作目录变化导致读错仓库内容
+
+## 5. 联调前准备
+
+如果 NapCat 和 WeChatPadPro 已经在线并保持登录，本轮联调通常不需要重新扫码。
+
+建议只确认三类进程：
+
+- `agent-runner`
+- `qq-adapter`
+- `wechatpadpro-adapter`
+
+健康检查：
+
+```bash
+curl -fsS http://127.0.0.1:8787/healthz
+curl -fsS http://127.0.0.1:19000/healthz
+curl -fsS http://127.0.0.1:18999/healthz
+```
+
+预期都返回：
+
+```json
+{"status":"ok"}
+```
+
+## 6. 平台侧联调步骤
+
+### 6.1 QQ 私聊
+
+发送：
+
+```text
+/agent-status
+/agent 说一句 hello
+```
+
+预期：
+
+- `/agent-status` 返回 `agent-runner ok`
+- `/agent ...` 能正常触发执行并回消息
+
+### 6.2 QQ 群聊
+
+发送：
+
+```text
+@DogDu /agent 说一句 hello
+```
+
+预期：
+
+- 当前消息先进入 `/v1/inbound-messages`
+- 首次有效触发时会启用该群的 history ingest
+- QQ adapter 会对该群做一次最多 `50` 条的有界 history backfill
+- 机器人回复时会 `@` 当前发言人
+
+### 6.3 WeChat 私聊
+
+发送：
+
+```text
+/agent-status
+/agent 说一句 hello
+```
+
+预期：
+
+- webhook 命中后先做 inbound 归一化
+- `/agent-status` 返回 `agent-runner ok`
+- `/agent ...` 能正常回消息
+
+### 6.4 WeChat 群聊
+
+发送：
+
+```text
+@DogDu /agent 说一句 hello
+```
+
+预期：
+
+- 需要 mention 门禁
+- 命中后会写入当前 group conversation 的 history ingest
+- 当前只做启用后的 realtime mirror，不做历史回填
+
+## 7. 数据面核对
+
+### 7.1 核对 history ingest 是否启用
+
+```bash
+sqlite3 /srv/dogbot/runtime/agent-state/history.db \
+  "select conversation_id, enabled, retention_days from conversation_ingest_state order by conversation_id;"
+```
+
+### 7.2 核对消息是否入库
+
+```bash
+sqlite3 /srv/dogbot/runtime/agent-state/history.db \
+  "select conversation_id, count(*) as message_count from message_store group by conversation_id order by conversation_id;"
+```
+
+### 7.3 核对 memory candidate
+
+```bash
+sqlite3 /srv/dogbot/runtime/agent-state/control.db \
+  "select candidate_id, actor_id, conversation_id, platform_account_id, created_at_epoch_secs from memory_candidates order by created_at_epoch_secs desc limit 20;"
+```
+
+如果某次 Claude 输出带有：
+
+````text
+```dogbot-memory
+{ ... }
+```
+````
+
+则这里应该能看到一条 candidate 记录。
+
+## 8. 当前已知限制
+
+本轮合并后仍然保留这些限制：
+
+- WeChatPadPro 历史消息没有 backfill，只支持启用后的 realtime mirror
+- 历史只做当前 conversation 注入，不跨会话检索
+- `resource / skill / policy` 仍然是仓库管理，不支持在聊天里直接生效修改
+- 图片链路目前只完成了 schema / action validation 基础，不作为本轮联调验收项
+- adapter 仍保留本地 command gate，所以更宽松的 reply/mid-text 触发还没有完全对外开放
+
+## 9. 回归命令
+
+本轮对应的最小回归命令：
+
+```bash
+cargo test --test history_cleanup_tests --test history_ingest_tests --test history_retrieval_tests --test inbound_api_tests --test context_run_tests --test http_api_tests --manifest-path agent-runner/Cargo.toml
+uv run --with pytest --with fastapi --with httpx python -m pytest qq_adapter/tests -q
+uv run --with pytest --with fastapi --with httpx python -m pytest wechatpadpro_adapter/tests -q
+```

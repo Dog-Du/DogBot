@@ -58,11 +58,18 @@ QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner
 
 ## 3. 当前触发规则
 
-- QQ 私聊：必须 `/agent ...`
-- QQ 群聊：必须 `@机器人 + /agent ...`
-- 微信私聊：必须 `/agent ...`
-- 微信群聊：必须 `@机器人名 + /agent ...`
+- 当前用户可见规则仍保持显式命令：
+  - QQ 私聊：必须 `/agent ...`
+  - QQ 群聊：必须 `@机器人 + /agent ...`
+  - 微信私聊：必须 `/agent ...`
+  - 微信群聊：必须 `@机器人名 + /agent ...`
 - `/agent-status`：保留
+
+补充说明：
+
+- `agent-runner` 内部已经具备更宽松的 normalized trigger resolver
+- 但两个 adapter 当前仍保留兼容性的本地 command gate
+- 不要把“reply 中带 `/agent` 就已经全量开放”当成当前现态
 
 ## 4. 重要目录
 
@@ -92,14 +99,18 @@ QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner
 
 - `WeChatPadPro` 仍然存在自身不稳定点
   - 尤其是私聊推送、同步流和 DNS 稳定性
-- 历史消息持久化还没真正落地
+- 历史消息持久化已经落地基础版
+  - QQ 仅支持首次启用后的有限 backfill
+  - WeChat 目前仅支持启用后的 realtime mirror
+- 图片链路尚未完成端到端出站发送
+- adapter 仍保留本地 command gate，reply/中段触发还未完全对外开放
 
 ## 7. 后续方向
 
-- 历史消息持久化
-- Agent 内容管理与记忆管理
+- 主动消息 / automation / outbox
+- 更完整的 Agent 内容管理与记忆审批
 - 支持 `Codex`、`OpenCode`
-- 整理部署与使用体验
+- 完整图片链路和更丰富的回复渲染
 
 ## 8. 阅读顺序建议
 
@@ -108,6 +119,7 @@ QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner
 1. `README.md`
 2. `deploy/README.md`
 3. `deploy/dogbot.env.example`
-4. `agent-runner/`
-5. `qq_adapter/`
-6. `wechatpadpro_adapter/`
+4. `docs/control-plane-integration.md`
+5. `agent-runner/`
+6. `qq_adapter/`
+7. `wechatpadpro_adapter/`

@@ -223,6 +223,10 @@ CLAUDE_CODE_VERSION=2.1.104
 AGENT_WORKSPACE_DIR=/srv/dogbot/runtime/agent-workspace
 AGENT_STATE_DIR=/srv/dogbot/runtime/agent-state
 SESSION_DB_PATH=/srv/dogbot/runtime/agent-state/runner.db
+CONTROL_PLANE_DB_PATH=/srv/dogbot/runtime/agent-state/control.db
+HISTORY_DB_PATH=/srv/dogbot/runtime/agent-state/history.db
+DOGBOT_CONTENT_ROOT=/srv/dogbot/content
+DOGBOT_ADMIN_ACTOR_IDS=qq:user:10001,wechat:user:wxid_admin
 ```
 
 建议：
@@ -234,11 +238,30 @@ SESSION_DB_PATH=/srv/dogbot/runtime/agent-state/runner.db
   - SQLite 数据库
   - 日志
   - NapCat / WeChatPadPro 状态
+- `SESSION_DB_PATH` 保存短期 Claude session 映射
+- `CONTROL_PLANE_DB_PATH` 保存 memory candidate、authorization 等 control-plane 数据
+- `HISTORY_DB_PATH` 保存 history ingest 和 retrieval 基础数据
+- `DOGBOT_CONTENT_ROOT` 推荐使用绝对路径，指向仓库托管的 `content/`
+- `DOGBOT_ADMIN_ACTOR_IDS` 用逗号分隔管理员 actor ID
 - `WeChatPadPro` 的 `data/mysql/redis` 目录也建议放到 `AGENT_STATE_DIR/wechatpadpro-data/`
 
 如果你改这些路径，旧会话和旧状态看起来会像“丢了”。
 
-### 5.3 agent-runner 与内置代理
+### 5.3 平台账号隔离键
+
+建议显式设置：
+
+```env
+QQ_PLATFORM_ACCOUNT_ID=qq:bot_uin:123456
+WECHATPADPRO_PLATFORM_ACCOUNT_ID=wechatpadpro:account:wxid_bot_1
+```
+
+作用：
+
+- 作为 `platform-account-shared` scope 的隔离键
+- 避免多个机器人账号共用同一套 platform 级上下文
+
+### 5.4 agent-runner 与内置代理
 
 ```env
 AGENT_RUNNER_BIND_ADDR=127.0.0.1:8787
@@ -254,7 +277,7 @@ API_PROXY_AUTH_TOKEN=local-proxy-token
 - `API_PROXY_BIND_ADDR` 不能绑到 `127.0.0.1`，否则 Docker 内访问不到
 - `API_PROXY_AUTH_TOKEN` 不是上游真实 key，只是本地代理 token
 
-### 5.4 上游配置
+### 5.5 上游配置
 
 当前只保留一套 Claude 协议上游配置：
 
@@ -338,6 +361,12 @@ QQ_ADAPTER_STATUS_COMMAND_NAME=agent-status
 - 微信私聊：必须 `/agent ...`
 - 微信群聊：必须 `@机器人名 + /agent ...`
 - `/agent-status` 保留
+
+补充说明：
+
+- `agent-runner` 内部的 normalized trigger resolver 已经支持更宽松的识别
+- 当前两个 adapter 仍保留兼容性的本地 command gate
+- 部署和联调请仍按上面的显式命令规则验收
 
 ## 9. WeChatPadPro 配置
 
@@ -505,3 +534,16 @@ curl http://127.0.0.1:8787/healthz
 当前仓库统一使用：
 
 - `deploy/dogbot.env`
+
+## 13. Control Plane 联调
+
+本轮控制面 A/B/C 改造的联调和验收说明单独整理在：
+
+- `docs/control-plane-integration.md`
+
+建议先按本文完成部署，再按该文档做：
+
+- 健康检查
+- QQ / WeChat 平台侧手工回归
+- `control.db` / `history.db` 核对
+- Rust / Python 回归命令
