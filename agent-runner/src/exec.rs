@@ -2,8 +2,11 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use tokio::time::{Duration, timeout};
+use tracing::warn;
 
 use crate::config::Settings;
+use crate::context::memory_intent::capture_memory_intent;
+use crate::context::object_store::ContextObjectStore;
 use crate::docker_client::{ContainerSpec, DockerRuntime};
 use crate::models::{ErrorResponse, RunRequest, RunResponse, ValidatedRunRequest};
 use crate::session_store::{SessionStore, SessionStoreError};
@@ -22,6 +25,7 @@ pub struct DockerRunner {
     runtime: DockerRuntime,
     container_spec: ContainerSpec,
     session_store: SessionStore,
+    context_store: Option<ContextObjectStore>,
 }
 
 impl DockerRunner {
@@ -35,10 +39,23 @@ impl DockerRunner {
                 timed_out: false,
             })?;
 
+        let context_store = match ContextObjectStore::open(&settings.control_plane_db_path) {
+            Ok(store) => Some(store),
+            Err(err) => {
+                warn!(
+                    "control-plane store unavailable at {}: {}; memory candidates will not be persisted",
+                    settings.control_plane_db_path,
+                    err
+                );
+                None
+            }
+        };
+
         Ok(Self {
             runtime,
             container_spec,
             session_store,
+            context_store,
         })
     }
 }
@@ -72,7 +89,13 @@ impl ExecutionBackend for DockerRunner {
 
         let started = Instant::now();
         let first = self
-            .execute_once(&request.prompt, &validated, &session)
+            .execute_once(
+                &request.prompt,
+                &validated,
+                &session,
+                &request.user_id,
+                &request.conversation_id,
+            )
             .await?;
 
         if should_retry_with_fresh_session(&first, session.is_new) {
@@ -87,7 +110,13 @@ impl ExecutionBackend for DockerRunner {
                 .map_err(map_session_store_error)?;
 
             let retried = self
-                .execute_once(&request.prompt, &validated, &reset_session)
+                .execute_once(
+                    &request.prompt,
+                    &validated,
+                    &reset_session,
+                    &request.user_id,
+                    &request.conversation_id,
+                )
                 .await?;
             return Ok(with_duration(retried, started.elapsed().as_millis()));
         }
@@ -102,6 +131,8 @@ impl DockerRunner {
         prompt: &str,
         validated: &ValidatedRunRequest,
         session: &crate::session_store::SessionRecord,
+        actor_id: &str,
+        conversation_id: &str,
     ) -> Result<RunResponse, ErrorResponse> {
         let exec = self
             .runtime
@@ -125,14 +156,31 @@ impl DockerRunner {
         .await;
 
         match result {
-            Ok(Ok((stdout, stderr, exit_code))) => Ok(RunResponse {
-                status: "ok".into(),
-                stdout,
-                stderr,
-                exit_code,
-                timed_out: false,
-                duration_ms: 0,
-            }),
+            Ok(Ok((stdout, stderr, exit_code))) => {
+                if let Some(store) = &self.context_store {
+                    if let Some(captured_intent) = capture_memory_intent(&stdout) {
+                        if let Err(err) = store.insert_memory_candidate(
+                            actor_id,
+                            conversation_id,
+                            &captured_intent.raw_json,
+                        ) {
+                            warn!(
+                                "failed to persist memory candidate for actor={} conversation={}: {}",
+                                actor_id, conversation_id, err
+                            );
+                        }
+                    }
+                }
+
+                Ok(RunResponse {
+                    status: "ok".into(),
+                    stdout,
+                    stderr,
+                    exit_code,
+                    timed_out: false,
+                    duration_ms: 0,
+                })
+            }
             Ok(Err(err)) => Err(ErrorResponse {
                 status: "error".into(),
                 error_code: "exec_failed".into(),
