@@ -210,3 +210,89 @@ def test_private_status_from_inbound_replies_without_run(monkeypatch):
     assert calls["healthz"] is True
     assert "run" not in calls
     assert calls["private"] == ("1", "agent-runner ok")
+
+
+def test_private_status_from_inbound_decision_replies_without_run(monkeypatch):
+    calls = {}
+
+    async def fake_inbound(self, payload):
+        calls["inbound"] = payload
+        return {"status": "accepted", "decision": "status"}
+
+    async def fake_healthz(self):
+        calls["healthz"] = True
+        return {"status": "ok"}
+
+    async def fake_run(self, payload, timeout_secs):
+        calls["run"] = True
+        return {"stdout": "pong", "stderr": ""}
+
+    async def fake_send_private(self, user_id, message):
+        calls["private"] = (user_id, message)
+
+    monkeypatch.setattr("qq_adapter.runner_client.AgentRunnerClient.send_inbound_message", fake_inbound)
+    monkeypatch.setattr("qq_adapter.runner_client.AgentRunnerClient.healthz", fake_healthz)
+    monkeypatch.setattr("qq_adapter.runner_client.AgentRunnerClient.run", fake_run)
+    monkeypatch.setattr("qq_adapter.napcat_client.NapCatClient.send_private_msg", fake_send_private)
+
+    app = create_app()
+    client = TestClient(app)
+    with client.websocket_connect("/napcat/ws") as websocket:
+        websocket.send_json(
+            {
+                "post_type": "message",
+                "message_type": "private",
+                "raw_message": "/agent-status",
+                "user_id": 1,
+            }
+        )
+
+    assert calls["inbound"]["normalized_text"] == "/agent-status"
+    assert calls["healthz"] is True
+    assert "run" not in calls
+    assert calls["private"] == ("1", "agent-runner ok")
+
+
+def test_websocket_continues_after_inbound_failure(monkeypatch):
+    calls = {"inbound": 0}
+
+    async def fake_inbound(self, payload):
+        calls["inbound"] += 1
+        if calls["inbound"] == 1:
+            raise RuntimeError("transient inbound failure")
+        return {"status": "accepted"}
+
+    async def fake_run(self, payload, timeout_secs):
+        calls["payload"] = payload
+        return {"stdout": "pong", "stderr": ""}
+
+    async def fake_send_private(self, user_id, message):
+        calls["private"] = (user_id, message)
+
+    monkeypatch.setattr("qq_adapter.runner_client.AgentRunnerClient.send_inbound_message", fake_inbound)
+    monkeypatch.setattr("qq_adapter.runner_client.AgentRunnerClient.run", fake_run)
+    monkeypatch.setattr("qq_adapter.napcat_client.NapCatClient.send_private_msg", fake_send_private)
+
+    app = create_app()
+    client = TestClient(app)
+    with client.websocket_connect("/napcat/ws") as websocket:
+        websocket.send_json(
+            {
+                "post_type": "message",
+                "message_type": "private",
+                "raw_message": "/agent first",
+                "user_id": 1,
+            }
+        )
+        websocket.send_json(
+            {
+                "post_type": "message",
+                "message_type": "private",
+                "raw_message": "/agent second",
+                "user_id": 1,
+            }
+        )
+
+    assert calls["inbound"] == 2
+    assert calls["payload"]["prompt"] == "second"
+    assert calls["private"] == ("1", "pong")

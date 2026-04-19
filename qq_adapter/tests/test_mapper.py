@@ -34,6 +34,24 @@ def test_group_requires_at_and_agent_prefix():
     assert result["prompt"] == "hello"
 
 
+def test_group_accepts_reply_then_at_prefix_with_extra_cq_attributes():
+    event = {
+        "message_type": "group",
+        "raw_message": "[CQ:reply,id=88][CQ:at,qq=123,name=DogDu] /agent hello",
+        "group_id": 2,
+        "user_id": 1,
+    }
+    result = classify_message(
+        event,
+        command_name="agent",
+        status_command_name="agent-status",
+        bot_id="123",
+    )
+    assert result is not None
+    assert result["mode"] == "run"
+    assert result["prompt"] == "hello"
+
+
 def test_group_plain_agent_without_at_is_ignored():
     event = {
         "message_type": "group",

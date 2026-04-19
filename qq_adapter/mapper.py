@@ -5,12 +5,18 @@ import re
 import time
 from typing import Any
 
+_CQ_REPLY_PREFIX_RE = re.compile(r"^(?:\s*\[CQ:reply,[^\]]+\]\s*)*")
+_CQ_AT_PREFIX_TEMPLATE = r"^\[CQ:at,qq={bot_id}(?:,[^\]]*)?\]\s*"
+
 
 def strip_qq_at_prefix(raw_message: str, bot_id: str) -> tuple[str, bool]:
     text = raw_message.strip()
-    prefix = f"[CQ:at,qq={bot_id}]"
-    if bot_id and text.startswith(prefix):
-        return text[len(prefix):].strip(), True
+    if bot_id:
+        without_reply = _CQ_REPLY_PREFIX_RE.sub("", text)
+        at_prefix_re = re.compile(_CQ_AT_PREFIX_TEMPLATE.format(bot_id=re.escape(bot_id)))
+        match = at_prefix_re.match(without_reply)
+        if match:
+            return without_reply[match.end() :].strip(), True
     return text, False
 
 
