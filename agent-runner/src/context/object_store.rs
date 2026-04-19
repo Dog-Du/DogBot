@@ -45,6 +45,7 @@ impl ContextObjectStore {
         &self,
         actor_id: &str,
         conversation_id: &str,
+        platform_account_id: &str,
         candidate_json: &str,
     ) -> Result<String, ContextObjectStoreError> {
         let conn = self.open_connection()?;
@@ -60,13 +61,15 @@ impl ContextObjectStore {
                 candidate_id,
                 actor_id,
                 conversation_id,
+                platform_account_id,
                 candidate_json,
                 created_at_epoch_secs
-            ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 candidate_id,
                 actor_id,
                 conversation_id,
+                platform_account_id,
                 candidate_json,
                 created_at_epoch_secs
             ],
@@ -98,6 +101,7 @@ impl ContextObjectStore {
                 candidate_id TEXT PRIMARY KEY,
                 actor_id TEXT NOT NULL,
                 conversation_id TEXT NOT NULL,
+                platform_account_id TEXT NOT NULL,
                 candidate_json TEXT NOT NULL,
                 created_at_epoch_secs INTEGER NOT NULL
             );
@@ -124,17 +128,19 @@ impl ContextObjectStore {
         let mut rows = stmt.query([])?;
         let mut has_content = false;
         let mut has_candidate_json = false;
+        let mut has_platform_account_id = false;
 
         while let Some(row) = rows.next()? {
             let name: String = row.get(1)?;
             match name.as_str() {
                 "content" => has_content = true,
                 "candidate_json" => has_candidate_json = true,
+                "platform_account_id" => has_platform_account_id = true,
                 _ => {}
             }
         }
 
-        if has_content && !has_candidate_json {
+        if has_content {
             conn.execute_batch(
                 "ALTER TABLE memory_candidates RENAME TO memory_candidates_legacy;
 
@@ -142,6 +148,7 @@ impl ContextObjectStore {
                     candidate_id TEXT PRIMARY KEY,
                     actor_id TEXT NOT NULL,
                     conversation_id TEXT NOT NULL,
+                    platform_account_id TEXT NOT NULL,
                     candidate_json TEXT NOT NULL,
                     created_at_epoch_secs INTEGER NOT NULL
                 );
@@ -150,6 +157,7 @@ impl ContextObjectStore {
                     candidate_id,
                     actor_id,
                     conversation_id,
+                    platform_account_id,
                     candidate_json,
                     created_at_epoch_secs
                 )
@@ -157,7 +165,40 @@ impl ContextObjectStore {
                     candidate_id,
                     actor_id,
                     conversation_id,
+                    '',
                     content,
+                    created_at_epoch_secs
+                FROM memory_candidates_legacy;
+
+                DROP TABLE memory_candidates_legacy;",
+            )?;
+        } else if has_candidate_json && !has_platform_account_id {
+            conn.execute_batch(
+                "ALTER TABLE memory_candidates RENAME TO memory_candidates_legacy;
+
+                CREATE TABLE memory_candidates (
+                    candidate_id TEXT PRIMARY KEY,
+                    actor_id TEXT NOT NULL,
+                    conversation_id TEXT NOT NULL,
+                    platform_account_id TEXT NOT NULL,
+                    candidate_json TEXT NOT NULL,
+                    created_at_epoch_secs INTEGER NOT NULL
+                );
+
+                INSERT INTO memory_candidates (
+                    candidate_id,
+                    actor_id,
+                    conversation_id,
+                    platform_account_id,
+                    candidate_json,
+                    created_at_epoch_secs
+                )
+                SELECT
+                    candidate_id,
+                    actor_id,
+                    conversation_id,
+                    '',
+                    candidate_json,
                     created_at_epoch_secs
                 FROM memory_candidates_legacy;
 

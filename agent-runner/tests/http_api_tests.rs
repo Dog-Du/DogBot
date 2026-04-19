@@ -651,5 +651,6 @@ impl agent_runner::server::Messenger for MockMessenger {
 fn test_settings_with_session_db(db_path: &std::path::Path) -> agent_runner::config::Settings {
     let mut settings = test_settings();
     settings.session_db_path = db_path.display().to_string();
+    settings.control_plane_db_path = db_path.with_file_name("control.db").display().to_string();
     settings
 }

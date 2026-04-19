@@ -95,6 +95,7 @@ impl ExecutionBackend for DockerRunner {
                 &session,
                 &request.user_id,
                 &request.conversation_id,
+                &request.platform_account_id,
             )
             .await?;
 
@@ -116,6 +117,7 @@ impl ExecutionBackend for DockerRunner {
                     &reset_session,
                     &request.user_id,
                     &request.conversation_id,
+                    &request.platform_account_id,
                 )
                 .await?;
             return Ok(with_duration(retried, started.elapsed().as_millis()));
@@ -133,6 +135,7 @@ impl DockerRunner {
         session: &crate::session_store::SessionRecord,
         actor_id: &str,
         conversation_id: &str,
+        platform_account_id: &str,
     ) -> Result<RunResponse, ErrorResponse> {
         let exec = self
             .runtime
@@ -159,15 +162,38 @@ impl DockerRunner {
             Ok(Ok((stdout, stderr, exit_code))) => {
                 if let Some(store) = &self.context_store {
                     if let Some(captured_intent) = capture_memory_intent(&stdout) {
-                        if let Err(err) = store.insert_memory_candidate(
-                            actor_id,
-                            conversation_id,
-                            &captured_intent.raw_json,
-                        ) {
-                            warn!(
-                                "failed to persist memory candidate for actor={} conversation={}: {}",
-                                actor_id, conversation_id, err
-                            );
+                        let store = store.clone();
+                        let actor_id = actor_id.to_string();
+                        let conversation_id = conversation_id.to_string();
+                        let platform_account_id = platform_account_id.to_string();
+                        let actor_id_for_store = actor_id.clone();
+                        let conversation_id_for_store = conversation_id.clone();
+                        let platform_account_id_for_store = platform_account_id.clone();
+                        let raw_json = captured_intent.raw_json;
+
+                        match tokio::task::spawn_blocking(move || {
+                            store.insert_memory_candidate(
+                                &actor_id_for_store,
+                                &conversation_id_for_store,
+                                &platform_account_id_for_store,
+                                &raw_json,
+                            )
+                        })
+                        .await
+                        {
+                            Ok(Ok(_candidate_id)) => {}
+                            Ok(Err(err)) => {
+                                warn!(
+                                    "failed to persist memory candidate for actor={} conversation={}: {}",
+                                    actor_id, conversation_id, err
+                                );
+                            }
+                            Err(err) => {
+                                warn!(
+                                    "memory candidate persistence task failed to join for actor={} conversation={}: {}",
+                                    actor_id, conversation_id, err
+                                );
+                            }
                         }
                     }
                 }

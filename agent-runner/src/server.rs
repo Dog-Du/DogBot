@@ -170,6 +170,7 @@ pub fn build_test_app(runner: Arc<dyn Runner>) -> Router {
     ));
     settings.workspace_dir = temp_state_dir.join("workdir").display().to_string();
     settings.state_dir = temp_state_dir.join("state").display().to_string();
+    settings.control_plane_db_path = temp_state_dir.join("state/control.db").display().to_string();
     settings.session_db_path = temp_state_dir.join("state/runner.db").display().to_string();
     build_test_app_with_settings(runner, settings)
 }
@@ -279,6 +280,56 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
                     status: "error".into(),
                     error_code: "invalid_json".into(),
                     message: err.to_string(),
+                    timed_out: false,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    request.user_id = match normalize_context_identifier(&request.user_id, "user_id") {
+        Ok(user_id) => user_id,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    status: "error".into(),
+                    error_code: "invalid_request".into(),
+                    message,
+                    timed_out: false,
+                }),
+            )
+                .into_response();
+        }
+    };
+    request.conversation_id =
+        match normalize_context_identifier(&request.conversation_id, "conversation_id") {
+            Ok(conversation_id) => conversation_id,
+            Err(message) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        status: "error".into(),
+                        error_code: "invalid_request".into(),
+                        message,
+                        timed_out: false,
+                    }),
+                )
+                    .into_response();
+            }
+        };
+    request.platform_account_id = match normalize_context_identifier(
+        &request.platform_account_id,
+        "platform_account_id",
+    ) {
+        Ok(platform_account_id) => platform_account_id,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    status: "error".into(),
+                    error_code: "invalid_request".into(),
+                    message,
                     timed_out: false,
                 }),
             )
@@ -479,4 +530,19 @@ fn error_response(
             timed_out: false,
         }),
     )
+}
+
+fn normalize_context_identifier(value: &str, field_name: &str) -> Result<String, String> {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        return Err(format!("{field_name} must be non-empty"));
+    }
+
+    if normalized.chars().any(|ch| ch.is_control() || ch == '`') {
+        return Err(format!(
+            "{field_name} contains unsupported control characters or backticks"
+        ));
+    }
+
+    Ok(normalized.to_string())
 }

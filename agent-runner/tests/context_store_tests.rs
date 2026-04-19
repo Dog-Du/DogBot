@@ -94,7 +94,7 @@ fn object_store_schema_has_required_columns() {
     );
 
     let memory_candidates = table_info(&conn, "memory_candidates");
-    assert_eq!(memory_candidates.len(), 5, "unexpected memory_candidates schema");
+    assert_eq!(memory_candidates.len(), 6, "unexpected memory_candidates schema");
     assert_column(&memory_candidates, 0, "candidate_id", "TEXT", 1, None);
     assert_column(&memory_candidates, 1, "actor_id", "TEXT", 0, Some(true));
     assert_column(
@@ -108,7 +108,7 @@ fn object_store_schema_has_required_columns() {
     assert_column(
         &memory_candidates,
         3,
-        "candidate_json",
+        "platform_account_id",
         "TEXT",
         0,
         Some(true),
@@ -116,6 +116,14 @@ fn object_store_schema_has_required_columns() {
     assert_column(
         &memory_candidates,
         4,
+        "candidate_json",
+        "TEXT",
+        0,
+        Some(true),
+    );
+    assert_column(
+        &memory_candidates,
+        5,
         "created_at_epoch_secs",
         "INTEGER",
         0,
@@ -210,22 +218,27 @@ fn object_store_migrates_legacy_memory_candidate_content_column() {
     let conn = Connection::open(&db_path).expect("open upgraded sqlite");
     let columns = table_info(&conn, "memory_candidates");
     assert!(columns.iter().any(|column| column.name == "candidate_json"));
+    assert!(columns
+        .iter()
+        .any(|column| column.name == "platform_account_id"));
     assert!(!columns.iter().any(|column| column.name == "content"));
 
     let candidate_id = store
         .insert_memory_candidate(
             "qq:user:1",
             "qq:private:1",
+            "qq:bot_uin:123",
             r#"{"scope":"user-private","summary":"prefers rust","raw_evidence":"I prefer Rust"}"#,
         )
         .expect("insert migrated candidate");
 
-    let stored_json: String = conn
+    let (stored_platform_account_id, stored_json): (String, String) = conn
         .query_row(
-            "SELECT candidate_json FROM memory_candidates WHERE candidate_id = ?1",
+            "SELECT platform_account_id, candidate_json FROM memory_candidates WHERE candidate_id = ?1",
             [candidate_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .expect("read migrated row");
+    assert_eq!(stored_platform_account_id, "qq:bot_uin:123");
     assert!(stored_json.contains("\"summary\":\"prefers rust\""));
 }
