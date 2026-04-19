@@ -27,6 +27,7 @@ pub struct Settings {
     pub control_plane_db_path: String,
     pub admin_actor_ids: Vec<String>,
     pub session_db_path: String,
+    pub history_db_path: String,
     pub container_cpu_cores: u64,
     pub container_memory_mb: u64,
     pub container_disk_gb: u64,
@@ -87,6 +88,8 @@ impl Settings {
             .unwrap_or_default();
         let session_db_path = optional_trimmed(&env_map, "SESSION_DB_PATH")
             .unwrap_or_else(|| format!("{state_dir}/runner.db"));
+        let history_db_path = optional_trimmed(&env_map, "HISTORY_DB_PATH")
+            .unwrap_or_else(|| format!("{state_dir}/history.db"));
         let container_cpu_cores =
             parse_or_default(&env_map, "CLAUDE_CONTAINER_CPU_CORES", 4)?;
         let container_memory_mb =
@@ -120,6 +123,7 @@ impl Settings {
             control_plane_db_path,
             admin_actor_ids,
             session_db_path,
+            history_db_path,
             container_cpu_cores,
             container_memory_mb,
             container_disk_gb,

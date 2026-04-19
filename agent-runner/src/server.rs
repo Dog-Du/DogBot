@@ -174,6 +174,7 @@ pub fn build_test_app(runner: Arc<dyn Runner>) -> Router {
     settings.state_dir = temp_state_dir.join("state").display().to_string();
     settings.control_plane_db_path = temp_state_dir.join("state/control.db").display().to_string();
     settings.session_db_path = temp_state_dir.join("state/runner.db").display().to_string();
+    settings.history_db_path = temp_state_dir.join("state/history.db").display().to_string();
     build_test_app_with_settings(runner, settings)
 }
 

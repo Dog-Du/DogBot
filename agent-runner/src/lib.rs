@@ -6,6 +6,7 @@ pub mod config;
 pub mod docker_client;
 pub mod env_helpers;
 pub mod exec;
+pub mod history;
 pub mod inbound_models;
 pub mod messenger;
 pub mod models;

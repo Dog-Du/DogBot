@@ -63,6 +63,7 @@ fn test_settings() -> agent_runner::config::Settings {
         control_plane_db_path: root.join("state/control.db").display().to_string(),
         admin_actor_ids: vec!["qq:user:1".into()],
         session_db_path: root.join("state/runner.db").display().to_string(),
+        history_db_path: root.join("state/history.db").display().to_string(),
         container_cpu_cores: 4,
         container_memory_mb: 4096,
         container_disk_gb: 50,

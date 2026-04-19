@@ -27,6 +27,7 @@ fn settings_use_expected_defaults() {
     assert_eq!(settings.control_plane_db_path, "/srv/agent-state/control.db");
     assert!(settings.admin_actor_ids.is_empty());
     assert_eq!(settings.session_db_path, "/srv/agent-state/runner.db");
+    assert_eq!(settings.history_db_path, "/srv/agent-state/history.db");
 }
 
 #[test]
@@ -41,6 +42,10 @@ fn settings_parse_control_plane_fields() {
             "/tmp/custom/control.db".to_string(),
         ),
         (
+            "HISTORY_DB_PATH".to_string(),
+            "/tmp/custom/history.db".to_string(),
+        ),
+        (
             "DOGBOT_ADMIN_ACTOR_IDS".to_string(),
             "qq:user:1, wechat:user:wxid_admin , , ".to_string(),
         ),
@@ -49,6 +54,7 @@ fn settings_parse_control_plane_fields() {
     let settings = Settings::from_env_map(env).unwrap();
     assert_eq!(settings.content_root, "./custom-content");
     assert_eq!(settings.control_plane_db_path, "/tmp/custom/control.db");
+    assert_eq!(settings.history_db_path, "/tmp/custom/history.db");
     assert_eq!(
         settings.admin_actor_ids,
         vec!["qq:user:1".to_string(), "wechat:user:wxid_admin".to_string()]
