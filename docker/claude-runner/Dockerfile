@@ -116,10 +116,12 @@ RUN useradd --system --create-home --home-dir /workspace claude \
 RUN printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -euo pipefail' \
-    'mkdir -p /workspace /workspace/downloads /state /state/claude /state/claude/debug /state/browser-profile /state/browser-cache' \
+    'mkdir -p /workspace /state /state/claude /state/claude/debug' \
+    'mkdir -p /workspace/downloads /state/browser-profile /state/browser-cache' \
     'chown claude:claude /workspace /workspace/downloads' \
     'chown claude:claude /state' \
-    'chown -R claude:claude /state/claude /state/browser-profile /state/browser-cache' \
+    'chown -R claude:claude /state/claude' \
+    'chown -R claude:claude /state/browser-profile /state/browser-cache' \
     'touch /state/claude/.keep' \
     'chown claude:claude /state/claude/.keep' \
     > /usr/local/bin/claude-bootstrap.sh \
