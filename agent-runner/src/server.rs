@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::io;
-use std::sync::Mutex as StdMutex;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -20,13 +20,13 @@ use tracing::warn;
 use crate::{
     config::Settings,
     context::{
-        context_pack::render_context_pack_with_history,
-        identity::ActorId,
-        scope::ScopeResolver,
+        context_pack::render_context_pack_with_history, identity::ActorId, scope::ScopeResolver,
     },
     docker_client::DockerRuntime,
     exec::{DockerRunner, ExecutionBackend},
-    history::{retrieval::build_history_evidence_pack, store::HistoryStore},
+    history::{
+        cleanup::purge_expired_history, retrieval::build_history_evidence_pack, store::HistoryStore,
+    },
     inbound_models::InboundMessage,
     messenger::{MessageDelivery, NapCatMessenger},
     models::{
@@ -83,6 +83,7 @@ struct AppState {
     queue_tx: mpsc::Sender<QueuedRun>,
     session_store: SessionStore,
     history_store: Arc<StdMutex<HistoryStore>>,
+    history_cleanup_state: Arc<StdMutex<HistoryCleanupState>>,
     messenger: Arc<dyn Messenger>,
 }
 
@@ -108,6 +109,26 @@ struct InMemoryRateLimiter {
 }
 
 const DEFAULT_HISTORY_RETENTION_DAYS: i64 = 180;
+const HISTORY_CLEANUP_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+#[derive(Default)]
+struct HistoryCleanupState {
+    last_run_started_at: Option<Instant>,
+}
+
+impl HistoryCleanupState {
+    fn should_run(&mut self, now: Instant, interval: Duration) -> bool {
+        match self.last_run_started_at {
+            Some(last_run_started_at) if now.duration_since(last_run_started_at) < interval => {
+                false
+            }
+            _ => {
+                self.last_run_started_at = Some(now);
+                true
+            }
+        }
+    }
+}
 
 impl InMemoryRateLimiter {
     fn new(settings: &Settings) -> Self {
@@ -178,16 +199,23 @@ pub fn build_test_app(runner: Arc<dyn Runner>) -> Router {
     ));
     settings.workspace_dir = temp_state_dir.join("workdir").display().to_string();
     settings.state_dir = temp_state_dir.join("state").display().to_string();
-    settings.control_plane_db_path = temp_state_dir.join("state/control.db").display().to_string();
+    settings.control_plane_db_path = temp_state_dir
+        .join("state/control.db")
+        .display()
+        .to_string();
     settings.session_db_path = temp_state_dir.join("state/runner.db").display().to_string();
-    settings.history_db_path = temp_state_dir.join("state/history.db").display().to_string();
+    settings.history_db_path = temp_state_dir
+        .join("state/history.db")
+        .display()
+        .to_string();
     build_test_app_with_settings(runner, settings)
 }
 
 pub fn build_test_app_with_settings(runner: Arc<dyn Runner>, settings: Settings) -> Router {
     let session_store = SessionStore::open(&settings.session_db_path).expect("session store");
-    let history_store =
-        Arc::new(StdMutex::new(HistoryStore::open(&settings.history_db_path).expect("history store")));
+    let history_store = Arc::new(StdMutex::new(
+        HistoryStore::open(&settings.history_db_path).expect("history store"),
+    ));
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
     let messenger =
         Arc::new(NapCatMessenger::from_settings(&settings).expect("default NapCat messenger"));
@@ -196,6 +224,7 @@ pub fn build_test_app_with_settings(runner: Arc<dyn Runner>, settings: Settings)
         queue_tx,
         session_store,
         history_store,
+        history_cleanup_state: Arc::new(StdMutex::new(HistoryCleanupState::default())),
         messenger,
     })
 }
@@ -206,14 +235,16 @@ pub fn build_test_app_with_message_support(
     settings: Settings,
 ) -> Router {
     let session_store = SessionStore::open(&settings.session_db_path).expect("session store");
-    let history_store =
-        Arc::new(StdMutex::new(HistoryStore::open(&settings.history_db_path).expect("history store")));
+    let history_store = Arc::new(StdMutex::new(
+        HistoryStore::open(&settings.history_db_path).expect("history store"),
+    ));
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
     router(AppState {
         settings,
         queue_tx,
         session_store,
         history_store,
+        history_cleanup_state: Arc::new(StdMutex::new(HistoryCleanupState::default())),
         messenger,
     })
 }
@@ -226,12 +257,10 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
     );
     let session_store = SessionStore::open(&settings.session_db_path)
         .map_err(|err| io::Error::other(err.to_string()))?;
-    let history_store = Arc::new(
-        StdMutex::new(
-            HistoryStore::open(&settings.history_db_path)
-                .map_err(|err| io::Error::other(err.to_string()))?,
-        ),
-    );
+    let history_store = Arc::new(StdMutex::new(
+        HistoryStore::open(&settings.history_db_path)
+            .map_err(|err| io::Error::other(err.to_string()))?,
+    ));
     let messenger = Arc::new(
         NapCatMessenger::from_settings(&settings).map_err(|err| io::Error::other(err.message))?,
     );
@@ -241,6 +270,7 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
         queue_tx,
         session_store,
         history_store,
+        history_cleanup_state: Arc::new(StdMutex::new(HistoryCleanupState::default())),
         messenger,
     }))
 }
@@ -294,6 +324,8 @@ async fn healthz() -> Json<serde_json::Value> {
 }
 
 async fn run(State(state): State<AppState>, body: Bytes) -> Response {
+    maybe_purge_expired_history(&state);
+
     let mut request: RunRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
         Err(err) => {
@@ -341,24 +373,22 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
                     .into_response();
             }
         };
-    request.platform_account_id = match normalize_context_identifier(
-        &request.platform_account_id,
-        "platform_account_id",
-    ) {
-        Ok(platform_account_id) => platform_account_id,
-        Err(message) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    status: "error".into(),
-                    error_code: "invalid_request".into(),
-                    message,
-                    timed_out: false,
-                }),
-            )
-                .into_response();
-        }
-    };
+    request.platform_account_id =
+        match normalize_context_identifier(&request.platform_account_id, "platform_account_id") {
+            Ok(platform_account_id) => platform_account_id,
+            Err(message) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        status: "error".into(),
+                        error_code: "invalid_request".into(),
+                        message,
+                        timed_out: false,
+                    }),
+                )
+                    .into_response();
+            }
+        };
 
     let actor_id = match ActorId::new(request.user_id.clone()) {
         Some(actor_id) => actor_id,
@@ -400,11 +430,8 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
         &request.conversation_id,
         &request.platform_account_id,
     );
-    let history_evidence = load_history_evidence_pack(
-        &state,
-        &request.conversation_id,
-        &request.prompt,
-    );
+    let history_evidence =
+        load_history_evidence_pack(&state, &request.conversation_id, &request.prompt);
     request.prompt = format!(
         "{}{}",
         render_context_pack_with_history(&scopes, history_evidence.as_deref()),
@@ -513,6 +540,8 @@ async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
 }
 
 async fn handle_inbound_message(State(state): State<AppState>, body: Bytes) -> Response {
+    maybe_purge_expired_history(&state);
+
     let message: InboundMessage = match serde_json::from_slice(&body) {
         Ok(message) => message,
         Err(err) => {
@@ -568,6 +597,28 @@ fn ensure_history_ingest_state_for_trigger(
         true,
         DEFAULT_HISTORY_RETENTION_DAYS,
     )
+}
+
+fn maybe_purge_expired_history(state: &AppState) {
+    let should_run = {
+        let mut cleanup_state = state
+            .history_cleanup_state
+            .lock()
+            .expect("history cleanup mutex poisoned");
+        cleanup_state.should_run(Instant::now(), HISTORY_CLEANUP_INTERVAL)
+    };
+
+    if !should_run {
+        return;
+    }
+
+    let store = state
+        .history_store
+        .lock()
+        .expect("history store mutex poisoned");
+    if let Err(err) = purge_expired_history(&store) {
+        warn!("failed to purge expired history: {err}");
+    }
 }
 
 fn load_history_evidence_pack(
