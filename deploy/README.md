@@ -147,6 +147,13 @@ cp deploy/dogbot.env.example deploy/dogbot.env
 - `AGENT_RUNNER_BIND_ADDR`
 - 上游配置
 - 上游 key
+- `QQ_ADAPTER_QQ_BOT_ID`
+- `QQ_PLATFORM_ACCOUNT_ID`
+- `WECHATPADPRO_ADMIN_KEY`
+- `WECHATPADPRO_MYSQL_ROOT_PASSWORD`
+- `WECHATPADPRO_MYSQL_PASSWORD`
+- `WECHATPADPRO_PLATFORM_ACCOUNT_ID`
+- 如果保留群聊 mention 门禁，需要把 `WECHATPADPRO_BOT_MENTION_NAMES` 改成你的机器人群昵称
 - QQ / 微信相关目录和端口
 
 ### 4.3 启动
@@ -169,6 +176,12 @@ cp deploy/dogbot.env.example deploy/dogbot.env
 ./deploy_stack.sh --wechat
 ./deploy_stack.sh --qq --wechat
 ```
+
+说明：
+
+- 示例配置默认启用了 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1`
+- 如果你手动改成 `0`，部署脚本不会替你注册 webhook
+- 这时必须自行配置 `WECHATPADPRO_ADAPTER_WEBHOOK_URL`
 
 如果 Docker 权限不够：
 
@@ -298,7 +311,7 @@ API_PROXY_UPSTREAM_AUTH_HEADER=x-api-key
 
 ## 6. NapCat 配置
 
-### 5.1 WebUI
+### 6.1 WebUI
 
 默认端口：
 
@@ -306,7 +319,7 @@ API_PROXY_UPSTREAM_AUTH_HEADER=x-api-key
 http://127.0.0.1:6099
 ```
 
-### 5.2 登录 QQ
+### 6.2 登录 QQ
 
 - 打开 NapCat WebUI
 - 扫码登录
@@ -315,7 +328,7 @@ http://127.0.0.1:6099
   - 同时保留二维码图片和原始登录链接
   - 脚本会阻塞等待扫码；若 100 秒内未完成扫码会退出
 
-### 5.3 反向 WebSocket
+### 6.3 反向 WebSocket
 
 当前工程要求 `NapCat` 把 OneBot 事件推给宿主机上的 `qq-adapter`。
 
@@ -348,6 +361,7 @@ NapCat -> qq-adapter -> agent-runner
 ```env
 QQ_ADAPTER_BIND_ADDR=0.0.0.0:19000
 QQ_ADAPTER_QQ_BOT_ID=你的QQ号
+QQ_PLATFORM_ACCOUNT_ID=qq:bot_uin:你的机器人QQ号
 QQ_ADAPTER_COMMAND_NAME=agent
 QQ_ADAPTER_STATUS_COMMAND_NAME=agent-status
 ```
@@ -370,13 +384,13 @@ QQ_ADAPTER_STATUS_COMMAND_NAME=agent-status
 
 ## 9. WeChatPadPro 配置
 
-### 7.1 启用
+### 9.1 启用
 
 ```env
 ENABLE_WECHATPADPRO=1
 ```
 
-### 7.2 容器
+### 9.2 容器
 
 会额外启动：
 
@@ -384,7 +398,7 @@ ENABLE_WECHATPADPRO=1
 - `wechatpadpro_mysql`
 - `wechatpadpro_redis`
 
-### 7.3 登录
+### 9.3 登录
 
 部署脚本会自动：
 
@@ -408,6 +422,23 @@ WeChatPadPro -> wechatpadpro-adapter -> agent-runner
 
 - `scripts/start_wechatpadpro_adapter.sh`
 
+关键配置：
+
+```env
+WECHATPADPRO_AGENT_RUNNER_BASE_URL=http://127.0.0.1:8787
+WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1
+WECHATPADPRO_ADAPTER_WEBHOOK_URL=http://host.docker.internal:18999/wechatpadpro/events
+WECHATPADPRO_REQUIRE_MENTION_IN_GROUP=1
+WECHATPADPRO_BOT_MENTION_NAMES=DogDu
+WECHATPADPRO_PLATFORM_ACCOUNT_ID=wechatpadpro:account:你的机器人账号
+```
+
+说明：
+
+- 示例配置默认会自动向 WeChatPadPro 注册 webhook
+- 如果关闭 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK`，必须手动配置 webhook，否则 adapter 不会收到消息
+- 如果启用了 `WECHATPADPRO_REQUIRE_MENTION_IN_GROUP=1`，`WECHATPADPRO_BOT_MENTION_NAMES` 不能为空
+
 ## 10. Docker 资源限制
 
 关键字段：
@@ -427,7 +458,7 @@ CLAUDE_CONTAINER_PIDS_LIMIT=256
 
 ## 11. 如何修改 API key 和模型
 
-### 9.1 改 key
+### 11.1 改 key
 
 直接修改你的真实环境文件：
 
@@ -435,7 +466,7 @@ CLAUDE_CONTAINER_PIDS_LIMIT=256
 API_PROXY_UPSTREAM_TOKEN=新的 token
 ```
 
-### 9.2 改模型源地址
+### 11.2 改模型源地址
 
 如果要切到另一个模型源，改这里：
 
@@ -443,7 +474,7 @@ API_PROXY_UPSTREAM_TOKEN=新的 token
 API_PROXY_UPSTREAM_BASE_URL=https://example.com
 ```
 
-### 9.3 改模型
+### 11.3 改模型
 
 如果上游支持模型字段：
 
@@ -451,7 +482,7 @@ API_PROXY_UPSTREAM_BASE_URL=https://example.com
 API_PROXY_UPSTREAM_MODEL=xxx
 ```
 
-### 9.4 重新生效
+### 11.4 重新生效
 
 改完后重启：
 
@@ -460,9 +491,9 @@ API_PROXY_UPSTREAM_MODEL=xxx
 sudo ./deploy_stack.sh
 ```
 
-## 10. 需要特别注意的事情
+## 12. 需要特别注意的事情
 
-### 10.1 只能使用 Claude 协议的 Base URL
+### 12.1 只能使用 Claude 协议的 Base URL
 
 现在 Docker 里的 Claude Code 调用的是 Claude 协议接口。
 
@@ -475,7 +506,7 @@ sudo ./deploy_stack.sh
 
 不能把 OpenAI 协议地址直接塞给 Claude Code。
 
-### 10.2 真实 key 不进 Docker
+### 12.2 真实 key 不进 Docker
 
 真实 provider key 只放在宿主机环境变量里。  
 Docker 里的 `claude-runner` 只拿到：
@@ -483,12 +514,12 @@ Docker 里的 `claude-runner` 只拿到：
 - `ANTHROPIC_BASE_URL=http://host.docker.internal:9000`
 - `ANTHROPIC_AUTH_TOKEN=local-proxy-token`
 
-### 10.3 QQ 登录态容易受重建影响
+### 12.3 QQ 登录态容易受重建影响
 
 避免无意义地重建 `napcat`。  
 只要 `napcat` 容器和数据目录不乱动，就不应该频繁要求重新扫码。
 
-### 10.4 WeChatPadPro 仍有自身稳定性问题
+### 12.4 WeChatPadPro 仍有自身稳定性问题
 
 当前已经确认过：
 
@@ -500,27 +531,27 @@ Docker 里的 `claude-runner` 只拿到：
 - `wechatpadpro` 容器 DNS
 - `GetSyncMsg / HttpSyncMsg` 是否能拿到消息
 
-## 11. 常用命令
+## 13. 常用命令
 
-### 11.1 启动
+### 13.1 启动
 
 ```bash
 ./deploy_stack.sh
 ```
 
-### 11.2 停止
+### 13.2 停止
 
 ```bash
 ./stop_stack.sh
 ```
 
-### 11.3 检查 runner
+### 13.3 检查 runner
 
 ```bash
 curl http://127.0.0.1:8787/healthz
 ```
 
-### 11.4 主动向已有会话发消息
+### 13.4 主动向已有会话发消息
 
 ```bash
 ./scripts/send_session_message.sh \
@@ -529,13 +560,13 @@ curl http://127.0.0.1:8787/healthz
   --text "hello from cron"
 ```
 
-## 12. 环境文件
+## 14. 环境文件
 
 当前仓库统一使用：
 
 - `deploy/dogbot.env`
 
-## 13. Control Plane 联调
+## 15. Control Plane 联调
 
 本轮控制面 A/B/C 改造的联调和验收说明单独整理在：
 

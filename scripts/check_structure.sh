@@ -28,6 +28,7 @@ files=(
   "scripts/tests/test_configure_napcat_ws.sh"
   "scripts/tests/test_prepare_napcat_login.sh"
   "scripts/tests/test_prepare_wechatpadpro_login.sh"
+  "scripts/tests/test_wechatpadpro_defaults.sh"
 )
 
 executable_scripts=(
@@ -134,6 +135,7 @@ bash "$repo_root/scripts/tests/test_common.sh"
 bash "$repo_root/scripts/tests/test_configure_napcat_ws.sh"
 bash "$repo_root/scripts/tests/test_prepare_napcat_login.sh"
 bash "$repo_root/scripts/tests/test_prepare_wechatpadpro_login.sh"
+bash "$repo_root/scripts/tests/test_wechatpadpro_defaults.sh"
 uv run python -m py_compile "$repo_root/qq_adapter/app.py"
 
 echo "Structure check passed. All required files are present."

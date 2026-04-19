@@ -147,6 +147,7 @@ QQ
 - `agent-runner` 内部的 normalized trigger resolver 已经支持更宽松的识别
 - 但两个 adapter 当前仍保留兼容性的本地 command gate
 - 联调和验收应以当前显式命令规则为准
+- WeChat 示例配置启用了群聊 mention 门禁，部署前需要把 `WECHATPADPRO_BOT_MENTION_NAMES` 改成真实群昵称
 
 ## 当前已落地
 

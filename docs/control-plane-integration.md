@@ -94,6 +94,8 @@ DOGBOT_ADMIN_ACTOR_IDS=qq:user:10001,wechat:user:wxid_admin
 
 QQ_PLATFORM_ACCOUNT_ID=qq:bot_uin:123456
 WECHATPADPRO_PLATFORM_ACCOUNT_ID=wechatpadpro:account:wxid_bot_1
+WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1
+WECHATPADPRO_BOT_MENTION_NAMES=DogDu
 ```
 
 说明：
@@ -101,6 +103,8 @@ WECHATPADPRO_PLATFORM_ACCOUNT_ID=wechatpadpro:account:wxid_bot_1
 - `DOGBOT_ADMIN_ACTOR_IDS` 决定谁拥有管理员写权限
 - `QQ_PLATFORM_ACCOUNT_ID` / `WECHATPADPRO_PLATFORM_ACCOUNT_ID` 决定 platform-account scope 的隔离键
 - `DOGBOT_CONTENT_ROOT` 推荐使用绝对路径，避免工作目录变化导致读错仓库内容
+- 如果启用了 `WECHATPADPRO_REQUIRE_MENTION_IN_GROUP=1`，必须保证 `WECHATPADPRO_BOT_MENTION_NAMES` 非空并与群昵称一致
+- 如果关闭 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK`，必须手动配置 webhook，否则不会收到微信消息
 
 ## 5. 联调前准备
 

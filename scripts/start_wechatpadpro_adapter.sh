@@ -15,7 +15,10 @@ mkdir -p "$log_dir"
 
 host="${WECHATPADPRO_ADAPTER_HOST:-127.0.0.1}"
 port="${WECHATPADPRO_ADAPTER_PORT:-18999}"
-agent_runner_base_url="${WECHATPADPRO_AGENT_RUNNER_BASE_URL:-${AGENT_RUNNER_BASE_URL:-http://127.0.0.1:11451}}"
+agent_runner_base_url="${WECHATPADPRO_AGENT_RUNNER_BASE_URL:-${AGENT_RUNNER_BIND_ADDR:-127.0.0.1:8787}}"
+if [[ "$agent_runner_base_url" != http* ]]; then
+  agent_runner_base_url="http://${agent_runner_base_url}"
+fi
 agent_runner_base_url="${agent_runner_base_url/host.docker.internal/127.0.0.1}"
 
 if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" >/dev/null 2>&1; then
