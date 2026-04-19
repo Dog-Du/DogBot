@@ -1,0 +1,7 @@
+{
+  "memory": {
+    "allow_auto_commit_user_private": true,
+    "allow_auto_commit_conversation_shared": false
+  }
+}
+
