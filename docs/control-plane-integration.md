@@ -242,3 +242,29 @@ cargo test --test history_cleanup_tests --test history_ingest_tests --test histo
 uv run --with pytest --with fastapi --with httpx python -m pytest qq_adapter/tests -q
 uv run --with pytest --with fastapi --with httpx python -m pytest wechatpadpro_adapter/tests -q
 ```
+
+## 10. Content Bootstrap Checks
+
+内容引导系统联调前，建议先确认 pack 生成链路是最新状态：
+
+```bash
+uv run python scripts/sync_content_sources.py --content-root ./content --skip-clone
+```
+
+说明：
+
+- `--skip-clone` 适合本地只验证 pack 生成链路，不拉远端仓库
+- 正式更新 upstream snapshot 时，去掉 `--skip-clone`
+- runtime 只读取 `content/packs/` 和 `content/policies/`，不会直接读取 `content/upstream/`
+
+如果需要清理或导入旧 runtime Claude memory，先做审计：
+
+```bash
+uv run python scripts/audit_legacy_runtime_memory.py ./runtime/claude-memory --output ./content/import-report.json
+```
+
+审计输出只表示：
+
+- 哪些内容应忽略
+- 哪些内容可作为 import candidate
+- 哪些内容需要人工复核
