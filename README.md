@@ -54,6 +54,8 @@ DogBot 现在使用仓库托管的内容引导流程，而不是继续把 runtim
   - 运行时只读取 `content/packs/` 和 `content/policies/`
 - `scripts/audit_legacy_runtime_memory.py`
   - 审计旧 runtime memory，输出 `ignore / candidate / manual_review`
+- `scripts/cleanup_legacy_claude_content.py`
+  - 清理 `/state/claude` 下已脱离 DogBot 主链路的遗留 `skills / project memory / telemetry / cache` 内容
 
 部署时，`./deploy_stack.sh` 会默认把仓库内的 `content/` 同步到外部 `DOGBOT_CONTENT_ROOT`，运行时由 `agent-runner` 只读取这个外部目录，而不是直接读取仓库工作树。
 
@@ -62,6 +64,28 @@ DogBot 现在使用仓库托管的内容引导流程，而不是继续把 runtim
 - `DOGBOT_REFRESH_CONTENT_ON_DEPLOY=1`
 
 默认只同步已存在的仓库内容，不在每次部署时联网拉取 upstream。
+
+如果你确认旧的 Claude runtime 内容不再需要，还可以显式开启：
+
+- `DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY=1`
+
+这一步默认只清理保守集合：
+
+- `/state/claude/skills`
+- `/state/claude/projects/*/memory`
+- `/state/claude/telemetry`
+- `/state/claude/paste-cache`
+- `/state/claude/shell-snapshots`
+- `/state/claude/history.jsonl`
+- `/state/claude/cache/changelog.md`
+
+不会删除：
+
+- `sessions/`
+- `session-env/`
+- `settings.json`
+- `plugins/`
+- `debug/`
 
 当前第一批 upstream 是：
 

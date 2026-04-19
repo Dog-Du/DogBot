@@ -263,6 +263,24 @@ uv run python scripts/sync_content_sources.py --content-root ./content --skip-cl
 uv run python scripts/audit_legacy_runtime_memory.py ./runtime/claude-memory --output ./content/import-report.json
 ```
 
+如果你只想删掉 `/state/claude` 中已经脱离 DogBot 主链路的遗留内容，而不删除整个目录，可以使用：
+
+```bash
+uv run python scripts/cleanup_legacy_claude_content.py /srv/dogbot/runtime/agent-state/claude
+```
+
+默认仅清理保守集合：
+
+- `skills/`
+- `projects/*/memory`
+- `telemetry/`
+- `paste-cache/`
+- `shell-snapshots/`
+- `history.jsonl`
+- `cache/changelog.md`
+
+不会删除 `sessions/`、`session-env/`、`settings.json`、`plugins/`、`debug/`。
+
 审计输出只表示：
 
 - 哪些内容应忽略

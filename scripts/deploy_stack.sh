@@ -146,6 +146,7 @@ fi
 DOGBOT_CONTENT_ROOT="${DOGBOT_CONTENT_ROOT:-$repo_root/content}"
 DOGBOT_SYNC_CONTENT_ON_DEPLOY="$(dogbot_bool_to_flag "${DOGBOT_SYNC_CONTENT_ON_DEPLOY:-1}")"
 DOGBOT_REFRESH_CONTENT_ON_DEPLOY="$(dogbot_bool_to_flag "${DOGBOT_REFRESH_CONTENT_ON_DEPLOY:-0}")"
+DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY="$(dogbot_bool_to_flag "${DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY:-0}")"
 
 if [[ "$DOGBOT_REFRESH_CONTENT_ON_DEPLOY" == "1" ]]; then
   "$repo_root/scripts/sync_content_sources.py" --content-root "$repo_root/content"
@@ -153,6 +154,10 @@ fi
 
 if [[ "$DOGBOT_SYNC_CONTENT_ON_DEPLOY" == "1" ]]; then
   dogbot_sync_content_root "$repo_root/content" "$DOGBOT_CONTENT_ROOT"
+fi
+
+if [[ "$DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY" == "1" ]]; then
+  "$repo_root/scripts/cleanup_legacy_claude_content.py" "${AGENT_STATE_DIR:-/srv/agent-state}/claude"
 fi
 
 mkdir -p \
