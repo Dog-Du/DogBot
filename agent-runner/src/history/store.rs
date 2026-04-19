@@ -111,4 +111,32 @@ impl HistoryStore {
             |row| row.get::<_, i64>(0),
         )
     }
+
+    pub fn recent_rows(
+        &self,
+        conversation_id: &str,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<(String, String, bool)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT m.message_id,
+                    m.normalized_text,
+                    EXISTS(
+                        SELECT 1
+                        FROM message_attachment a
+                        WHERE a.message_id = m.message_id
+                    ) AS has_attachment
+             FROM message_store m
+             WHERE m.conversation_id = ?1
+             ORDER BY m.created_at_epoch_secs DESC, m.message_id DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![conversation_id, limit as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)? != 0,
+            ))
+        })?;
+        rows.collect()
+    }
 }

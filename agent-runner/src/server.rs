@@ -20,13 +20,13 @@ use tracing::warn;
 use crate::{
     config::Settings,
     context::{
-        context_pack::render_context_pack,
+        context_pack::render_context_pack_with_history,
         identity::ActorId,
         scope::ScopeResolver,
     },
     docker_client::DockerRuntime,
     exec::{DockerRunner, ExecutionBackend},
-    history::store::HistoryStore,
+    history::{retrieval::build_history_evidence_pack, store::HistoryStore},
     inbound_models::InboundMessage,
     messenger::{MessageDelivery, NapCatMessenger},
     models::{
@@ -400,7 +400,16 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
         &request.conversation_id,
         &request.platform_account_id,
     );
-    request.prompt = format!("{}{}", render_context_pack(&scopes), request.prompt);
+    let history_evidence = load_history_evidence_pack(
+        &state,
+        &request.conversation_id,
+        &request.prompt,
+    );
+    request.prompt = format!(
+        "{}{}",
+        render_context_pack_with_history(&scopes, history_evidence.as_deref()),
+        request.prompt
+    );
 
     let (responder, receiver) = oneshot::channel();
     match state.queue_tx.try_send(QueuedRun {
@@ -559,6 +568,40 @@ fn ensure_history_ingest_state_for_trigger(
         true,
         DEFAULT_HISTORY_RETENTION_DAYS,
     )
+}
+
+fn load_history_evidence_pack(
+    state: &AppState,
+    conversation_id: &str,
+    query: &str,
+) -> Option<String> {
+    let store = state
+        .history_store
+        .lock()
+        .expect("history store mutex poisoned");
+    match store.recent_rows(conversation_id, 5) {
+        Ok(rows) if rows.is_empty() => None,
+        Ok(rows) => {
+            let borrowed_rows = rows
+                .iter()
+                .map(|(message_id, text, has_attachment)| {
+                    (message_id.as_str(), text.as_str(), *has_attachment)
+                })
+                .collect::<Vec<_>>();
+            Some(build_history_evidence_pack(
+                conversation_id,
+                query,
+                &borrowed_rows,
+            ))
+        }
+        Err(err) => {
+            warn!(
+                conversation_id = %conversation_id,
+                "failed to load history evidence pack: {err}"
+            );
+            None
+        }
+    }
 }
 
 fn mirror_history_message_if_enabled(

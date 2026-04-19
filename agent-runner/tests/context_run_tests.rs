@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
+use agent_runner::config::Settings;
+use agent_runner::history::store::HistoryStore;
 use agent_runner::models::{ErrorResponse, RunRequest, RunResponse, ValidatedRunRequest};
-use agent_runner::server::{Runner, build_test_app};
+use agent_runner::server::{Runner, build_test_app, build_test_app_with_settings};
 use async_trait::async_trait;
 use axum::{
     body::Body,
@@ -58,6 +60,38 @@ fn base_request() -> RunRequest {
         cwd: "/workspace".into(),
         prompt: "hello".into(),
         timeout_secs: None,
+    }
+}
+
+fn test_settings() -> Settings {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.keep();
+    Settings {
+        bind_addr: "127.0.0.1:8787".into(),
+        default_timeout_secs: 120,
+        max_timeout_secs: 300,
+        container_name: "claude-runner".into(),
+        image_name: "dogbot/claude-runner:local".into(),
+        workspace_dir: root.join("workdir").display().to_string(),
+        state_dir: root.join("state").display().to_string(),
+        content_root: "./content".into(),
+        anthropic_base_url: "http://host.docker.internal:9000".into(),
+        api_proxy_auth_token: "local-proxy-token".into(),
+        napcat_api_base_url: "http://127.0.0.1:3001".into(),
+        napcat_access_token: None,
+        max_concurrent_runs: 1,
+        max_queue_depth: 1,
+        global_rate_limit_per_minute: 10,
+        user_rate_limit_per_minute: 3,
+        conversation_rate_limit_per_minute: 5,
+        control_plane_db_path: root.join("state/control.db").display().to_string(),
+        admin_actor_ids: vec!["qq:user:1".into()],
+        session_db_path: root.join("state/runner.db").display().to_string(),
+        history_db_path: root.join("state/history.db").display().to_string(),
+        container_cpu_cores: 4,
+        container_memory_mb: 4096,
+        container_disk_gb: 50,
+        container_pids_limit: 256,
     }
 }
 
@@ -144,6 +178,43 @@ async fn run_endpoint_normalizes_context_identifiers_before_dispatch() {
     assert_eq!(captured_request.user_id, "qq:user:1");
     assert_eq!(captured_request.conversation_id, "qq:private:1");
     assert_eq!(captured_request.platform_account_id, "qq:bot_uin:123");
+}
+
+#[tokio::test]
+async fn run_endpoint_appends_history_evidence_pack_when_history_exists() {
+    let settings = test_settings();
+    let store = HistoryStore::open(&settings.history_db_path).expect("history store");
+    store
+        .insert_message(
+            "hist-1",
+            "qq:private:1",
+            "qq:user:1",
+            "之前讨论过的上下文",
+            1,
+        )
+        .expect("seed history");
+
+    let runner = Arc::new(CapturingRunner::default());
+    let app = build_test_app_with_settings(runner.clone(), settings);
+    let payload = serde_json::to_vec(&base_request()).expect("serialize request");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/runs")
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .expect("build request"),
+        )
+        .await
+        .expect("run request");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let captured = runner.captured_prompt().expect("captured prompt");
+    assert!(captured.contains("History evidence for qq:private:1"));
+    assert!(captured.contains("Recent context"));
+    assert!(captured.contains("之前讨论过的上下文"));
 }
 
 #[tokio::test]
