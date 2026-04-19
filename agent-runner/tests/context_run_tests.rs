@@ -248,3 +248,55 @@ async fn run_endpoint_rejects_control_characters_in_context_identifiers() {
         "platform_account_id contains unsupported control characters or backticks"
     );
 }
+
+#[tokio::test]
+async fn run_endpoint_includes_enabled_pack_items_in_context() {
+    let settings = test_settings();
+    let pack_dir = std::path::Path::new(&settings.content_root).join("packs/base");
+    std::fs::create_dir_all(&pack_dir).expect("create pack dir");
+    std::fs::write(
+        pack_dir.join("manifest.json"),
+        r#"{
+            "pack_id":"base",
+            "version":1,
+            "title":"DogBot Base Pack",
+            "kind":"resource-pack",
+            "source":{"source_id":"dogbot_local","repo_url":"local","ref":"workspace","license":"Proprietary"},
+            "items":[
+                {
+                    "id":"base.system",
+                    "kind":"prompt",
+                    "path":"prompts/system.md",
+                    "title":"System Prompt",
+                    "summary":"base prompt",
+                    "tags":["base"],
+                    "enabled_by_default":true,
+                    "platform_overrides":[],
+                    "upstream_path":""
+                }
+            ]
+        }"#,
+    )
+    .expect("write manifest");
+
+    let runner = Arc::new(CapturingRunner::default());
+    let app = build_test_app_with_settings(runner.clone(), settings);
+    let payload = serde_json::to_vec(&base_request()).expect("serialize request");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/runs")
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .expect("build request"),
+        )
+        .await
+        .expect("run request");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let captured = runner.captured_prompt().expect("captured prompt");
+    assert!(captured.contains("Enabled pack items:"));
+    assert!(captured.contains("base.system"));
+}
