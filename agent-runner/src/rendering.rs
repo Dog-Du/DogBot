@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::BTreeSet;
 use tracing::warn;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -37,6 +38,21 @@ pub fn parse_media_actions(stdout: &str) -> Vec<MediaAction> {
             }
         })
         .collect()
+}
+
+pub fn validate_media_actions(
+    actions: &[MediaAction],
+    authorized_asset_ids: &BTreeSet<String>,
+) -> Result<(), String> {
+    for action in actions {
+        if action.source_type == "stored_asset"
+            && !authorized_asset_ids.contains(&action.source_value)
+        {
+            return Err("asset_not_authorized".to_string());
+        }
+    }
+
+    Ok(())
 }
 
 fn degrade_markdown_line(line: &str) -> String {

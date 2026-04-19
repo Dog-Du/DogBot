@@ -1,4 +1,6 @@
-use agent_runner::rendering::{degrade_markdown, parse_media_actions};
+use std::collections::BTreeSet;
+
+use agent_runner::rendering::{degrade_markdown, parse_media_actions, validate_media_actions};
 
 #[test]
 fn markdown_degradation_keeps_lists_and_urls() {
@@ -10,9 +12,8 @@ fn markdown_degradation_keeps_lists_and_urls() {
 
 #[test]
 fn markdown_degradation_preserves_parentheses_and_generic_link_labels() {
-    let rendered = degrade_markdown(
-        "Keep (parentheses) and [docs](https://example.com/docs) in place.",
-    );
+    let rendered =
+        degrade_markdown("Keep (parentheses) and [docs](https://example.com/docs) in place.");
     assert!(rendered.contains("Keep (parentheses)"));
     assert!(rendered.contains("docs: https://example.com/docs"));
 }
@@ -38,4 +39,25 @@ fn media_action_parser_handles_multiple_blocks_and_ignores_invalid_json() {
     assert_eq!(actions.len(), 2);
     assert_eq!(actions[0].source_value, "https://example.com/a.png");
     assert_eq!(actions[1].source_type, "stored_asset");
+}
+
+#[test]
+fn media_action_validation_rejects_unauthorized_stored_assets() {
+    let stdout = "```dogbot-action\n{\"type\":\"send_image\",\"source_type\":\"stored_asset\",\"source_value\":\"asset-secret\",\"caption_text\":\"x\",\"target_conversation\":\"qq:private:1\"}\n```";
+
+    let actions = parse_media_actions(stdout);
+    let authorized_assets = BTreeSet::from(["asset-allowed".to_string()]);
+
+    let result = validate_media_actions(&actions, &authorized_assets);
+    assert!(matches!(result, Err(error) if error == "asset_not_authorized"));
+}
+
+#[test]
+fn media_action_validation_allows_remote_urls_without_authorized_assets() {
+    let stdout = "```dogbot-action\n{\"type\":\"send_image\",\"source_type\":\"remote_url\",\"source_value\":\"https://example.com/image.png\",\"caption_text\":\"x\",\"target_conversation\":\"qq:private:1\"}\n```";
+
+    let actions = parse_media_actions(stdout);
+    let authorized_assets = BTreeSet::new();
+
+    assert!(validate_media_actions(&actions, &authorized_assets).is_ok());
 }
