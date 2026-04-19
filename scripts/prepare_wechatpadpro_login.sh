@@ -160,8 +160,8 @@ try_fetch_login_qr_endpoint() {
 fetch_login_qr() {
   local qr_info_output qr_link png_path meta_path
   : >"$login_err_log"
-  qr_info_output="$(try_fetch_login_qr_endpoint "/login/GetLoginQrCodePadX")" \
-    || qr_info_output="$(try_fetch_login_qr_endpoint "/login/GetLoginQrCodeNewX")" \
+  qr_info_output="$(try_fetch_login_qr_endpoint "/login/GetLoginQrCodeNewX")" \
+    || qr_info_output="$(try_fetch_login_qr_endpoint "/login/GetLoginQrCodePadX")" \
     || return 1
   mapfile -t qr_info <<<"$qr_info_output"
   qr_link="${qr_info[0]}"
@@ -208,8 +208,9 @@ text = str(payload.get("Text") or "")
 data = payload.get("Data") or {}
 status = str(data.get("Status") or data.get("status") or "")
 wxid = str(data.get("wxid") or data.get("Wxid") or "")
+login_state = str(data.get("loginState") or data.get("LoginState") or "")
 combined = f"{text} {status}".lower()
-if code == "-2" or "不存在" in text:
+if code == "-2" or "不存在" in text or ("key已过期" in text) or ("key 已过期" in text) or ("请重新申请" in text):
     print("stale-key")
 elif "退出微信" in text or "已退出" in text or "logged out" in combined:
     print("logged-out")
@@ -217,7 +218,7 @@ elif "验证码" in text or "辅助" in text:
     print("verify-required")
 elif "过期" in text or "expired" in combined:
     print("expired")
-elif "已登录" in text or "在线" in text or "已绑定" in text or "online" in combined or "bound" in combined or wxid.startswith("wxid_"):
+elif login_state == "1" or "已登录" in text or "在线" in text or "已绑定" in text or "online" in combined or "bound" in combined or wxid.startswith("wxid_"):
     print("online")
 else:
     print("pending")
@@ -238,11 +239,38 @@ recent_wechatpadpro_diag_logs() {
 }
 
 current_login_blocker() {
-  local blocker_line
-  blocker_line="$(recent_wechatpadpro_diag_logs | rg -m1 '当前客户端版本过低|版本过低' || true)"
-  if [[ -n "$blocker_line" ]]; then
-    printf 'client-version-too-low\t%s\n' "$blocker_line"
-  fi
+  local diag_logs
+  diag_logs="$(recent_wechatpadpro_diag_logs 2>/dev/null || true)"
+  [[ -n "$diag_logs" ]] || return 0
+
+  "$uv_bin" run python - <<'PY' "${WECHATPADPRO_ACCOUNT_KEY:-}" "$diag_logs"
+import re
+import sys
+
+current_key = sys.argv[1]
+log_text = sys.argv[2]
+
+if not current_key or not log_text.strip():
+    raise SystemExit(0)
+
+key_markers = (
+    current_key,
+    f"UUID={current_key}",
+    f"AuthKey: {current_key}",
+    f"by {current_key}",
+)
+blocker_re = re.compile(r"当前客户端版本过低|版本过低")
+key_window = 20
+lines = log_text.splitlines()
+last_key_index = -10**9
+
+for index, line in enumerate(lines):
+    if any(marker in line for marker in key_markers):
+        last_key_index = index
+    if blocker_re.search(line) and index - last_key_index <= key_window:
+        print(f"client-version-too-low\t{line}")
+        raise SystemExit(0)
+PY
 }
 
 report_qr_failure() {
