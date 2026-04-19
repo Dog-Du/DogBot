@@ -55,6 +55,14 @@ DogBot 现在使用仓库托管的内容引导流程，而不是继续把 runtim
 - `scripts/audit_legacy_runtime_memory.py`
   - 审计旧 runtime memory，输出 `ignore / candidate / manual_review`
 
+部署时，`./deploy_stack.sh` 会默认把仓库内的 `content/` 同步到外部 `DOGBOT_CONTENT_ROOT`，运行时由 `agent-runner` 只读取这个外部目录，而不是直接读取仓库工作树。
+
+如果需要在部署前刷新 upstream 快照和 pack 生成结果，可以显式开启：
+
+- `DOGBOT_REFRESH_CONTENT_ON_DEPLOY=1`
+
+默认只同步已存在的仓库内容，不在每次部署时联网拉取 upstream。
+
 当前第一批 upstream 是：
 
 - `OpenViking`

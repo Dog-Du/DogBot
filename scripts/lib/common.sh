@@ -209,3 +209,27 @@ dogbot_print_qr_if_possible() {
     qrencode -t ANSIUTF8 "$url"
   fi
 }
+
+dogbot_sync_content_root() {
+  local source_dir="$1"
+  local dest_dir="$2"
+  local source_abs
+  local dest_abs
+
+  if [[ ! -d "$source_dir" ]]; then
+    echo "Content source directory does not exist: $source_dir" >&2
+    return 1
+  fi
+
+  mkdir -p "$dest_dir"
+
+  source_abs="$(cd "$source_dir" && pwd -P)"
+  dest_abs="$(cd "$dest_dir" && pwd -P)"
+
+  if [[ "$source_abs" == "$dest_abs" ]]; then
+    return 0
+  fi
+
+  find "$dest_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  cp -a "$source_dir"/. "$dest_dir"/
+}

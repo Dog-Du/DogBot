@@ -17,6 +17,12 @@
   - `--wechat`
   - `--qq --wechat`
 
+内容管理侧当前也已经接入部署流程：
+
+- 部署前默认会把仓库中的 `content/` 同步到外部 `DOGBOT_CONTENT_ROOT`
+- `agent-runner` 运行时只读取 `DOGBOT_CONTENT_ROOT`
+- 是否在部署前联网刷新 upstream 内容，由 `DOGBOT_REFRESH_CONTENT_ON_DEPLOY` 显式控制
+
 当前支持两条主要链路：
 
 ```text
@@ -180,8 +186,12 @@ cp deploy/dogbot.env.example deploy/dogbot.env
 说明：
 
 - 示例配置默认启用了 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1`
+- 示例配置默认启用了 `DOGBOT_SYNC_CONTENT_ON_DEPLOY=1`
+- 示例配置默认关闭 `DOGBOT_REFRESH_CONTENT_ON_DEPLOY`
 - 如果你手动改成 `0`，部署脚本不会替你注册 webhook
 - 这时必须自行配置 `WECHATPADPRO_ADAPTER_WEBHOOK_URL`
+- 如果你手动把 `DOGBOT_SYNC_CONTENT_ON_DEPLOY=0`，运行时会直接读取你提供的 `DOGBOT_CONTENT_ROOT`
+- 如果你把 `DOGBOT_REFRESH_CONTENT_ON_DEPLOY=1`，部署前会执行 `scripts/sync_content_sources.py --content-root <repo>/content`
 
 如果 Docker 权限不够：
 
@@ -240,6 +250,8 @@ CONTROL_PLANE_DB_PATH=/srv/dogbot/runtime/agent-state/control.db
 HISTORY_DB_PATH=/srv/dogbot/runtime/agent-state/history.db
 DOGBOT_CONTENT_ROOT=/srv/dogbot/content
 DOGBOT_ADMIN_ACTOR_IDS=qq:user:10001,wechat:user:wxid_admin
+DOGBOT_SYNC_CONTENT_ON_DEPLOY=1
+DOGBOT_REFRESH_CONTENT_ON_DEPLOY=0
 ```
 
 建议：
@@ -254,7 +266,9 @@ DOGBOT_ADMIN_ACTOR_IDS=qq:user:10001,wechat:user:wxid_admin
 - `SESSION_DB_PATH` 保存短期 Claude session 映射
 - `CONTROL_PLANE_DB_PATH` 保存 memory candidate、authorization 等 control-plane 数据
 - `HISTORY_DB_PATH` 保存 history ingest 和 retrieval 基础数据
-- `DOGBOT_CONTENT_ROOT` 推荐使用绝对路径，指向仓库托管的 `content/`
+- `DOGBOT_CONTENT_ROOT` 推荐使用绝对路径，指向运行时外部内容目录
+- `DOGBOT_SYNC_CONTENT_ON_DEPLOY=1` 时，部署脚本会把仓库内 `content/` 全量同步到 `DOGBOT_CONTENT_ROOT`
+- `DOGBOT_REFRESH_CONTENT_ON_DEPLOY=1` 时，部署脚本会先刷新仓库内 `content/upstream/` 和 `content/packs/`，再执行同步
 - `DOGBOT_ADMIN_ACTOR_IDS` 用逗号分隔管理员 actor ID
 - `WeChatPadPro` 的 `data/mysql/redis` 目录也建议放到 `AGENT_STATE_DIR/wechatpadpro-data/`
 

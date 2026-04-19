@@ -143,9 +143,22 @@ if ! compose_cmd="$(dogbot_resolve_compose_cmd)"; then
   exit 1
 fi
 
+DOGBOT_CONTENT_ROOT="${DOGBOT_CONTENT_ROOT:-$repo_root/content}"
+DOGBOT_SYNC_CONTENT_ON_DEPLOY="$(dogbot_bool_to_flag "${DOGBOT_SYNC_CONTENT_ON_DEPLOY:-1}")"
+DOGBOT_REFRESH_CONTENT_ON_DEPLOY="$(dogbot_bool_to_flag "${DOGBOT_REFRESH_CONTENT_ON_DEPLOY:-0}")"
+
+if [[ "$DOGBOT_REFRESH_CONTENT_ON_DEPLOY" == "1" ]]; then
+  "$repo_root/scripts/sync_content_sources.py" --content-root "$repo_root/content"
+fi
+
+if [[ "$DOGBOT_SYNC_CONTENT_ON_DEPLOY" == "1" ]]; then
+  dogbot_sync_content_root "$repo_root/content" "$DOGBOT_CONTENT_ROOT"
+fi
+
 mkdir -p \
   "${AGENT_WORKSPACE_DIR:-/srv/agent-workdir}" \
   "${AGENT_STATE_DIR:-/srv/agent-state}" \
+  "$DOGBOT_CONTENT_ROOT" \
   "${NAPCAT_QQ_DIR:-/srv/napcat/qq}" \
   "${NAPCAT_CONFIG_DIR:-/srv/napcat/config}" \
   "${WECHATPADPRO_DATA_DIR:-/srv/wechatpadpro/data}" \
