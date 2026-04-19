@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::io;
+use std::sync::Mutex as StdMutex;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -14,6 +15,7 @@ use axum::{
 };
 use serde_json::json;
 use tokio::sync::{Mutex, mpsc, oneshot};
+use tracing::warn;
 
 use crate::{
     config::Settings,
@@ -24,6 +26,7 @@ use crate::{
     },
     docker_client::DockerRuntime,
     exec::{DockerRunner, ExecutionBackend},
+    history::store::HistoryStore,
     inbound_models::InboundMessage,
     messenger::{MessageDelivery, NapCatMessenger},
     models::{
@@ -79,6 +82,7 @@ struct AppState {
     settings: Settings,
     queue_tx: mpsc::Sender<QueuedRun>,
     session_store: SessionStore,
+    history_store: Arc<StdMutex<HistoryStore>>,
     messenger: Arc<dyn Messenger>,
 }
 
@@ -180,6 +184,8 @@ pub fn build_test_app(runner: Arc<dyn Runner>) -> Router {
 
 pub fn build_test_app_with_settings(runner: Arc<dyn Runner>, settings: Settings) -> Router {
     let session_store = SessionStore::open(&settings.session_db_path).expect("session store");
+    let history_store =
+        Arc::new(StdMutex::new(HistoryStore::open(&settings.history_db_path).expect("history store")));
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
     let messenger =
         Arc::new(NapCatMessenger::from_settings(&settings).expect("default NapCat messenger"));
@@ -187,6 +193,7 @@ pub fn build_test_app_with_settings(runner: Arc<dyn Runner>, settings: Settings)
         settings,
         queue_tx,
         session_store,
+        history_store,
         messenger,
     })
 }
@@ -197,11 +204,14 @@ pub fn build_test_app_with_message_support(
     settings: Settings,
 ) -> Router {
     let session_store = SessionStore::open(&settings.session_db_path).expect("session store");
+    let history_store =
+        Arc::new(StdMutex::new(HistoryStore::open(&settings.history_db_path).expect("history store")));
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
     router(AppState {
         settings,
         queue_tx,
         session_store,
+        history_store,
         messenger,
     })
 }
@@ -214,6 +224,12 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
     );
     let session_store = SessionStore::open(&settings.session_db_path)
         .map_err(|err| io::Error::other(err.to_string()))?;
+    let history_store = Arc::new(
+        StdMutex::new(
+            HistoryStore::open(&settings.history_db_path)
+                .map_err(|err| io::Error::other(err.to_string()))?,
+        ),
+    );
     let messenger = Arc::new(
         NapCatMessenger::from_settings(&settings).map_err(|err| io::Error::other(err.message))?,
     );
@@ -222,6 +238,7 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
         settings,
         queue_tx,
         session_store,
+        history_store,
         messenger,
     }))
 }
@@ -484,7 +501,7 @@ async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
     }
 }
 
-async fn handle_inbound_message(body: Bytes) -> Response {
+async fn handle_inbound_message(State(state): State<AppState>, body: Bytes) -> Response {
     let message: InboundMessage = match serde_json::from_slice(&body) {
         Ok(message) => message,
         Err(err) => {
@@ -499,7 +516,35 @@ async fn handle_inbound_message(body: Bytes) -> Response {
         TriggerDecision::Run | TriggerDecision::Status => "accepted",
     };
 
+    if let Err(err) = mirror_history_message_if_enabled(&state, &message) {
+        warn!(
+            conversation_id = %message.conversation_id,
+            message_id = %message.message_id,
+            "failed to mirror inbound message into history store: {err}"
+        );
+    }
+
     (StatusCode::OK, Json(json!({ "status": status }))).into_response()
+}
+
+fn mirror_history_message_if_enabled(
+    state: &AppState,
+    message: &InboundMessage,
+) -> rusqlite::Result<()> {
+    let store = state
+        .history_store
+        .lock()
+        .expect("history store mutex poisoned");
+    if !store.ingest_enabled(&message.conversation_id)? {
+        return Ok(());
+    }
+    store.insert_message(
+        &message.message_id,
+        &message.conversation_id,
+        &message.actor_id,
+        &message.normalized_text,
+        message.timestamp_epoch_secs,
+    )
 }
 
 fn is_limit_exhausted(limit: usize, current_len: usize) -> bool {
