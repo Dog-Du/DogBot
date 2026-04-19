@@ -11,9 +11,15 @@ def test_private_text_event_maps_to_runner_payload():
         "msgId": "m-1",
     }
 
-    payload = build_run_payload(event, default_cwd="/workspace", timeout_secs=120)
+    payload = build_run_payload(
+        event,
+        platform_account_id="wechatpadpro:account:wxid_bot_1",
+        default_cwd="/workspace",
+        timeout_secs=120,
+    )
 
     assert payload["platform"] == "wechatpadpro"
+    assert payload["platform_account_id"] == "wechatpadpro:account:wxid_bot_1"
     assert payload["conversation_id"] == "wechatpadpro:private:wxid_user"
     assert payload["session_id"] == "wechatpadpro:private:wxid_user"
     assert payload["user_id"] == "wxid_user"
@@ -30,7 +36,12 @@ def test_private_text_without_is_group_stays_private():
         "toUserName": "wxid_bot",
     }
 
-    payload = build_run_payload(event, default_cwd="/workspace", timeout_secs=120)
+    payload = build_run_payload(
+        event,
+        platform_account_id="wechatpadpro:account:wxid_bot_1",
+        default_cwd="/workspace",
+        timeout_secs=120,
+    )
 
     assert payload["conversation_id"] == "wechatpadpro:private:wxid_user"
     assert payload["session_id"] == "wechatpadpro:private:wxid_user"
@@ -46,7 +57,12 @@ def test_group_text_event_maps_to_runner_payload():
         "isGroup": True,
     }
 
-    payload = build_run_payload(event, default_cwd="/workspace", timeout_secs=90)
+    payload = build_run_payload(
+        event,
+        platform_account_id="wechatpadpro:account:wxid_bot_1",
+        default_cwd="/workspace",
+        timeout_secs=90,
+    )
 
     assert payload["conversation_id"] == "wechatpadpro:group:room-123"
     assert payload["session_id"] == "wechatpadpro:group:room-123:user:wxid_user"
@@ -62,7 +78,12 @@ def test_group_message_uses_chatroom_sender_and_room_id():
         "senderWxid": "wxid_user",
     }
 
-    payload = build_run_payload(event, default_cwd="/workspace", timeout_secs=90)
+    payload = build_run_payload(
+        event,
+        platform_account_id="wechatpadpro:account:wxid_bot_1",
+        default_cwd="/workspace",
+        timeout_secs=90,
+    )
 
     assert payload["conversation_id"] == "wechatpadpro:group:123@chatroom"
     assert payload["session_id"] == "wechatpadpro:group:123@chatroom:user:wxid_user"
@@ -78,7 +99,12 @@ def test_group_message_sent_by_bot_uses_chatroom_target_as_group_id():
         "toUserName": "123@chatroom",
     }
 
-    payload = build_run_payload(event, default_cwd="/workspace", timeout_secs=90)
+    payload = build_run_payload(
+        event,
+        platform_account_id="wechatpadpro:account:wxid_bot_1",
+        default_cwd="/workspace",
+        timeout_secs=90,
+    )
 
     assert payload["conversation_id"] == "wechatpadpro:group:123@chatroom"
     assert payload["session_id"] == "wechatpadpro:group:123@chatroom:user:wxid_bot"
@@ -97,6 +123,7 @@ def test_wrapped_message_event_unwraps_before_mapping():
                 "msgType": 1,
             },
         },
+        platform_account_id="wechatpadpro:account:wxid_bot_1",
         default_cwd="/workspace",
         timeout_secs=60,
     )
@@ -127,7 +154,12 @@ def test_group_transport_prefix_is_normalized_from_content():
     assert extract_content(event) == "/agent hello"
     assert extract_sender(event) == "wxid_user"
 
-    payload = build_run_payload(event, default_cwd="/workspace", timeout_secs=60)
+    payload = build_run_payload(
+        event,
+        platform_account_id="wechatpadpro:account:wxid_bot_1",
+        default_cwd="/workspace",
+        timeout_secs=60,
+    )
     assert payload["conversation_id"] == "wechatpadpro:group:123@chatroom"
     assert payload["session_id"] == "wechatpadpro:group:123@chatroom:user:wxid_user"
     assert payload["prompt"] == "/agent hello"

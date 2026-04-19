@@ -125,7 +125,11 @@ def is_group_event(event: dict[str, Any]) -> bool:
 
 
 def build_run_payload(
-    event: dict[str, Any], *, default_cwd: str, timeout_secs: int
+    event: dict[str, Any],
+    *,
+    platform_account_id: str,
+    default_cwd: str,
+    timeout_secs: int,
 ) -> dict[str, Any]:
     event = unwrap_event(event)
     prompt = extract_content(event)
@@ -150,6 +154,7 @@ def build_run_payload(
 
     payload = {
         "platform": "wechatpadpro",
+        "platform_account_id": platform_account_id,
         "conversation_id": conversation_id,
         "session_id": session_id,
         "user_id": sender,

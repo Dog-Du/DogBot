@@ -14,6 +14,7 @@ pub struct Settings {
     pub image_name: String,
     pub workspace_dir: String,
     pub state_dir: String,
+    pub content_root: String,
     pub anthropic_base_url: String,
     pub api_proxy_auth_token: String,
     pub napcat_api_base_url: String,
@@ -23,6 +24,8 @@ pub struct Settings {
     pub global_rate_limit_per_minute: usize,
     pub user_rate_limit_per_minute: usize,
     pub conversation_rate_limit_per_minute: usize,
+    pub control_plane_db_path: String,
+    pub admin_actor_ids: Vec<String>,
     pub session_db_path: String,
     pub container_cpu_cores: u64,
     pub container_memory_mb: u64,
@@ -54,6 +57,7 @@ impl Settings {
             string_or_default(&env_map, "CLAUDE_IMAGE_NAME", "dogbot/claude-runner:local");
         let workspace_dir = string_or_default(&env_map, "AGENT_WORKSPACE_DIR", "/srv/agent-workdir");
         let state_dir = string_or_default(&env_map, "AGENT_STATE_DIR", "/srv/agent-state");
+        let content_root = string_or_default(&env_map, "DOGBOT_CONTENT_ROOT", "./content");
         let anthropic_base_url =
             string_or_default(&env_map, "ANTHROPIC_BASE_URL", "http://host.docker.internal:9000");
         let api_proxy_auth_token = optional_trimmed(&env_map, "API_PROXY_AUTH_TOKEN")
@@ -69,6 +73,18 @@ impl Settings {
             parse_or_default(&env_map, "USER_RATE_LIMIT_PER_MINUTE", 3)?;
         let conversation_rate_limit_per_minute =
             parse_or_default(&env_map, "CONVERSATION_RATE_LIMIT_PER_MINUTE", 5)?;
+        let control_plane_db_path = optional_trimmed(&env_map, "CONTROL_PLANE_DB_PATH")
+            .unwrap_or_else(|| format!("{state_dir}/control.db"));
+        let admin_actor_ids = env_map
+            .get("DOGBOT_ADMIN_ACTOR_IDS")
+            .map(|raw| {
+                raw.split(',')
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty())
+                    .map(|value| value.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
         let session_db_path = optional_trimmed(&env_map, "SESSION_DB_PATH")
             .unwrap_or_else(|| format!("{state_dir}/runner.db"));
         let container_cpu_cores =
@@ -91,6 +107,7 @@ impl Settings {
             image_name,
             workspace_dir,
             state_dir,
+            content_root,
             anthropic_base_url,
             api_proxy_auth_token,
             napcat_api_base_url,
@@ -100,6 +117,8 @@ impl Settings {
             global_rate_limit_per_minute,
             user_rate_limit_per_minute,
             conversation_rate_limit_per_minute,
+            control_plane_db_path,
+            admin_actor_ids,
             session_db_path,
             container_cpu_cores,
             container_memory_mb,

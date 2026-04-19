@@ -41,6 +41,7 @@ def classify_message(
 def build_run_payload(
     event: dict[str, Any],
     *,
+    platform_account_id: str,
     prompt: str,
     default_cwd: str,
     timeout_secs: int,
@@ -49,6 +50,7 @@ def build_run_payload(
     message_type = str(event.get("message_type") or "")
     payload = {
         "platform": "qq",
+        "platform_account_id": platform_account_id,
         "user_id": user_id,
         "cwd": default_cwd,
         "prompt": prompt,

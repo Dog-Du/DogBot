@@ -44,6 +44,7 @@ class EventProcessor:
     async def run_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
         request = build_run_payload(
             payload,
+            platform_account_id=self.settings.platform_account_id,
             default_cwd=self.settings.default_cwd,
             timeout_secs=self.settings.default_timeout_secs,
         )

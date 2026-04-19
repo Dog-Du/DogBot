@@ -67,17 +67,30 @@ def test_build_run_payload_for_group():
         "user_id": 1,
         "message_id": 99,
     }
-    payload = build_run_payload(event, prompt="hello", default_cwd="/workspace", timeout_secs=120)
+    payload = build_run_payload(
+        event,
+        platform_account_id="qq:bot_uin:123",
+        prompt="hello",
+        default_cwd="/workspace",
+        timeout_secs=120,
+    )
     assert payload["platform"] == "qq"
     assert payload["conversation_id"] == "qq:group:2"
     assert payload["session_id"] == "qq:group:2:user:1"
     assert payload["reply_to_message_id"] == "99"
     assert payload["mention_user_id"] == "1"
+    assert payload["platform_account_id"] == "qq:bot_uin:123"
 
 
 def test_build_run_payload_for_private():
     event = {"message_type": "private", "raw_message": "/agent hello", "user_id": 1}
-    payload = build_run_payload(event, prompt="hello", default_cwd="/workspace", timeout_secs=120)
+    payload = build_run_payload(
+        event,
+        platform_account_id="qq:bot_uin:123",
+        prompt="hello",
+        default_cwd="/workspace",
+        timeout_secs=120,
+    )
     assert payload["conversation_id"] == "qq:private:1"
     assert payload["session_id"] == "qq:private:1"
     assert payload["chat_type"] == "private"

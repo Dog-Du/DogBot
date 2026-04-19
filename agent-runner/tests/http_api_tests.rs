@@ -16,6 +16,7 @@ use tower::ServiceExt;
 fn base_request() -> RunRequest {
     RunRequest {
         platform: "qq".into(),
+        platform_account_id: "qq:bot_uin:1".into(),
         conversation_id: "conv-1".into(),
         session_id: "qq-user-1".into(),
         user_id: "1".into(),
@@ -44,6 +45,7 @@ fn test_settings() -> agent_runner::config::Settings {
         image_name: "dogbot/claude-runner:local".into(),
         workspace_dir: "/tmp/agent-runner-tests/workdir".into(),
         state_dir: "/tmp/agent-runner-tests/state".into(),
+        content_root: "./content".into(),
         anthropic_base_url: "http://host.docker.internal:9000".into(),
         api_proxy_auth_token: "local-proxy-token".into(),
         napcat_api_base_url: "http://127.0.0.1:3001".into(),
@@ -53,6 +55,8 @@ fn test_settings() -> agent_runner::config::Settings {
         global_rate_limit_per_minute: 10,
         user_rate_limit_per_minute: 3,
         conversation_rate_limit_per_minute: 5,
+        control_plane_db_path: "/tmp/agent-runner-tests/state/control.db".into(),
+        admin_actor_ids: vec!["qq:user:1".into()],
         session_db_path: "/tmp/agent-runner-tests/state/runner.db".into(),
         container_cpu_cores: 4,
         container_memory_mb: 4096,

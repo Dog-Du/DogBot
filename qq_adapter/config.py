@@ -15,6 +15,7 @@ class Settings:
     command_name: str
     status_command_name: str
     qq_bot_id: str
+    platform_account_id: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -27,5 +28,8 @@ class Settings:
             default_timeout_secs=int(os.getenv("QQ_ADAPTER_TIMEOUT_SECS", "120")),
             command_name=os.getenv("QQ_ADAPTER_COMMAND_NAME", "agent").strip(),
             status_command_name=os.getenv("QQ_ADAPTER_STATUS_COMMAND_NAME", "agent-status").strip(),
+            platform_account_id=os.getenv(
+                "QQ_PLATFORM_ACCOUNT_ID", "qq:bot_uin:unknown"
+            ).strip(),
             qq_bot_id=os.getenv("QQ_ADAPTER_QQ_BOT_ID", "").strip(),
         )

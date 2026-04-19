@@ -23,7 +23,36 @@ fn settings_use_expected_defaults() {
     assert_eq!(settings.global_rate_limit_per_minute, 10);
     assert_eq!(settings.user_rate_limit_per_minute, 3);
     assert_eq!(settings.conversation_rate_limit_per_minute, 5);
+    assert_eq!(settings.content_root, "./content");
+    assert_eq!(settings.control_plane_db_path, "/srv/agent-state/control.db");
+    assert!(settings.admin_actor_ids.is_empty());
     assert_eq!(settings.session_db_path, "/srv/agent-state/runner.db");
+}
+
+#[test]
+fn settings_parse_control_plane_fields() {
+    let env = std::collections::HashMap::from([
+        (
+            "DOGBOT_CONTENT_ROOT".to_string(),
+            "./custom-content".to_string(),
+        ),
+        (
+            "CONTROL_PLANE_DB_PATH".to_string(),
+            "/tmp/custom/control.db".to_string(),
+        ),
+        (
+            "DOGBOT_ADMIN_ACTOR_IDS".to_string(),
+            "qq:user:1, wechat:user:wxid_admin , , ".to_string(),
+        ),
+    ]);
+
+    let settings = Settings::from_env_map(env).unwrap();
+    assert_eq!(settings.content_root, "./custom-content");
+    assert_eq!(settings.control_plane_db_path, "/tmp/custom/control.db");
+    assert_eq!(
+        settings.admin_actor_ids,
+        vec!["qq:user:1".to_string(), "wechat:user:wxid_admin".to_string()]
+    );
 }
 
 #[test]

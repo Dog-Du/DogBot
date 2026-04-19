@@ -43,6 +43,7 @@ def create_app() -> FastAPI:
                 else:
                     payload = build_run_payload(
                         event,
+                        platform_account_id=settings.platform_account_id,
                         prompt=command["prompt"],
                         default_cwd=settings.default_cwd,
                         timeout_secs=settings.default_timeout_secs,

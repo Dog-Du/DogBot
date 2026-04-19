@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RunRequest {
     pub platform: String,
+    pub platform_account_id: String,
     pub conversation_id: String,
     pub session_id: String,
     pub user_id: String,

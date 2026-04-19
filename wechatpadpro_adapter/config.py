@@ -19,6 +19,7 @@ class Settings:
     bot_mention_names: tuple[str, ...]
     command_name: str
     status_command_name: str
+    platform_account_id: str
     default_cwd: str
     default_timeout_secs: int
 
@@ -56,6 +57,10 @@ class Settings:
             command_name=os.getenv("WECHATPADPRO_COMMAND_NAME", "agent"),
             status_command_name=os.getenv(
                 "WECHATPADPRO_STATUS_COMMAND_NAME", "agent-status"
+            ),
+            platform_account_id=os.getenv(
+                "WECHATPADPRO_PLATFORM_ACCOUNT_ID",
+                "wechatpadpro:account:unknown",
             ),
             default_cwd=os.getenv("WECHATPADPRO_DEFAULT_CWD", "/workspace"),
             default_timeout_secs=int(
