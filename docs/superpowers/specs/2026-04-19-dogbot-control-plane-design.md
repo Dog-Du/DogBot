@@ -8,6 +8,7 @@ Define a single control-plane architecture for DogBot that supports:
 - skill and policy loading
 - strict session and scope isolation across QQ and WeChat
 - controlled proactive messaging
+- controlled media asset handling for outbound image delivery
 - future history ingestion and retrieval
 
 The design keeps the current runtime shape:
@@ -61,7 +62,7 @@ References:
   - manages short-lived Claude session bindings
   - resolves admin whitelist membership
 - `context`
-  - manages `memory`, `resource`, `skill`, `policy`, and `history_index`
+  - manages `memory`, `resource`, `skill`, `policy`, `history_index`, and `asset` metadata
   - resolves readable scopes
   - validates write permissions
   - assembles the context pack for each run
@@ -71,7 +72,7 @@ References:
   - records delivery audit state and retries
 - `delivery/rendering`
   - converts output for QQ and WeChat
-  - handles mentions, replies, markdown degradation, and platform send adapters
+  - handles mentions, replies, markdown degradation, media sends, and platform send adapters
 
 The existing `exec` path remains responsible only for invoking Claude Code CLI with the prepared prompt and context payload.
 
@@ -166,7 +167,7 @@ This keeps agent autonomy useful for personal memory without allowing runtime mu
 
 ## Content Object Model
 
-The control plane manages five persistent object kinds:
+The control plane manages six persistent object kinds:
 
 - `memory`
   - short, structured, durable facts
@@ -178,6 +179,8 @@ The control plane manages five persistent object kinds:
   - behavior, permission, trigger, and formatting rules
 - `history_index`
   - indexed message-history fragments for retrieval, not automatically promoted to memory
+- `asset`
+  - stored metadata for media that may later be re-sent, especially outbound images
 
 All persistent objects share common metadata:
 
@@ -205,6 +208,14 @@ All persistent objects share common metadata:
 - `time_range`
 - `message_count`
 - `retrieval_terms`
+
+`asset` additionally carries:
+
+- `storage_path`
+- `source_url`
+- `mime_type`
+- `sha256`
+- `availability_status`
 
 ## Core Data Flows
 
@@ -235,6 +246,22 @@ All persistent objects share common metadata:
    - sends a templated message directly, or
    - launches a fresh Claude run to generate the final outbound text
 6. `delivery/rendering` sends the final message and stores delivery outcome.
+
+### History Ingestion Flow
+
+1. Adapter receives a message event for a conversation with history capture enabled.
+2. `ingress` normalizes the message into a canonical inbound model.
+3. `context` persists the raw message shell, normalized text, reply linkage, and attachment metadata.
+4. A background indexer updates `history_index` entries for retrieval.
+5. The next `/agent` run may request history evidence scoped to the same conversation.
+
+### Asset Send Flow
+
+1. Agent output or an automation job produces a structured media-send intent.
+2. `delivery/rendering` validates that the intent targets an authorized conversation.
+3. If the source is remote, the runner downloads and validates the file into controlled storage.
+4. `context` persists or reuses an `asset` record.
+5. The platform delivery client uploads or sends the image using the appropriate QQ or WeChat API.
 
 ## Automation and Outbox Model
 
@@ -303,10 +330,11 @@ This phase solves the core isolation and memory-mixing problem.
 
 Deliver:
 
-- richer trigger recognition for QQ and WeChat
-- non-prefix-only invocation rules where policy allows
+- unified trigger resolver for QQ and WeChat
+- non-starting-position `/agent` recognition after message normalization
+- reply-aware and mention-aware trigger gating in group chats
 - reply rendering pipeline for markdown degradation
-- richer platform reply metadata such as mention, reply, and stylistic wrappers
+- richer platform reply metadata such as mention, reply, stylistic wrappers, and outbound image actions
 - ingress policies that distinguish normal chat, slash commands, and protected actions
 
 This phase improves usability and readability without changing the scope model.
@@ -316,11 +344,344 @@ This phase improves usability and readability without changing the scope model.
 Deliver:
 
 - message-history ingestion pipeline
-- persistent message store and `history_index`
+- persistent message store, attachment metadata, `asset` storage, and `history_index`
+- per-conversation enablement and retention policy
+- QQ limited backfill plus realtime mirror
+- WeChat realtime mirror after enablement
 - retrieval APIs for the `context` subsystem
 - policy-controlled history injection into runs
 
 This phase gives the agent access to prior conversation material without treating all history as long-term memory.
+
+## Phase B Detailed Design
+
+### Trigger Resolver
+
+Phase B introduces a unified `trigger resolver` inside `agent-runner`.
+
+Adapters still parse platform-native payloads, but they must emit a canonical `InboundMessage` model with:
+
+- `platform`
+- `platform_account`
+- `conversation_id`
+- `actor_id`
+- `message_id`
+- `reply_to_message_id`
+- `raw_segments`
+- `normalized_text`
+- `mentions`
+- `is_group`
+- `is_private`
+- `timestamp`
+
+The resolver makes the final trigger decision. This removes the current split where QQ and WeChat implement separate command-matching behavior with inconsistent capabilities.
+
+### Message Normalization
+
+Trigger resolution is based on `normalized_text`, not the raw platform string.
+
+QQ normalization rules:
+
+- strip CQ wrappers from `at`, `reply`, and other control segments
+- preserve `reply_to_message_id` separately
+- preserve `mentions` separately
+- keep only human-readable text in `normalized_text`
+
+WeChat normalization rules:
+
+- unwrap transport-prefixed payloads
+- strip textual group-mention prefixes
+- preserve reply linkage where available
+- keep only the normalized message body in `normalized_text`
+
+This enables `/agent` to be recognized after normalization even when it does not appear at the raw string start.
+
+### Trigger Policy
+
+V1 keeps explicit invocation protection.
+
+Private chat trigger:
+
+- `/agent` must appear in `normalized_text`
+- `/agent-status` remains a separate control path
+- natural conversation without `/agent` never triggers execution
+
+Group chat trigger:
+
+- `/agent` must appear in `normalized_text`
+- and one of the following must also be true:
+  - the bot is mentioned
+  - the message replies to a bot-authored message
+
+Messages that must not trigger:
+
+- messages without `/agent`
+- group messages with `/agent` but without mention or bot-reply linkage
+- obvious control or system messages
+- bot self-echo messages
+
+### Minimal Provenance Store
+
+Phase B adds a minimal provenance store so reply-based triggers can reliably detect whether a referenced message came from the bot.
+
+Each entry stores:
+
+- `message_id`
+- `platform`
+- `platform_account`
+- `conversation_id`
+- `sender_actor`
+- `sender_role`
+- `created_at`
+
+This provenance store is intentionally small and becomes the seed for Phase C history storage.
+It may be implemented as a dedicated lightweight table first and then folded into `message_store` once Phase C lands.
+
+### Rendering Pipeline
+
+Claude output no longer flows directly to the platform.
+
+The rendering pipeline performs:
+
+1. output classification
+2. markdown degradation
+3. reply and mention metadata injection
+4. media action extraction
+5. final platform payload assembly
+
+### Markdown Degradation
+
+V1 targets readability, not full markdown fidelity.
+
+Degradation rules:
+
+- headings become plain paragraphs with spacing
+- bullet and numbered lists retain list markers
+- emphasis markers are removed while preserving text
+- code blocks retain body text but drop language labels
+- inline code remains plain or lightly wrapped
+- links degrade to text plus URL
+- tables degrade to key-value style line groups
+- quotes degrade to plain prefixed text
+
+If degradation fails, the renderer falls back to plain text instead of blocking delivery.
+
+### Platform Reply Metadata
+
+QQ defaults:
+
+- group replies keep reply metadata when available
+- group replies mention the requesting actor by default
+- private replies are plain text unless explicit reply metadata exists
+
+WeChat defaults:
+
+- group replies keep `AtWxIDList` when available
+- group replies may prefix the sender nickname in text
+- private replies remain plain text
+
+### Outbound Image Actions
+
+V1 supports outbound image sending but not visual understanding.
+
+Agent or automation output may produce:
+
+- `send_image`
+- `send_text_with_image`
+
+Each action must include:
+
+- `source_type`
+  - `remote_url`
+  - `stored_asset`
+  - `local_generated_file`
+- `source_value`
+- `caption_text`
+- `target_conversation`
+
+Runner responsibilities:
+
+- download and validate remote files into controlled storage
+- create or reuse an `asset` record
+- enforce conversation-target authorization
+- send the image through the platform delivery client
+
+V1 does not allow the agent to call platform media APIs directly.
+
+### Phase B Failure and Degradation Rules
+
+- if reply metadata is missing, delivery falls back to plain reply without quote linkage
+- if mention metadata is missing, delivery falls back to plain text
+- if image download fails, the user receives a text error instead of silent failure
+- if a platform image send path is unavailable, delivery falls back to text plus a safe link when possible
+
+## Phase C Detailed Design
+
+### History Capture Scope
+
+History is not global by default. V1 captures full message history only for conversations that are enabled.
+
+An enabled conversation is:
+
+- a private chat that has seen at least one valid `/agent` request, or
+- a group chat that has seen at least one valid `/agent` request, or
+- a conversation explicitly enabled by an administrator
+
+Default retention is `180 days`, with per-conversation overrides for administrators.
+
+### Ingestion Strategy
+
+QQ strategy:
+
+- enable realtime mirror for all messages in enabled conversations
+- support limited backfill when a conversation becomes enabled
+- backfill writes history records only and does not trigger agent execution
+
+WeChat strategy:
+
+- enable realtime mirror for all webhook-delivered messages in enabled conversations
+- V1 does not depend on a WeChat history backfill API
+
+### Storage Model
+
+Phase C extends the local state store with five primary tables or collections:
+
+- `message_store`
+- `message_attachment`
+- `asset_store`
+- `history_index`
+- `conversation_ingest_state`
+
+`message_store` includes:
+
+- `message_id`
+- `platform`
+- `platform_account`
+- `conversation_id`
+- `actor_id`
+- `sender_role`
+- `reply_to_message_id`
+- `normalized_text`
+- `raw_text`
+- `message_type`
+- `created_at`
+- `ingested_at`
+- `deleted_at`
+- `retention_expires_at`
+
+`message_attachment` includes:
+
+- `attachment_id`
+- `message_id`
+- `attachment_type`
+- `platform_file_id`
+- `mime_type`
+- `file_name`
+- `size_bytes`
+- `asset_id`
+
+`asset_store` includes:
+
+- `asset_id`
+- `storage_path`
+- `source_url`
+- `sha256`
+- `mime_type`
+- `width`
+- `height`
+- `created_at`
+- `availability_status`
+
+`conversation_ingest_state` includes:
+
+- `conversation_id`
+- `enabled`
+- `enabled_at`
+- `retention_days`
+- `last_backfill_cursor`
+- `last_realtime_message_at`
+- `sync_status`
+
+### Retrieval Model
+
+History retrieval is evidence-oriented and conversation-scoped.
+
+Each `/agent` run may assemble a `history evidence pack` from four layers:
+
+1. `anchor layer`
+   - current message
+   - replied-to message
+   - referenced bot message when relevant
+2. `recent window`
+   - recent messages from the same conversation
+3. `targeted retrieval`
+   - keyword or FTS retrieval inside the same conversation
+4. `attachment stubs`
+   - lightweight attachment presence notes, not binary payloads
+
+V1 should start with SQLite indexing plus FTS5, time filters, and reply anchoring. Embedding-based retrieval is deferred.
+
+### History and Memory Boundary
+
+History remains evidence, not truth.
+
+Hard rules:
+
+- repeated appearance in history does not auto-promote content into memory
+- group history summaries are not auto-written into `conversation-shared` memory
+- one conversation's history is never injected into another conversation
+- private chat history is never injected into a group run
+
+Allowed rule:
+
+- a user may explicitly request promotion of a conclusion into memory, and the resulting memory record must reference source message identifiers
+
+### Attachment Handling
+
+V1 stores image attachments so they can later be re-sent, but does not perform OCR, captioning, or image understanding.
+
+Inbound image behavior:
+
+- persist message-to-attachment linkage
+- download to controlled storage when policy allows
+- write an `asset_store` record
+- keep the attachment out of text retrieval content
+
+Retrieval behavior for messages with images:
+
+- inject only a stub such as "message contains image attachment"
+- expose `asset_id` for authorized later send operations
+
+### Retention and Cleanup
+
+Default retention:
+
+- enabled conversation history is retained for `180 days`
+- administrators may override retention per conversation
+
+Cleanup requirements:
+
+- TTL-based deletion for expired messages and index rows
+- per-conversation manual purge
+- per-private-chat purge
+- orphaned asset cleanup unless still referenced by active jobs or retained messages
+
+### Phase C Failure Handling
+
+- history ingestion failure must not block the live reply path
+- history retrieval failure may degrade to a no-history run
+- backfill failure must not disable realtime mirror
+- attachment download failure must preserve the message shell with an attachment error state
+
+### Phase C Test Priorities
+
+- one group's history is never retrievable from another group
+- private history is never injected into group runs
+- reply-anchor retrieval returns the referenced message
+- QQ backfill and realtime mirror do not duplicate records
+- WeChat dedupe does not drop legitimate messages
+- attachment-bearing messages are stored without polluting text retrieval
+- `send_image(asset_id=...)` enforces authorization boundaries
 
 ## Error Handling
 
@@ -334,6 +695,10 @@ Control-plane failures are explicit and typed. V1 must surface at least:
 - `delivery_failed`
 - `rendering_failed`
 - `context_pack_failed`
+- `history_ingest_failed`
+- `history_retrieval_failed`
+- `attachment_download_failed`
+- `asset_not_authorized`
 
 Error handling rules:
 
@@ -353,14 +718,20 @@ V1 testing is split by boundary:
   - permission decisions
   - automation authorization
   - markdown-to-plain-text degradation
+  - trigger resolution
+  - history evidence-pack assembly
 - integration tests
   - end-to-end adapter -> runner -> context -> exec flow
   - memory write approval and rejection cases
   - scheduled job execution and delivery audit behavior
+  - reply-trigger recognition across QQ and WeChat
+  - enabled-conversation history mirror behavior
+  - outbound image send action execution
 - contract tests
   - persistent object schemas
   - repository-loaded skill/resource manifests
   - history-index retrieval inputs and outputs
+  - asset action payload schemas
 
 The most important regression targets are:
 
@@ -368,4 +739,6 @@ The most important regression targets are:
 - one user cannot write another user's private memory
 - Claude session reuse cannot change long-term scope selection
 - proactive jobs cannot escape their authorized conversation
-
+- group `/agent` invocation cannot bypass mention-or-reply gating
+- history retrieval cannot cross conversation boundaries
+- image assets cannot be sent outside the authorized target conversation
