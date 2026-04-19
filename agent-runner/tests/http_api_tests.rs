@@ -37,14 +37,19 @@ fn base_message_request() -> MessageRequest {
 }
 
 fn test_settings() -> agent_runner::config::Settings {
+    let root = std::env::temp_dir().join(format!(
+        "agent-runner-http-tests-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
     agent_runner::config::Settings {
         bind_addr: "127.0.0.1:8787".into(),
         default_timeout_secs: 120,
         max_timeout_secs: 300,
         container_name: "claude-runner".into(),
         image_name: "dogbot/claude-runner:local".into(),
-        workspace_dir: "/tmp/agent-runner-tests/workdir".into(),
-        state_dir: "/tmp/agent-runner-tests/state".into(),
+        workspace_dir: root.join("workdir").display().to_string(),
+        state_dir: root.join("state").display().to_string(),
         content_root: "./content".into(),
         anthropic_base_url: "http://host.docker.internal:9000".into(),
         api_proxy_auth_token: "local-proxy-token".into(),
@@ -55,9 +60,9 @@ fn test_settings() -> agent_runner::config::Settings {
         global_rate_limit_per_minute: 10,
         user_rate_limit_per_minute: 3,
         conversation_rate_limit_per_minute: 5,
-        control_plane_db_path: "/tmp/agent-runner-tests/state/control.db".into(),
+        control_plane_db_path: root.join("state/control.db").display().to_string(),
         admin_actor_ids: vec!["qq:user:1".into()],
-        session_db_path: "/tmp/agent-runner-tests/state/runner.db".into(),
+        session_db_path: root.join("state/runner.db").display().to_string(),
         container_cpu_cores: 4,
         container_memory_mb: 4096,
         container_disk_gb: 50,
@@ -454,6 +459,41 @@ async fn message_endpoint_sends_to_existing_session() {
             mention_user_id: None,
         }
     );
+}
+
+#[tokio::test]
+async fn message_endpoint_trims_session_id_before_lookup() {
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("runner.db");
+    let store = SessionStore::open(&db_path).unwrap();
+    store
+        .get_or_create_session("qq-user-1", "qq", "qq:private:1", "1")
+        .unwrap();
+
+    let messenger = Arc::new(MockMessenger::success());
+    let app = agent_runner::server::build_test_app_with_message_support(
+        Arc::new(MockRunner::success()),
+        messenger.clone(),
+        test_settings_with_session_db(&db_path),
+    );
+
+    let mut request = base_message_request();
+    request.session_id = "  qq-user-1  ".into();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(messenger.last_request().unwrap().text, "hello from outbox");
 }
 
 #[tokio::test]

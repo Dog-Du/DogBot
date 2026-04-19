@@ -24,12 +24,14 @@ use crate::{
     },
     docker_client::DockerRuntime,
     exec::{DockerRunner, ExecutionBackend},
+    inbound_models::InboundMessage,
     messenger::{MessageDelivery, NapCatMessenger},
     models::{
         ErrorResponse, MessageRequest, MessageResponse, RunRequest, RunResponse,
         ValidatedRunRequest,
     },
     session_store::SessionStore,
+    trigger_resolver::{TriggerDecision, TriggerResolver},
 };
 
 #[async_trait]
@@ -228,6 +230,7 @@ fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/v1/runs", post(run))
         .route("/v1/messages", post(send_message))
+        .route("/v1/inbound-messages", post(handle_inbound_message))
         .with_state(state)
 }
 
@@ -436,6 +439,8 @@ async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
         }
     };
 
+    request.session_id = request.session_id.trim().to_string();
+
     if let Err(message) = request.validate() {
         return error_response(StatusCode::BAD_REQUEST, "invalid_request", &message)
             .into_response();
@@ -476,6 +481,24 @@ async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
         }
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response(),
     }
+}
+
+async fn handle_inbound_message(body: Bytes) -> Response {
+    let message: InboundMessage = match serde_json::from_slice(&body) {
+        Ok(message) => message,
+        Err(err) => {
+            return error_response(StatusCode::BAD_REQUEST, "invalid_json", &err.to_string())
+                .into_response();
+        }
+    };
+
+    let decision = TriggerResolver::default().resolve(&message);
+    let status = match decision {
+        TriggerDecision::Ignore => "ignored",
+        TriggerDecision::Run | TriggerDecision::Status => "accepted",
+    };
+
+    (StatusCode::OK, Json(json!({ "status": status }))).into_response()
 }
 
 fn is_limit_exhausted(limit: usize, current_len: usize) -> bool {
