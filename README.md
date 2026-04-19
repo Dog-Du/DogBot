@@ -42,6 +42,25 @@ QQ
 - inbound trigger 解析
 - 历史消息采集、检索和 retention cleanup
 
+## Content Bootstrap
+
+DogBot 现在使用仓库托管的内容引导流程，而不是继续把 runtime 中 Claude 自行积累的 memory 当正式内容源：
+
+- `content/sources.lock.json`
+  - 锁定 upstream 内容源、版本、导入模式和目标 pack
+- `scripts/sync_content_sources.py`
+  - 将选中的 upstream 内容同步到 `content/upstream/`，并生成 `content/packs/`
+- `agent-runner`
+  - 运行时只读取 `content/packs/` 和 `content/policies/`
+- `scripts/audit_legacy_runtime_memory.py`
+  - 审计旧 runtime memory，输出 `ignore / candidate / manual_review`
+
+当前第一批 upstream 是：
+
+- `OpenViking`
+- `OpenHands/extensions`
+- `Mem0`
+
 ## 仓库结构
 
 ```text

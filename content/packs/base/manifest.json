@@ -1,0 +1,13 @@
+{
+  "pack_id": "base",
+  "version": 1,
+  "title": "DogBot Base Pack",
+  "kind": "resource-pack",
+  "source": {
+    "source_id": "dogbot_local",
+    "repo_url": "local",
+    "ref": "workspace",
+    "license": "Proprietary"
+  },
+  "items": []
+}

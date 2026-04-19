@@ -1,0 +1,13 @@
+{
+  "pack_id": "wechat",
+  "version": 1,
+  "title": "DogBot WeChat Pack",
+  "kind": "resource-pack",
+  "source": {
+    "source_id": "dogbot_local",
+    "repo_url": "local",
+    "ref": "workspace",
+    "license": "Proprietary"
+  },
+  "items": []
+}

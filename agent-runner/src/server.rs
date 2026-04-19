@@ -20,7 +20,8 @@ use tracing::warn;
 use crate::{
     config::Settings,
     context::{
-        context_pack::render_context_pack_with_history, identity::ActorId, scope::ScopeResolver,
+        context_pack::render_context_pack_with_history_and_items, identity::ActorId,
+        repo_loader::RepoContentLoader, scope::ScopeResolver,
     },
     docker_client::DockerRuntime,
     exec::{DockerRunner, ExecutionBackend},
@@ -432,9 +433,16 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
     );
     let history_evidence =
         load_history_evidence_pack(&state, &request.conversation_id, &request.prompt);
+    let pack_items = RepoContentLoader::new(state.settings.content_root.clone())
+        .enabled_items()
+        .unwrap_or_default();
     request.prompt = format!(
         "{}{}",
-        render_context_pack_with_history(&scopes, history_evidence.as_deref()),
+        render_context_pack_with_history_and_items(
+            &scopes,
+            history_evidence.as_deref(),
+            &pack_items,
+        ),
         request.prompt
     );
 
