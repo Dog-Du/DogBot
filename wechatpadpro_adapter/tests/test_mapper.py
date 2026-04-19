@@ -1,4 +1,12 @@
-from wechatpadpro_adapter.mapper import build_run_payload, extract_content, extract_sender, unwrap_event
+import json
+
+from wechatpadpro_adapter.mapper import (
+    build_inbound_payload,
+    build_run_payload,
+    extract_content,
+    extract_sender,
+    unwrap_event,
+)
 
 
 def test_private_text_event_maps_to_runner_payload():
@@ -163,3 +171,59 @@ def test_group_transport_prefix_is_normalized_from_content():
     assert payload["conversation_id"] == "wechatpadpro:group:123@chatroom"
     assert payload["session_id"] == "wechatpadpro:group:123@chatroom:user:wxid_user"
     assert payload["prompt"] == "/agent hello"
+
+
+def test_build_inbound_payload_emits_canonical_group_fields():
+    payload = build_inbound_payload(
+        {
+            "event_type": "message",
+            "message": {
+                "msgType": 1,
+                "content": "wxid_user:\n@DogDu /agent hello",
+                "fromUserName": "123@chatroom",
+                "senderWxid": "wxid_user",
+                "msgId": "g-1",
+                "quoteMsgId": "bot-99",
+                "createTime": 1_700_000_123,
+            },
+        },
+        platform_account_id="wechatpadpro:account:wxid_bot_1",
+        mention_names=("DogDu",),
+    )
+
+    assert payload["platform"] == "wechatpadpro"
+    assert payload["platform_account"] == "wechatpadpro:account:wxid_bot_1"
+    assert payload["conversation_id"] == "wechatpadpro:group:123@chatroom"
+    assert payload["actor_id"] == "wechatpadpro:user:wxid_user"
+    assert payload["message_id"] == "g-1"
+    assert payload["reply_to_message_id"] == "bot-99"
+    assert payload["normalized_text"] == "/agent hello"
+    assert payload["mentions"] == ["wechatpadpro:account:wxid_bot_1"]
+    assert payload["is_group"] is True
+    assert payload["is_private"] is False
+    assert payload["timestamp_epoch_secs"] == 1_700_000_123
+    assert json.loads(payload["raw_segments_json"]) == [
+        {"type": "text", "text": "/agent hello"}
+    ]
+
+
+def test_build_inbound_payload_emits_canonical_private_fields():
+    payload = build_inbound_payload(
+        {
+            "msgType": 1,
+            "content": "hello",
+            "fromUserName": "wxid_user",
+            "msgId": "p-1",
+        },
+        platform_account_id="wechatpadpro:account:wxid_bot_1",
+        mention_names=(),
+    )
+
+    assert payload["conversation_id"] == "wechatpadpro:private:wxid_user"
+    assert payload["actor_id"] == "wechatpadpro:user:wxid_user"
+    assert payload["message_id"] == "p-1"
+    assert payload["reply_to_message_id"] is None
+    assert payload["normalized_text"] == "hello"
+    assert payload["mentions"] == []
+    assert payload["is_group"] is False
+    assert payload["is_private"] is True

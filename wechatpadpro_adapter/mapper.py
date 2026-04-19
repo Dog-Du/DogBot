@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+import time
 from typing import Any
 
 
@@ -8,6 +10,67 @@ TRANSPORT_PREFIX_RE = re.compile(
     r"^\s*(?P<sender>[A-Za-z0-9_@-]+):\s*\n(?P<body>.+)$",
     re.S,
 )
+
+
+def _extract_timestamp_epoch_secs(event: dict[str, Any]) -> int:
+    for key in ("createTime", "CreateTime", "timestamp", "time"):
+        value = event.get(key)
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return int(time.time())
+
+
+def _normalize_actor_id(actor_id: str) -> str:
+    actor = str(actor_id or "").strip()
+    if not actor:
+        return ""
+    if actor.startswith("wechatpadpro:"):
+        return actor
+    return f"wechatpadpro:user:{actor}"
+
+
+def _strip_leading_mention(content: str, mention_names: tuple[str, ...]) -> tuple[str, list[str]]:
+    content = str(content or "").strip()
+    if not content.startswith("@"):
+        return content, []
+
+    if not mention_names:
+        parts = content.split(maxsplit=1)
+        if len(parts) == 1:
+            return "", []
+        return parts[1].strip(), []
+
+    parts = content.split(maxsplit=1)
+    if not parts:
+        return "", []
+
+    first = parts[0]
+    if first.startswith("@") and first[1:] in mention_names and len(parts) > 1:
+        return parts[1].strip(), ["wechatpadpro:account"]
+
+    if len(parts) > 1:
+        return parts[1].strip(), []
+    return "", []
+
+
+def _extract_reply_to_message_id(event: dict[str, Any]) -> str | None:
+    for key in ("replyTo", "quoteMsgId", "replyMsgId", "reply_to_msg_id"):
+        value = event.get(key)
+        if value:
+            text = str(value).strip()
+            if text:
+                return text
+
+    text = str(
+        event.get("reply_to") or event.get("reply_to_msg_id") or event.get("replyMsg") or ""
+    ).strip()
+    if text:
+        return text
+    return None
 
 def extract_raw_content(event: dict[str, Any]) -> str:
     return str(
@@ -166,3 +229,49 @@ def build_run_payload(
     if msg_id:
         payload["reply_to_message_id"] = msg_id
     return payload
+
+
+def build_inbound_payload(
+    event: dict[str, Any],
+    *,
+    platform_account_id: str,
+    mention_names: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    event = unwrap_event(event)
+    sender = extract_sender(event)
+    content = extract_content(event)
+    normalized_text, mentions = _strip_leading_mention(content, mention_names)
+    is_group = is_group_event(event)
+
+    if is_group:
+        group_id = extract_group_id(event)
+        conversation_id = f"wechatpadpro:group:{group_id}"
+    else:
+        conversation_id = f"wechatpadpro:private:{sender}"
+
+    if mentions and mentions[0] == "wechatpadpro:account":
+        mentions = [platform_account_id]
+
+    return {
+        "platform": "wechatpadpro",
+        "platform_account": platform_account_id,
+        "conversation_id": conversation_id,
+        "actor_id": _normalize_actor_id(sender),
+        "message_id": str(
+            event.get("msgId")
+            or event.get("MsgId")
+            or event.get("newMsgId")
+            or event.get("newmsgId")
+            or ""
+        ).strip(),
+        "reply_to_message_id": _extract_reply_to_message_id(event),
+        "raw_segments_json": json.dumps(
+            [{"type": "text", "text": normalized_text}],
+            ensure_ascii=False,
+        ),
+        "normalized_text": normalized_text,
+        "mentions": mentions,
+        "is_group": is_group,
+        "is_private": not is_group,
+        "timestamp_epoch_secs": _extract_timestamp_epoch_secs(event),
+    }

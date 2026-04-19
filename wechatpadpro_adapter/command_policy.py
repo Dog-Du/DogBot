@@ -43,6 +43,7 @@ def strip_group_mention_prefix(
 def resolve_command(payload: dict[str, Any], settings: Settings) -> CommandMatch | None:
     event = unwrap_event(payload)
     content = extract_content(event).strip()
+    command_prefix = f"/{settings.command_name}".strip()
     is_group = str(event.get("fromUserName") or event.get("FromUserName") or "").strip().endswith(
         "@chatroom"
     )
@@ -59,9 +60,12 @@ def resolve_command(payload: dict[str, Any], settings: Settings) -> CommandMatch
         return CommandMatch(mode="status", prompt="")
 
     if not settings.require_command_prefix:
-        return CommandMatch(mode="run", prompt=content)
+        if content == command_prefix:
+            return CommandMatch(mode="run", prompt="")
+        if content.startswith(f"{command_prefix} "):
+            return CommandMatch(mode="run", prompt=content[len(command_prefix) :].strip())
+        return None
 
-    command_prefix = f"/{settings.command_name}".strip()
     if content == command_prefix:
         return CommandMatch(mode="run", prompt="")
     if content.startswith(f"{command_prefix} "):

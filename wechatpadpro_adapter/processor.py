@@ -10,7 +10,12 @@ from fastapi import HTTPException
 from .command_policy import CommandMatch, resolve_command
 from .config import Settings
 from .events import RecentMessageCache, build_message_dedupe_key, is_text_event
-from .mapper import build_run_payload, extract_content, unwrap_event
+from .mapper import (
+    build_inbound_payload,
+    build_run_payload,
+    extract_content,
+    unwrap_event,
+)
 from .runner_client import AgentRunnerClient
 from .wechat_client import WeChatPadProClient
 
@@ -100,6 +105,20 @@ class EventProcessor:
 
         if self.recent_messages.check_and_mark(dedupe_key):
             logger.warning("wechatpadpro event ignored: duplicate message")
+            return {"status": "ignored"}
+
+        inbound_payload = build_inbound_payload(
+            payload,
+            platform_account_id=self.settings.platform_account_id,
+            mention_names=self.settings.bot_mention_names,
+        )
+        inbound_result = await self.runner.send_inbound_message(inbound_payload)
+        status = str(inbound_result.get("status") or "").strip().lower()
+        if status == "ignored":
+            logger.warning("wechatpadpro event ignored by inbound")
+            return {"status": "ignored"}
+        if status != "accepted":
+            logger.warning("wechatpadpro event ignored: unknown inbound status=%r", status)
             return {"status": "ignored"}
 
         command = resolve_command(payload, self.settings)
