@@ -107,6 +107,8 @@ struct InMemoryRateLimiter {
     state: Mutex<RateState>,
 }
 
+const DEFAULT_HISTORY_RETENTION_DAYS: i64 = 180;
+
 impl InMemoryRateLimiter {
     fn new(settings: &Settings) -> Self {
         Self {
@@ -516,6 +518,14 @@ async fn handle_inbound_message(State(state): State<AppState>, body: Bytes) -> R
         TriggerDecision::Run | TriggerDecision::Status => "accepted",
     };
 
+    if let Err(err) = ensure_history_ingest_state_for_trigger(&state, &message, &decision) {
+        warn!(
+            conversation_id = %message.conversation_id,
+            message_id = %message.message_id,
+            "failed to update history ingest state: {err}"
+        );
+    }
+
     if let Err(err) = mirror_history_message_if_enabled(&state, &message) {
         warn!(
             conversation_id = %message.conversation_id,
@@ -525,6 +535,30 @@ async fn handle_inbound_message(State(state): State<AppState>, body: Bytes) -> R
     }
 
     (StatusCode::OK, Json(json!({ "status": status }))).into_response()
+}
+
+fn ensure_history_ingest_state_for_trigger(
+    state: &AppState,
+    message: &InboundMessage,
+    decision: &TriggerDecision,
+) -> rusqlite::Result<()> {
+    if matches!(decision, TriggerDecision::Ignore) {
+        return Ok(());
+    }
+
+    let store = state
+        .history_store
+        .lock()
+        .expect("history store mutex poisoned");
+    if store.ingest_enabled(&message.conversation_id)? {
+        return Ok(());
+    }
+
+    store.upsert_ingest_state(
+        &message.conversation_id,
+        true,
+        DEFAULT_HISTORY_RETENTION_DAYS,
+    )
 }
 
 fn mirror_history_message_if_enabled(

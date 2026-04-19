@@ -227,3 +227,47 @@ async fn inbound_api_persists_enabled_conversation_messages() {
         agent_runner::history::store::HistoryStore::open(&settings.history_db_path).unwrap();
     assert_eq!(verifier.message_count("qq:group:100").unwrap(), 1);
 }
+
+#[tokio::test]
+async fn inbound_api_enables_history_on_first_valid_trigger() {
+    let settings = test_settings();
+    let app = agent_runner::server::build_test_app_with_message_support(
+        Arc::new(MockRunner),
+        Arc::new(NoopMessenger),
+        settings.clone(),
+    );
+    let payload = serde_json::to_vec(&InboundMessage {
+        platform: "qq".into(),
+        platform_account: "qq:bot_uin:123".into(),
+        conversation_id: "qq:group:200".into(),
+        actor_id: "qq:user:9".into(),
+        message_id: "m-enable-1".into(),
+        reply_to_message_id: None,
+        raw_segments_json: "[]".into(),
+        normalized_text: "/agent summarize".into(),
+        mentions: vec!["qq:bot_uin:123".into()],
+        is_group: true,
+        is_private: false,
+        timestamp_epoch_secs: 2,
+    })
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/inbound-messages")
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let verifier =
+        agent_runner::history::store::HistoryStore::open(&settings.history_db_path).unwrap();
+    assert!(verifier.ingest_enabled("qq:group:200").unwrap());
+    assert_eq!(verifier.message_count("qq:group:200").unwrap(), 1);
+}
