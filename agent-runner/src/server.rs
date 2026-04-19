@@ -17,6 +17,11 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::{
     config::Settings,
+    context::{
+        context_pack::render_context_pack,
+        identity::ActorId,
+        scope::ScopeResolver,
+    },
     docker_client::DockerRuntime,
     exec::{DockerRunner, ExecutionBackend},
     messenger::{MessageDelivery, NapCatMessenger},
@@ -265,7 +270,7 @@ async fn healthz() -> Json<serde_json::Value> {
 }
 
 async fn run(State(state): State<AppState>, body: Bytes) -> Response {
-    let request: RunRequest = match serde_json::from_slice(&body) {
+    let mut request: RunRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
         Err(err) => {
             return (
@@ -274,6 +279,22 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
                     status: "error".into(),
                     error_code: "invalid_json".into(),
                     message: err.to_string(),
+                    timed_out: false,
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let actor_id = match ActorId::new(request.user_id.clone()) {
+        Some(actor_id) => actor_id,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    status: "error".into(),
+                    error_code: "invalid_request".into(),
+                    message: "user_id must be non-empty".into(),
                     timed_out: false,
                 }),
             )
@@ -299,6 +320,13 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
                 .into_response();
         }
     };
+
+    let scopes = ScopeResolver::new().readable_scopes(
+        &actor_id,
+        &request.conversation_id,
+        &request.platform_account_id,
+    );
+    request.prompt = format!("{}{}", render_context_pack(&scopes), request.prompt);
 
     let (responder, receiver) = oneshot::channel();
     match state.queue_tx.try_send(QueuedRun {

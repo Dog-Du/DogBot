@@ -1,3 +1,4 @@
+pub mod context_pack;
 pub mod identity;
 pub mod object_store;
 pub mod policy;
