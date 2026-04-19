@@ -1,7 +1,7 @@
 {
   "pack_id": "ov-examples",
   "version": 1,
-  "title": "DogBot OpenViking Examples",
+  "title": "Ov Examples",
   "kind": "resource-pack",
   "source": {
     "source_id": "openviking_examples",

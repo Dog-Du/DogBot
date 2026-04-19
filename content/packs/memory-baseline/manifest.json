@@ -1,8 +1,8 @@
 {
   "pack_id": "memory-baseline",
   "version": 1,
-  "title": "DogBot Memory Baseline",
-  "kind": "memory-pack",
+  "title": "Memory Baseline",
+  "kind": "taxonomy-pack",
   "source": {
     "source_id": "mem0_taxonomy",
     "repo_url": "https://github.com/mem0ai/mem0.git",
@@ -16,7 +16,10 @@
       "path": "taxonomy/baseline.json",
       "title": "DogBot Memory Baseline",
       "summary": "Mem0-inspired memory taxonomy for DogBot scopes.",
-      "tags": ["memory", "taxonomy"],
+      "tags": [
+        "memory",
+        "taxonomy"
+      ],
       "enabled_by_default": true,
       "platform_overrides": [],
       "upstream_path": "derived-from-docs"
