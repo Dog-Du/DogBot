@@ -227,3 +227,19 @@ def test_build_inbound_payload_emits_canonical_private_fields():
     assert payload["mentions"] == []
     assert payload["is_group"] is False
     assert payload["is_private"] is True
+
+
+def test_build_inbound_payload_preserves_plain_at_text_without_mention_names():
+    payload = build_inbound_payload(
+        {
+            "msgType": 1,
+            "content": "@Alice 你好",
+            "fromUserName": "wxid_user",
+            "msgId": "p-2",
+        },
+        platform_account_id="wechatpadpro:account:wxid_bot_1",
+        mention_names=(),
+    )
+
+    assert payload["normalized_text"] == "@Alice 你好"
+    assert payload["mentions"] == []

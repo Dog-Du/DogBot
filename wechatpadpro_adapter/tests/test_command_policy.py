@@ -38,6 +38,38 @@ def test_resolve_command_requires_group_mention_when_enabled():
     assert yes_match.prompt == "hi"
 
 
+def test_resolve_command_treats_room_id_events_as_group_for_mention_gate():
+    settings = make_settings(
+        require_group_mention=True,
+        bot_mention_names=("DogDu",),
+    )
+    no_match = resolve_command(
+        {
+            "message": {
+                "content": "/agent hi",
+                "fromUserName": "wxid_user",
+                "roomId": "123@chatroom",
+                "isGroup": True,
+            }
+        },
+        settings,
+    )
+    yes_match = resolve_command(
+        {
+            "message": {
+                "content": "@DogDu /agent hi",
+                "fromUserName": "wxid_user",
+                "roomId": "123@chatroom",
+                "isGroup": True,
+            }
+        },
+        settings,
+    )
+    assert no_match is None
+    assert yes_match is not None
+    assert yes_match.prompt == "hi"
+
+
 def test_resolve_command_accepts_status_command():
     settings = make_settings()
     match = resolve_command(

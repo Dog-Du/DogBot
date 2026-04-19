@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import Settings
-from .mapper import extract_content, unwrap_event
+from .mapper import extract_content, is_group_event, unwrap_event
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,9 +44,7 @@ def resolve_command(payload: dict[str, Any], settings: Settings) -> CommandMatch
     event = unwrap_event(payload)
     content = extract_content(event).strip()
     command_prefix = f"/{settings.command_name}".strip()
-    is_group = str(event.get("fromUserName") or event.get("FromUserName") or "").strip().endswith(
-        "@chatroom"
-    )
+    is_group = is_group_event(event)
     if is_group and settings.require_group_mention:
         content, mentioned = strip_group_mention_prefix(content, settings.bot_mention_names)
         if not mentioned:
@@ -58,13 +56,6 @@ def resolve_command(payload: dict[str, Any], settings: Settings) -> CommandMatch
     status_command = f"/{settings.status_command_name}".strip()
     if content == status_command:
         return CommandMatch(mode="status", prompt="")
-
-    if not settings.require_command_prefix:
-        if content == command_prefix:
-            return CommandMatch(mode="run", prompt="")
-        if content.startswith(f"{command_prefix} "):
-            return CommandMatch(mode="run", prompt=content[len(command_prefix) :].strip())
-        return None
 
     if content == command_prefix:
         return CommandMatch(mode="run", prompt="")

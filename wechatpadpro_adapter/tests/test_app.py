@@ -162,6 +162,7 @@ def test_webhook_strips_agent_prefix_before_runner(monkeypatch):
         calls["send"] = True
 
     monkeypatch.setenv("WECHATPADPRO_REQUIRE_COMMAND_PREFIX", "1")
+    monkeypatch.setenv("WECHATPADPRO_BOT_MENTION_NAMES", "DogDu")
     monkeypatch.setattr(
         "wechatpadpro_adapter.runner_client.AgentRunnerClient.send_inbound_message",
         fake_inbound,
@@ -203,6 +204,7 @@ def test_webhook_accepts_group_mention_before_agent_command(monkeypatch):
         calls["send"] = True
 
     monkeypatch.setenv("WECHATPADPRO_REQUIRE_COMMAND_PREFIX", "1")
+    monkeypatch.setenv("WECHATPADPRO_BOT_MENTION_NAMES", "DogDu")
     monkeypatch.setattr(
         "wechatpadpro_adapter.runner_client.AgentRunnerClient.send_inbound_message",
         fake_inbound,

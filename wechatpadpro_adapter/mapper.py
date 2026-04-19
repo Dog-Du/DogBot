@@ -39,10 +39,7 @@ def _strip_leading_mention(content: str, mention_names: tuple[str, ...]) -> tupl
         return content, []
 
     if not mention_names:
-        parts = content.split(maxsplit=1)
-        if len(parts) == 1:
-            return "", []
-        return parts[1].strip(), []
+        return content, []
 
     parts = content.split(maxsplit=1)
     if not parts:
