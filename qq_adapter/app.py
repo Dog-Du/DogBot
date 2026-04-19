@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .config import Settings
-from .mapper import build_run_payload, classify_message
+from .mapper import build_inbound_payload, build_run_payload, classify_message
 from .napcat_client import NapCatClient
 from .runner_client import AgentRunnerClient
 
@@ -28,23 +28,42 @@ def create_app() -> FastAPI:
                 if str(event.get("post_type") or "") != "message":
                     continue
 
+                inbound_payload = build_inbound_payload(
+                    event,
+                    platform_account_id=settings.platform_account_id,
+                )
+                inbound_result = await runner.send_inbound_message(inbound_payload)
+                inbound_status = str(inbound_result.get("status") or "").strip().lower()
+                inbound_mode = str(
+                    inbound_result.get("mode") or inbound_result.get("decision") or ""
+                ).strip().lower()
+                if inbound_status == "ignored":
+                    continue
+                if inbound_status not in {"accepted", "run", "status"}:
+                    continue
+
                 command = classify_message(
                     event,
                     command_name=settings.command_name,
                     status_command_name=settings.status_command_name,
                     bot_id=settings.qq_bot_id,
                 )
-                if command is None:
-                    continue
 
-                if command["mode"] == "status":
+                if (
+                    inbound_status == "status"
+                    or inbound_mode == "status"
+                    or (command is not None and command.get("mode") == "status")
+                ):
                     health = await runner.healthz()
                     text = "agent-runner ok" if health.get("status") == "ok" else "agent-runner unavailable"
                 else:
+                    prompt = str(inbound_payload.get("normalized_text") or "").strip()
+                    if command is not None and command.get("mode") == "run":
+                        prompt = command.get("prompt", "")
                     payload = build_run_payload(
                         event,
                         platform_account_id=settings.platform_account_id,
-                        prompt=command["prompt"],
+                        prompt=prompt,
                         default_cwd=settings.default_cwd,
                         timeout_secs=settings.default_timeout_secs,
                     )

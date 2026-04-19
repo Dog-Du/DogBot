@@ -20,3 +20,9 @@ class AgentRunnerClient:
             response = await client.post("/v1/runs", json=payload)
             response.raise_for_status()
             return response.json()
+
+    async def send_inbound_message(self, payload: dict[str, Any]) -> dict[str, Any]:
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=15) as client:
+            response = await client.post("/v1/inbound-messages", json=payload)
+            response.raise_for_status()
+            return response.json()
