@@ -10,6 +10,7 @@ pub mod inbound_models;
 pub mod messenger;
 pub mod models;
 pub mod provenance_store;
+pub mod rendering;
 pub mod server;
 pub mod session_store;
 pub mod trigger_resolver;
