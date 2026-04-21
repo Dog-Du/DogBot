@@ -144,6 +144,12 @@ The exact endpoint paths and payload fields should be confirmed against the live
 
 Session identity must remain platform-neutral and stable.
 
+This design follows the corrected DogBot rule:
+
+- one private chat maps to one session
+- one group chat maps to one session
+- group chats must not be split into per-sender sub-sessions
+
 ### Private chat
 
 Use:
@@ -157,13 +163,8 @@ wechatpadpro:private:<conversation-or-user-id>
 Use:
 
 ```text
-wechatpadpro:group:<group-id>:user:<sender-id>
+wechatpadpro:group:<group-id>
 ```
-
-This mirrors the QQ strategy:
-
-- group context is shared at conversation level
-- Claude session remains isolated per sender within the group
 
 ## Reply Semantics
 

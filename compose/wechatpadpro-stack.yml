@@ -68,5 +68,13 @@ services:
       REDIS_DB: ${WECHATPADPRO_REDIS_DB:-0}
       WECHAT_PORT: ${WECHATPADPRO_WECHAT_PORT:-8080}
       MYSQL_CONNECT_STR: ${WECHATPADPRO_MYSQL_USER:-weixin}:${WECHATPADPRO_MYSQL_PASSWORD}@tcp(${WECHATPADPRO_MYSQL_CONTAINER_NAME:-wechatpadpro_mysql}:${WECHATPADPRO_MYSQL_PORT:-3306})/${WECHATPADPRO_MYSQL_DATABASE:-weixin}?charset=utf8mb4&parseTime=true&loc=Local
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      all_proxy: ${ALL_PROXY:-}
+      no_proxy: ${NO_PROXY:-}
     volumes:
       - "${WECHATPADPRO_DATA_DIR:-/srv/wechatpadpro/data}:/app/data"

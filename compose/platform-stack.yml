@@ -9,6 +9,14 @@ services:
     environment:
       NAPCAT_UID: ${NAPCAT_UID:-1000}
       NAPCAT_GID: ${NAPCAT_GID:-1000}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      all_proxy: ${ALL_PROXY:-}
+      no_proxy: ${NO_PROXY:-}
     volumes:
       - "${NAPCAT_QQ_DIR:-/srv/napcat/qq}:/app/.config/QQ"
       - "${NAPCAT_CONFIG_DIR:-/srv/napcat/config}:/app/napcat/config"

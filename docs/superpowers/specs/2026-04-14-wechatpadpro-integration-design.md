@@ -125,7 +125,7 @@ Expected session identity rules:
 - private:
   - `wechat:<private-conversation-id>`
 - group:
-  - `wechat:<group-conversation-id>:user:<sender-id>`
+  - `wechat:<group-conversation-id>`
 
 Exact origin strings should continue to come from AstrBot when available. The bridge should continue preferring `unified_msg_origin` over fragile local reconstruction.
 

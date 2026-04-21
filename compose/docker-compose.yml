@@ -22,6 +22,14 @@ services:
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-http://host.docker.internal:9000}
       ANTHROPIC_AUTH_TOKEN: ${API_PROXY_AUTH_TOKEN:-local-proxy-token}
       CLAUDE_CONFIG_DIR: /state/claude
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      all_proxy: ${ALL_PROXY:-}
+      no_proxy: ${NO_PROXY:-}
     volumes:
       - "${AGENT_WORKSPACE_DIR:-/srv/agent-workdir}:/workspace"
       - "${AGENT_STATE_DIR:-/srv/agent-state}:/state"

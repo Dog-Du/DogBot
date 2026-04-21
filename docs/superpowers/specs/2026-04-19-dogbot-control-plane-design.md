@@ -8,7 +8,8 @@ Define a single control-plane architecture for DogBot that supports:
 - skill and policy loading
 - strict session and scope isolation across QQ and WeChat
 - controlled proactive messaging
-- controlled media asset handling for outbound image delivery
+- structured multi-platform ingress and reply rendering
+- limited image handling with stronger outbound delivery than inbound understanding
 - future history ingestion and retrieval
 
 The design keeps the current runtime shape:
@@ -48,6 +49,25 @@ References:
 - <https://docs.mem0.ai/platform/features/v2-memory-filters>
 - <https://docs.langchain.com/oss/python/deepagents/memory>
 
+## 与 codex-bridge 对齐的取舍说明
+
+This design intentionally aligns with the parts of `codex-bridge` that improve chat experience directly:
+
+- one private chat or one group maps to one short-lived session binding
+- adapters emit structured inbound events instead of collapsing everything into raw text too early
+- replies are rendered from a structured outbound model so mentions, quotes, text, and images can be combined cleanly
+- image support aims for the same practical level as `codex-bridge`
+  - outbound image sending is a first-class path
+  - the runner may access images attached to the current message or a recent message window in the same conversation
+  - inbound image understanding remains incomplete and is not treated as a guaranteed V1 capability
+
+This design does not copy `codex-bridge` wholesale:
+
+- DogBot still needs cross-platform identity, long-term memory scopes, and conversation-scoped history retrieval
+- DogBot therefore keeps a richer control-plane than `codex-bridge`'s minimal runtime sqlite
+- DogBot does not keep a separate long-lived image asset namespace just to support historical image resend
+- instead, image handling is reduced to recent conversation attachments plus outbound send support
+
 ## Architecture
 
 `agent-runner` gains an internal `DogBot control plane` with five subsystems:
@@ -62,7 +82,8 @@ References:
   - manages short-lived Claude session bindings
   - resolves admin whitelist membership
 - `context`
-  - manages `memory`, `resource`, `skill`, `policy`, `history_index`, and `asset` metadata
+  - manages `memory`, `resource`, `skill`, `policy`, and `history_index` metadata
+  - manages conversation-scoped attachment descriptors needed for recent image access
   - resolves readable scopes
   - validates write permissions
   - assembles the context pack for each run
@@ -72,7 +93,7 @@ References:
   - records delivery audit state and retries
 - `delivery/rendering`
   - converts output for QQ and WeChat
-  - handles mentions, replies, markdown degradation, media sends, and platform send adapters
+  - handles mentions, replies, markdown degradation, structured segments, media sends, and platform send adapters
 
 The existing `exec` path remains responsible only for invoking Claude Code CLI with the prepared prompt and context payload.
 
@@ -167,7 +188,7 @@ This keeps agent autonomy useful for personal memory without allowing runtime mu
 
 ## Content Object Model
 
-The control plane manages six persistent object kinds:
+The control plane manages five persistent object kinds:
 
 - `memory`
   - short, structured, durable facts
@@ -179,8 +200,6 @@ The control plane manages six persistent object kinds:
   - behavior, permission, trigger, and formatting rules
 - `history_index`
   - indexed message-history fragments for retrieval, not automatically promoted to memory
-- `asset`
-  - stored metadata for media that may later be re-sent, especially outbound images
 
 All persistent objects share common metadata:
 
@@ -208,14 +227,6 @@ All persistent objects share common metadata:
 - `time_range`
 - `message_count`
 - `retrieval_terms`
-
-`asset` additionally carries:
-
-- `storage_path`
-- `source_url`
-- `mime_type`
-- `sha256`
-- `availability_status`
 
 ## Core Data Flows
 
@@ -255,12 +266,12 @@ All persistent objects share common metadata:
 4. A background indexer updates `history_index` entries for retrieval.
 5. The next `/agent` run may request history evidence scoped to the same conversation.
 
-### Asset Send Flow
+### Image Send Flow
 
 1. Agent output or an automation job produces a structured media-send intent.
 2. `delivery/rendering` validates that the intent targets an authorized conversation.
 3. If the source is remote, the runner downloads and validates the file into controlled storage.
-4. `context` persists or reuses an `asset` record.
+4. If the source points at a recent inbound attachment, the runner resolves it only inside the same conversation and within the configured retention window.
 5. The platform delivery client uploads or sends the image using the appropriate QQ or WeChat API.
 
 ## Automation and Outbox Model
@@ -301,15 +312,19 @@ Authorization rules:
 
 ## Relationship to Current Session Mapping
 
-The current adapters map group chats into per-user sub-sessions so short-term Claude context does not leak between senders. That behavior can remain.
+The current adapters map group chats into per-user sub-sessions. This design treats that as a mistake and removes it.
 
-The key design correction is:
+The corrected rule is:
 
+- private chat: one conversation maps to one `session_id`
+- group chat: one group conversation maps to one `session_id`
+- in practice, `session_id` should equal the stable `conversation_id`
 - short-term continuity still uses `session_id -> claude_session_id`
+- sender identity remains explicit through `actor_id`, reply metadata, queueing, and permission policy
 - long-term memory never uses Claude session identity as its scope key
 - all long-term writes and reads go through `scope resolver + permission policy`
 
-This removes the current failure mode where Claude session isolation exists but explicit long-term memory writes still mix across users or groups.
+This matches the conversation-level session model used by `codex-bridge` and avoids the current split where one group is artificially fragmented into many unrelated short-term sessions.
 
 ## Implementation Phases
 
@@ -331,9 +346,10 @@ This phase solves the core isolation and memory-mixing problem.
 Deliver:
 
 - unified trigger resolver for QQ and WeChat
+- structured adapter contract for QQ, WeChatPadPro, and future third-party platforms
 - non-starting-position `/agent` recognition after message normalization
 - reply-aware and mention-aware trigger gating in group chats
-- reply rendering pipeline for markdown degradation
+- reply rendering pipeline for markdown degradation and structured outbound segments
 - richer platform reply metadata such as mention, reply, stylistic wrappers, and outbound image actions
 - ingress policies that distinguish normal chat, slash commands, and protected actions
 
@@ -344,7 +360,7 @@ This phase improves usability and readability without changing the scope model.
 Deliver:
 
 - message-history ingestion pipeline
-- persistent message store, attachment metadata, `asset` storage, and `history_index`
+- persistent message store, attachment metadata, and `history_index`
 - per-conversation enablement and retention policy
 - QQ limited backfill plus realtime mirror
 - WeChat realtime mirror after enablement
@@ -375,6 +391,27 @@ Adapters still parse platform-native payloads, but they must emit a canonical `I
 - `timestamp`
 
 The resolver makes the final trigger decision. This removes the current split where QQ and WeChat implement separate command-matching behavior with inconsistent capabilities.
+
+### Structured Outbound Model
+
+`delivery/rendering` should no longer accept plain text as its only output contract.
+
+The canonical outbound shape is one `OutboundMessage` containing:
+
+- `platform`
+- `conversation_id`
+- `reply_to_message_id`
+- `mention_targets`
+- `segments`
+
+`segments` may contain:
+
+- `text`
+- `reply_ref`
+- `mention_actor`
+- `image`
+
+Platform adapters remain responsible for degrading unsupported segment types safely, but QQ/NapCat, WeChatPadPro, and future adapters must all target the same canonical structure first.
 
 ### Message Normalization
 
@@ -482,7 +519,7 @@ WeChat defaults:
 
 ### Outbound Image Actions
 
-V1 supports outbound image sending but not visual understanding.
+V1 supports outbound image sending but not full visual understanding.
 
 Agent or automation output may produce:
 
@@ -493,7 +530,7 @@ Each action must include:
 
 - `source_type`
   - `remote_url`
-  - `stored_asset`
+  - `recent_attachment`
   - `local_generated_file`
 - `source_value`
 - `caption_text`
@@ -502,11 +539,12 @@ Each action must include:
 Runner responsibilities:
 
 - download and validate remote files into controlled storage
-- create or reuse an `asset` record
+- resolve recent conversation attachments without promoting them into a long-lived asset library
 - enforce conversation-target authorization
 - send the image through the platform delivery client
 
 V1 does not allow the agent to call platform media APIs directly.
+V1 also does not guarantee OCR, captioning, or general-purpose image understanding for inbound images.
 
 ### Phase B Failure and Degradation Rules
 
@@ -544,11 +582,10 @@ WeChat strategy:
 
 ### Storage Model
 
-Phase C extends the local state store with five primary tables or collections:
+Phase C extends the local state store with four primary tables or collections:
 
 - `message_store`
 - `message_attachment`
-- `asset_store`
 - `history_index`
 - `conversation_ingest_state`
 
@@ -578,19 +615,14 @@ Phase C extends the local state store with five primary tables or collections:
 - `mime_type`
 - `file_name`
 - `size_bytes`
-- `asset_id`
-
-`asset_store` includes:
-
-- `asset_id`
 - `storage_path`
 - `source_url`
 - `sha256`
-- `mime_type`
 - `width`
 - `height`
-- `created_at`
+- `download_status`
 - `availability_status`
+- `created_at`
 
 `conversation_ingest_state` includes:
 
@@ -638,19 +670,18 @@ Allowed rule:
 
 ### Attachment Handling
 
-V1 stores image attachments so they can later be re-sent, but does not perform OCR, captioning, or image understanding.
+V1 stores enough image attachment metadata to support current-message or recent-window image access and outbound sending, but does not build a long-lived image asset library and does not perform OCR, captioning, or complete image understanding.
 
 Inbound image behavior:
 
 - persist message-to-attachment linkage
-- download to controlled storage when policy allows
-- write an `asset_store` record
+- optionally download to controlled storage when policy allows
 - keep the attachment out of text retrieval content
 
 Retrieval behavior for messages with images:
 
 - inject only a stub such as "message contains image attachment"
-- expose `asset_id` for authorized later send operations
+- expose a recent attachment handle only for the same conversation and within the allowed retention window
 
 ### Retention and Cleanup
 
@@ -664,7 +695,7 @@ Cleanup requirements:
 - TTL-based deletion for expired messages and index rows
 - per-conversation manual purge
 - per-private-chat purge
-- orphaned asset cleanup unless still referenced by active jobs or retained messages
+- delete expired attachment downloads alongside their message records
 
 ### Phase C Failure Handling
 
@@ -681,7 +712,7 @@ Cleanup requirements:
 - QQ backfill and realtime mirror do not duplicate records
 - WeChat dedupe does not drop legitimate messages
 - attachment-bearing messages are stored without polluting text retrieval
-- `send_image(asset_id=...)` enforces authorization boundaries
+- `send_image(recent_attachment=...)` enforces same-conversation and retention-window boundaries
 
 ## Error Handling
 
@@ -698,7 +729,7 @@ Control-plane failures are explicit and typed. V1 must surface at least:
 - `history_ingest_failed`
 - `history_retrieval_failed`
 - `attachment_download_failed`
-- `asset_not_authorized`
+- `attachment_not_available`
 
 Error handling rules:
 
@@ -731,7 +762,7 @@ V1 testing is split by boundary:
   - persistent object schemas
   - repository-loaded skill/resource manifests
   - history-index retrieval inputs and outputs
-  - asset action payload schemas
+  - structured reply and image action payload schemas
 
 The most important regression targets are:
 
@@ -741,4 +772,4 @@ The most important regression targets are:
 - proactive jobs cannot escape their authorized conversation
 - group `/agent` invocation cannot bypass mention-or-reply gating
 - history retrieval cannot cross conversation boundaries
-- image assets cannot be sent outside the authorized target conversation
+- recent inbound images cannot be sent outside the authorized target conversation or retention window

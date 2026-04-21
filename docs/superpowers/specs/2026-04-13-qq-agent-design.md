@@ -219,6 +219,13 @@ Required fields for the core request model:
 
 QQ-specific IDs and naming must stay in the AstrBot or connector layer, not in Rust core types.
 
+Session identity must stay conversation-scoped:
+
+- private QQ: `session_id == conversation_id == qq:private:<user-id>`
+- group QQ: `session_id == conversation_id == qq:group:<group-id>`
+
+Group chats must not be split into per-sender sub-sessions.
+
 ## Code Structure
 
 ```text
@@ -263,8 +270,8 @@ Request body:
 ```json
 {
   "platform": "qq",
-  "conversation_id": "private:123",
-  "session_id": "qq-user-123",
+  "conversation_id": "qq:private:123",
+  "session_id": "qq:private:123",
   "user_id": "123",
   "chat_type": "private",
   "cwd": "/workspace",
