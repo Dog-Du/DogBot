@@ -52,6 +52,8 @@ case "\$1" in
           printf 'scan https://txz.qq.com/p?k=existing-link\n'
         fi
         ;;
+      preexisting-runtime-state-success)
+        ;;
       already-logged-in)
         ;;
       slow-login-budget)
@@ -134,6 +136,9 @@ echo "\$count" >"\$state_dir/login_count"
         printf '{"status":"failed","retcode":1,"data":{}}\n'
       fi
       ;;
+    preexisting-runtime-state-success)
+      printf '{"status":"failed","retcode":1,"data":{}}\n'
+      ;;
     bounded-request-timeout-recovers)
       if (( count == 1 )); then
         echo "\$max_time" >"\$state_dir/first_login_timeout"
@@ -156,6 +161,15 @@ PY
 EOF
 
   chmod +x "$case_dir/bin/docker" "$case_dir/bin/curl"
+
+  if [[ "$case_name" == "preexisting-runtime-state-success" ]]; then
+    mkdir -p "$qq_dir/nt_qq_dbpreexisting/nt_data/log"
+    printf 'qq-online\n' >"$qq_dir/nt_qq_dbpreexisting/nt_data/log/qq-log_2026-04-17-19.qqxlog"
+  elif [[ "$case_name" == "stale-runtime-state-times-out" ]]; then
+    mkdir -p "$qq_dir/nt_qq_dbstale/nt_data/log"
+    printf 'qq-stale\n' >"$qq_dir/nt_qq_dbstale/nt_data/log/qq-log_2026-04-17-19.qqxlog"
+    touch -d '2025-01-01 00:00:00Z' "$qq_dir/nt_qq_dbstale/nt_data/log/qq-log_2026-04-17-19.qqxlog"
+  fi
 }
 
 run_case() {
@@ -207,7 +221,11 @@ EOF
     exit 1
   }
 
-  if [[ "$case_name" != "already-logged-in" && "$case_name" != "fallback-account-log-success" && ! -f "$state_dir/exec_test_seen" ]]; then
+  if [[ "$case_name" != "already-logged-in" \
+        && "$case_name" != "fallback-account-log-success" \
+        && "$case_name" != "preexisting-runtime-state-success" \
+        && "$case_name" != "stale-runtime-state-times-out" \
+        && ! -f "$state_dir/exec_test_seen" ]]; then
     echo "FAIL: case '$case_name' did not validate qrcode presence through docker exec test -f" >&2
     exit 1
   fi
@@ -275,6 +293,22 @@ PY
       fi
       grep -q 'qq-online' "$qq_dir/nt_qq_dbtest/nt_data/log/qq-log_2026-04-17-19.qqxlog"
       ;;
+    preexisting-runtime-state-success)
+      if grep -q 'NapCat login URL:' <<<"$output"; then
+        echo "FAIL: case '$case_name' should confirm login from preexisting runtime state without requiring a new QR" >&2
+        echo "$output" >&2
+        exit 1
+      fi
+      grep -q 'qq-online' "$qq_dir/nt_qq_dbpreexisting/nt_data/log/qq-log_2026-04-17-19.qqxlog"
+      ;;
+    stale-runtime-state-times-out)
+      grep -q 'qq-stale' "$qq_dir/nt_qq_dbstale/nt_data/log/qq-log_2026-04-17-19.qqxlog"
+      if grep -q 'NapCat login confirmed.' <<<"$output"; then
+        echo "FAIL: case '$case_name' should not confirm login from stale runtime state" >&2
+        echo "$output" >&2
+        exit 1
+      fi
+      ;;
   esac
 }
 
@@ -284,3 +318,5 @@ run_case already-logged-in 0 "NapCat login confirmed."
 run_case slow-login-budget 1 "NapCat login did not complete within 1 seconds." 1 0.05
 run_case bounded-request-timeout-recovers 0 "NapCat login confirmed." 2 0.05
 run_case fallback-account-log-success 0 "NapCat login confirmed."
+run_case preexisting-runtime-state-success 0 "NapCat login confirmed."
+run_case stale-runtime-state-times-out 1 "NapCat login QR was not refreshed within 5 seconds."
