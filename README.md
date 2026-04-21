@@ -228,6 +228,17 @@ DogBot 现在使用仓库托管的内容引导流程，而不是继续把 runtim
 
 - [ ] 主动消息 / automation / outbox
 - [ ] 更完整的记忆审批与共享写权限治理
-- [ ] WeChat 历史回填
+- [ ] 历史记录读取 skill 与管理权限
+  - 为 Agent 提供明确的历史读取 skill，说明如何按平台、群聊/私聊、消息时间读取历史记录
+  - 对静态白名单配置中的 admin 开放特殊命令，可查询更大范围或全部历史记录
+- [ ] 长任务超时与同会话并发治理
+  - 支持长时间运行的任务，例如周期性汇报、长耗时整理，不应被当前严格超时机制直接 kill 掉
+  - 同一群聊/私聊在长任务进行时再次发消息，当前共用同一 `claude session` 可能引发问题，需要设计避免串扰或冲突的机制
+- [ ] 历史图片保存与复用发送
+  - 模型不做图片理解
+  - 但历史消息需要保存图片附件，并允许 Agent 发送历史消息中的图片
 - [ ] 图片链路端到端发送
+- [ ] `claude-runner` 内置 `Bifrost`，接管模型选择与单模型锁定
+  - 运行链路改为 `Claude Code -> 同容器 Bifrost -> agent-runner`
+  - 删除 `API_PROXY_UPSTREAM_MODEL`，不再由 `agent-runner` 改写请求体中的 `model`
 - [ ] 支持 `Codex`、`OpenCode` 等更多 CLI Agent 后端
