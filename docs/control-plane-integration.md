@@ -1,6 +1,6 @@
 # DogBot Control Plane 联调说明
 
-本文档对应 2026-04-19 这一轮 `A/B/C` 控制面改造，覆盖：
+本文档对应当前控制面现态，覆盖：
 
 - A. 记忆 / 内容 / skill / 权限 / 会话隔离
 - B. 触发识别 / 回复表现 / QQ微信交互细节
@@ -68,8 +68,8 @@
   - `message_attachment`
   - `asset_store`
   - `conversation_ingest_state`
-- `content/`
-  - 仓库管理的 policy / resource / skill 目录
+- `claude-prompt/`
+  - 仓库管理的静态 `CLAUDE.md`、`persona.md` 与 `.claude/skills`
 
 建议路径：
 
@@ -77,7 +77,7 @@
 /srv/dogbot/runtime/agent-state/runner.db
 /srv/dogbot/runtime/agent-state/control.db
 /srv/dogbot/runtime/agent-state/history.db
-/srv/dogbot/content/
+/srv/dogbot/runtime/agent-state/claude-prompt/
 ```
 
 ## 4. 关键配置
@@ -89,7 +89,7 @@ AGENT_RUNNER_BIND_ADDR=127.0.0.1:8787
 SESSION_DB_PATH=/srv/dogbot/runtime/agent-state/runner.db
 CONTROL_PLANE_DB_PATH=/srv/dogbot/runtime/agent-state/control.db
 HISTORY_DB_PATH=/srv/dogbot/runtime/agent-state/history.db
-DOGBOT_CONTENT_ROOT=/srv/dogbot/content
+DOGBOT_CLAUDE_PROMPT_ROOT=/srv/dogbot/runtime/agent-state/claude-prompt
 DOGBOT_ADMIN_ACTOR_IDS=qq:user:10001,wechat:user:wxid_admin
 
 QQ_PLATFORM_ACCOUNT_ID=qq:bot_uin:123456
@@ -102,7 +102,7 @@ WECHATPADPRO_BOT_MENTION_NAMES=DogDu
 
 - `DOGBOT_ADMIN_ACTOR_IDS` 决定谁拥有管理员写权限
 - `QQ_PLATFORM_ACCOUNT_ID` / `WECHATPADPRO_PLATFORM_ACCOUNT_ID` 决定 platform-account scope 的隔离键
-- `DOGBOT_CONTENT_ROOT` 推荐使用绝对路径，避免工作目录变化导致读错仓库内容
+- `DOGBOT_CLAUDE_PROMPT_ROOT` 推荐使用绝对路径，部署时会把仓库中的 `claude-prompt/` 同步到这里
 - 如果启用了 `WECHATPADPRO_REQUIRE_MENTION_IN_GROUP=1`，必须保证 `WECHATPADPRO_BOT_MENTION_NAMES` 非空并与群昵称一致
 - 如果关闭 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK`，必须手动配置 webhook，否则不会收到微信消息
 
@@ -229,7 +229,7 @@ sqlite3 /srv/dogbot/runtime/agent-state/control.db \
 
 - WeChatPadPro 历史消息没有 backfill，只支持启用后的 realtime mirror
 - 历史只做当前 conversation 注入，不跨会话检索
-- `resource / skill / policy` 仍然是仓库管理，不支持在聊天里直接生效修改
+- 静态 `CLAUDE.md / skills` 仍然是仓库管理，不支持在聊天里直接生效修改
 - 图片链路目前只完成了 schema / action validation 基础，不作为本轮联调验收项
 - adapter 仍保留本地 command gate，所以更宽松的 reply/mid-text 触发还没有完全对外开放
 
@@ -244,45 +244,26 @@ uv run --with pytest --with fastapi --with httpx python -m pytest wechatpadpro_a
 ```
 
 ## 10. Content Bootstrap Checks
+## 10. Claude Prompt Checks
 
-内容引导系统联调前，建议先确认 pack 生成链路是最新状态：
-
-```bash
-uv run python scripts/sync_content_sources.py --content-root ./content --skip-clone
-```
-
-说明：
-
-- `--skip-clone` 适合本地只验证 pack 生成链路，不拉远端仓库
-- 正式更新 upstream snapshot 时，去掉 `--skip-clone`
-- runtime 只读取 `content/packs/` 和 `content/policies/`，不会直接读取 `content/upstream/`
-
-如果需要清理或导入旧 runtime Claude memory，先做审计：
+静态内容联调前，建议先确认仓库里的 Claude 原生目录已经就位：
 
 ```bash
-uv run python scripts/audit_legacy_runtime_memory.py ./runtime/claude-memory --output ./content/import-report.json
+test -f claude-prompt/CLAUDE.md
+test -f claude-prompt/persona.md
+test -f claude-prompt/.claude/skills/emit-memory-candidate/SKILL.md
 ```
 
-如果你只想删掉 `/state/claude` 中已经脱离 DogBot 主链路的遗留内容，而不删除整个目录，可以使用：
+部署后，建议再确认运行时目录已经同步完成：
 
 ```bash
-uv run python scripts/cleanup_legacy_claude_content.py /srv/dogbot/runtime/agent-state/claude
+test -f /srv/dogbot/runtime/agent-state/claude-prompt/CLAUDE.md
+test -f /srv/dogbot/runtime/agent-state/claude-prompt/persona.md
+test -f /srv/dogbot/runtime/agent-state/claude-prompt/.claude/skills/emit-memory-candidate/SKILL.md
 ```
 
-默认仅清理保守集合：
+这一步的目标是确认：
 
-- `skills/`
-- `projects/*/memory`
-- `telemetry/`
-- `paste-cache/`
-- `shell-snapshots/`
-- `history.jsonl`
-- `cache/changelog.md`
-
-不会删除 `sessions/`、`session-env/`、`settings.json`、`plugins/`、`debug/`。
-
-审计输出只表示：
-
-- 哪些内容应忽略
-- 哪些内容可作为 import candidate
-- 哪些内容需要人工复核
+- 仓库中的静态 prompt / skill 会进入运行时目录
+- Claude Code 可以在额外目录下读取 `CLAUDE.md`
+- 轻量 skills 的 source of truth 就是仓库里的 `claude-prompt/`

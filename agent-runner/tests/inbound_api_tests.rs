@@ -59,7 +59,7 @@ fn test_settings() -> agent_runner::config::Settings {
         image_name: "dogbot/claude-runner:local".into(),
         workspace_dir: root.join("workdir").display().to_string(),
         state_dir: root.join("state").display().to_string(),
-        content_root: "./content".into(),
+        claude_prompt_root: "./claude-prompt".into(),
         anthropic_base_url: "http://host.docker.internal:9000".into(),
         api_proxy_auth_token: "local-proxy-token".into(),
         napcat_api_base_url: "http://127.0.0.1:3001".into(),

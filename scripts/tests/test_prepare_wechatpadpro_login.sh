@@ -47,6 +47,13 @@ case "\$*" in
       prefer-newx-over-padx)
         printf '{\"Code\":200,\"Data\":{\"qrCodeBase64\":\"data:image/png;base64,cGFkeA==\",\"QrLink\":\"padx-link\",\"QrCodeUrl\":\"padx-url\",\"expiredTime\":30,\"Key\":\"test-account-key\"}}\\n'
         ;;
+      qr-returns-new-key)
+        if [[ "\$*" == *"rotated-account-key"* ]]; then
+          printf '{\"Code\":200,\"Data\":{\"qrCodeBase64\":\"data:image/png;base64,cm90YXRlZA==\",\"QrLink\":\"rotated-link\",\"QrCodeUrl\":\"rotated-url\",\"expiredTime\":30,\"Key\":\"rotated-account-key\"}}\\n'
+        else
+          printf '{\"Code\":200,\"Data\":{\"qrCodeBase64\":\"data:image/png;base64,cm90YXRlZA==\",\"QrLink\":\"rotated-link\",\"QrCodeUrl\":\"rotated-url\",\"expiredTime\":30,\"Key\":\"rotated-account-key\"}}\\n'
+        fi
+        ;;
       success-refresh-online)
         qr_count=\$((\$(cat "\$state_dir/qr_count" 2>/dev/null || echo 0) + 1))
         echo "\$qr_count" >"\$state_dir/qr_count"
@@ -107,6 +114,9 @@ case "\$*" in
           printf '{\"Code\":300,\"Text\":\"获取二维码失败！err:DecodePackHeader err: len(respData) <= 32\"}\n'
         fi
         ;;
+      qr-returns-new-key)
+        printf '{\"Code\":200,\"Data\":{\"qrCodeBase64\":\"data:image/png;base64,cm90YXRlZA==\",\"QrLink\":\"rotated-link\",\"QrCodeUrl\":\"rotated-url\",\"expiredTime\":30,\"Key\":\"rotated-account-key\"}}\\n'
+        ;;
       already-logged-in-qr-fails)
         exit 1
         ;;
@@ -122,6 +132,21 @@ case "\$*" in
     status_count=\$((\$(cat "\$state_dir/status_count" 2>/dev/null || echo 0) + 1))
     echo "\$status_count" >"\$state_dir/status_count"
     case "$case_name" in
+      qr-returns-new-key)
+        if [[ "\$*" == *"stale-account-key"* ]]; then
+          printf '{\"Code\":200,\"Text\":\"等待扫码\",\"Data\":{\"Status\":\"pending\"}}\\n'
+        elif [[ "\$*" == *"rotated-account-key"* ]]; then
+          rotated_status_count=\$((\$(cat "\$state_dir/rotated_status_count" 2>/dev/null || echo 0) + 1))
+          echo "\$rotated_status_count" >"\$state_dir/rotated_status_count"
+          if (( rotated_status_count == 1 )); then
+            printf '{\"Code\":200,\"Text\":\"等待扫码\",\"Data\":{\"Status\":\"pending\"}}\\n'
+          else
+            printf '{\"Code\":200,\"Text\":\"已登录\",\"Data\":{\"Status\":\"online\",\"wxid\":\"wxid_bot\"}}\\n'
+          fi
+        else
+          printf '{\"Code\":200,\"Text\":\"等待扫码\",\"Data\":{\"Status\":\"pending\"}}\\n'
+        fi
+        ;;
       prefer-newx-over-padx)
         if (( status_count == 1 )); then
           printf '{\"Code\":200,\"Text\":\"等待扫码\",\"Data\":{\"Status\":\"pending\"}}\\n'
@@ -246,6 +271,9 @@ run_case() {
     expired-key-regenerates)
       account_key_line="WECHATPADPRO_ACCOUNT_KEY=expired-account-key"
       ;;
+    qr-returns-new-key)
+      account_key_line="WECHATPADPRO_ACCOUNT_KEY=stale-account-key"
+      ;;
   esac
   case "$case_name" in
     client-version-too-low)
@@ -368,6 +396,12 @@ PY
       grep -q '^WECHATPADPRO_ACCOUNT_KEY=fresh-account-key$' "$env_file"
       printf 'ZnJlc2g=' | base64 -d | cmp -s - "$login_dir/wechatpadpro-login-qr.png"
       ;;
+    qr-returns-new-key)
+      grep -q 'WeChatPadPro QR link: rotated-link' <<<"$output"
+      grep -q '^WECHATPADPRO_ACCOUNT_KEY=rotated-account-key$' "$env_file"
+      grep -q '"account_key": "rotated-account-key"' "$login_dir/wechatpadpro-login-meta.json"
+      printf 'cm90YXRlZA==' | base64 -d | cmp -s - "$login_dir/wechatpadpro-login-qr.png"
+      ;;
     client-version-too-low)
       if grep -Fq '<Content><![CDATA[' <<<"$output"; then
         echo "FAIL: case '$case_name' should not print raw XML blocker details" >&2
@@ -411,3 +445,4 @@ run_case loginstate-online 0 "WeChatPadPro account is already logged in for key:
 run_case generate-key-budget 0 "Generated WECHATPADPRO_ACCOUNT_KEY and persisted it to" 1 0.05
 run_case stale-key-regenerates 0 "WeChatPadPro QR link: fresh-link" 5 0.1
 run_case expired-key-regenerates 0 "WeChatPadPro QR link: fresh-link" 5 0.1
+run_case qr-returns-new-key 0 "WeChatPadPro QR link: rotated-link" 5 0.1

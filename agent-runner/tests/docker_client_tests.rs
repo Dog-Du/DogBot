@@ -15,12 +15,10 @@ fn container_spec_matches_runner_defaults() {
 
 #[test]
 fn create_container_config_carries_runtime_limits_and_mounts() {
-    let settings = Settings::from_env_map(std::collections::HashMap::from([
-        (
-            "API_PROXY_AUTH_TOKEN".to_string(),
-            "local-proxy-token-2".to_string(),
-        ),
-    ]))
+    let settings = Settings::from_env_map(std::collections::HashMap::from([(
+        "API_PROXY_AUTH_TOKEN".to_string(),
+        "local-proxy-token-2".to_string(),
+    )]))
     .unwrap();
     let spec = agent_runner::docker_client::ContainerSpec::from_settings(&settings);
     let config = spec.create_config();
@@ -33,6 +31,8 @@ fn create_container_config_carries_runtime_limits_and_mounts() {
         "ANTHROPIC_BASE_URL=http://host.docker.internal:9000",
         "ANTHROPIC_AUTH_TOKEN=local-proxy-token-2",
         "CLAUDE_CONFIG_DIR=/state/claude",
+        "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1",
+        "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
         "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1",
         "CLAUDE_CODE_ATTRIBUTION_HEADER=0",

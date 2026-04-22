@@ -57,6 +57,8 @@ impl ContainerSpec {
             format!("ANTHROPIC_BASE_URL={}", self.anthropic_base_url),
             format!("ANTHROPIC_AUTH_TOKEN={}", self.api_proxy_auth_token),
             "CLAUDE_CONFIG_DIR=/state/claude".to_string(),
+            "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1".to_string(),
+            "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1".to_string(),
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1".to_string(),
             "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1".to_string(),
             "CLAUDE_CODE_ATTRIBUTION_HEADER=0".to_string(),

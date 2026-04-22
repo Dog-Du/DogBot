@@ -38,60 +38,32 @@ QQ
 
 - identity / session 归一化
 - scope 与权限判定
-- memory candidate 与内容加载
+- memory candidate 与 Claude prompt 注入
 - inbound trigger 解析
 - 历史消息采集、检索和 retention cleanup
 
-## Content Bootstrap
+## Claude Prompt
 
-DogBot 现在使用仓库托管的内容引导流程，而不是继续把 runtime 中 Claude 自行积累的 memory 当正式内容源：
+DogBot 现在改为轻量的 Claude 原生内容方案：
 
-- `content/sources.lock.json`
-  - 锁定 upstream 内容源、版本、导入模式和目标 pack
-- `scripts/sync_content_sources.py`
-  - 将选中的 upstream 内容同步到 `content/upstream/`，并生成 `content/packs/`
+- `claude-prompt/CLAUDE.md`
+  - 只放运行边界与最小长期指令
+- `claude-prompt/persona.md`
+  - 放人格/语气源文件，由 `CLAUDE.md` 用 `@persona.md` 导入
+- `claude-prompt/.claude/skills/**`
+  - 放仓库自带的轻量 skills
 - `agent-runner`
-  - 运行时只读取 `content/packs/` 和 `content/policies/`
-- `scripts/audit_legacy_runtime_memory.py`
-  - 审计旧 runtime memory，输出 `ignore / candidate / manual_review`
-- `scripts/cleanup_legacy_claude_content.py`
-  - 清理 `/state/claude` 下已脱离 DogBot 主链路的遗留 `skills / project memory / telemetry / cache` 内容
+  - 继续负责动态 prompt 注入，例如 scope、history evidence、当前回合约束
+- `deploy_stack.sh`
+  - 部署时把仓库里的 `claude-prompt/` 同步到运行时 `DOGBOT_CLAUDE_PROMPT_ROOT`
+- `claude-runner`
+  - 显式关闭 Claude Code auto memory，只保留 DogBot 自己的可审计 memory 流
 
-部署时，`./deploy_stack.sh` 会默认把仓库内的 `content/` 同步到外部 `DOGBOT_CONTENT_ROOT`，运行时由 `agent-runner` 只读取这个外部目录，而不是直接读取仓库工作树。
+这套方案的边界是：
 
-如果需要在部署前刷新 upstream 快照和 pack 生成结果，可以显式开启：
-
-- `DOGBOT_REFRESH_CONTENT_ON_DEPLOY=1`
-
-默认只同步已存在的仓库内容，不在每次部署时联网拉取 upstream。
-
-如果你确认旧的 Claude runtime 内容不再需要，还可以显式开启：
-
-- `DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY=1`
-
-这一步默认只清理保守集合：
-
-- `/state/claude/skills`
-- `/state/claude/projects/*/memory`
-- `/state/claude/telemetry`
-- `/state/claude/paste-cache`
-- `/state/claude/shell-snapshots`
-- `/state/claude/history.jsonl`
-- `/state/claude/cache/changelog.md`
-
-不会删除：
-
-- `sessions/`
-- `session-env/`
-- `settings.json`
-- `plugins/`
-- `debug/`
-
-当前第一批 upstream 是：
-
-- `OpenViking`
-- `OpenHands/extensions`
-- `Mem0`
+- 静态 prompt / skill 直接保存在仓库里
+- 不再依赖外部内容仓库或 pack manifest 归一化
+- 不再把 Claude runtime 自行积累的 memory 当成正式静态内容源
 
 ## 仓库结构
 
@@ -101,7 +73,7 @@ DogBot 现在使用仓库托管的内容引导流程，而不是继续把 runtim
 ├── stop_stack.sh                # 根目录停止入口
 ├── README.md
 ├── agent-runner/                 # Rust 核心服务
-├── content/                      # policy / resource / skill 仓库内容
+├── claude-prompt/                # Claude 原生静态 prompt / skills 源目录
 ├── compose/                      # Docker Compose 编排
 │   └── README.md                 # 高级用户的 compose 说明
 ├── deploy/                       # 配置模板与部署说明
@@ -205,7 +177,7 @@ DogBot 现在使用仓库托管的内容引导流程，而不是继续把 runtim
 - [x] Agent 内容管理与记忆管理主干
   - 四层 scope：`user-private` / `conversation-shared` / `platform-account-shared` / `bot-global-admin`
   - `control.db` 落地 memory candidate、authorization 和 control-plane 对象
-  - `content/` 目录承载仓库管理的 policy / resource / skill
+  - `claude-prompt/` 承载仓库管理的静态 `CLAUDE.md` 与轻量 skills
 - [x] 触发识别与基础回复链路
   - QQ / WeChat 统一先走 `/v1/inbound-messages`
   - 规范化 inbound message、mention/reply 元数据和 runner-side trigger resolver 已落地

@@ -210,14 +210,14 @@ dogbot_print_qr_if_possible() {
   fi
 }
 
-dogbot_sync_content_root() {
+dogbot_sync_claude_prompt_root() {
   local source_dir="$1"
   local dest_dir="$2"
   local source_abs
   local dest_abs
 
   if [[ ! -d "$source_dir" ]]; then
-    echo "Content source directory does not exist: $source_dir" >&2
+    echo "Claude prompt source directory does not exist: $source_dir" >&2
     return 1
   fi
 

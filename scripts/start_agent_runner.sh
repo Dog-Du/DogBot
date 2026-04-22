@@ -45,12 +45,12 @@ fi
 
 log_dir="${AGENT_RUNNER_LOG_DIR:-$AGENT_STATE_DIR/logs}"
 pid_file="${AGENT_RUNNER_PID_FILE:-$AGENT_STATE_DIR/agent-runner.pid}"
-content_root="${DOGBOT_CONTENT_ROOT:-$repo_root/content}"
+claude_prompt_root="${DOGBOT_CLAUDE_PROMPT_ROOT:-$repo_root/claude-prompt}"
 control_plane_db_path="${CONTROL_PLANE_DB_PATH:-$AGENT_STATE_DIR/control.db}"
 history_db_path="${HISTORY_DB_PATH:-$AGENT_STATE_DIR/history.db}"
 admin_actor_ids="${DOGBOT_ADMIN_ACTOR_IDS:-}"
 
-mkdir -p "$AGENT_WORKSPACE_DIR" "$AGENT_STATE_DIR" "$log_dir" "$content_root"
+mkdir -p "$AGENT_WORKSPACE_DIR" "$AGENT_STATE_DIR" "$log_dir" "$claude_prompt_root"
 
 if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" >/dev/null 2>&1; then
   echo "agent-runner already running with pid $(cat "$pid_file")"
@@ -83,7 +83,7 @@ nohup env \
   USER_RATE_LIMIT_PER_MINUTE="${USER_RATE_LIMIT_PER_MINUTE:-3}" \
   CONVERSATION_RATE_LIMIT_PER_MINUTE="${CONVERSATION_RATE_LIMIT_PER_MINUTE:-5}" \
   SESSION_DB_PATH="${SESSION_DB_PATH:-$AGENT_STATE_DIR/runner.db}" \
-  DOGBOT_CONTENT_ROOT="${DOGBOT_CONTENT_ROOT:-$repo_root/content}" \
+  DOGBOT_CLAUDE_PROMPT_ROOT="${DOGBOT_CLAUDE_PROMPT_ROOT:-$repo_root/claude-prompt}" \
   CONTROL_PLANE_DB_PATH="${CONTROL_PLANE_DB_PATH:-$AGENT_STATE_DIR/control.db}" \
   HISTORY_DB_PATH="${HISTORY_DB_PATH:-$AGENT_STATE_DIR/history.db}" \
   DOGBOT_ADMIN_ACTOR_IDS="${DOGBOT_ADMIN_ACTOR_IDS:-}" \

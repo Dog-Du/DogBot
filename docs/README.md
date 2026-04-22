@@ -40,6 +40,7 @@
 - `2026-04-15-usability-cleanup-design.md`
 - `2026-04-15-code-cleanup-design.md`
 - `2026-04-19-dogbot-control-plane-design.md`
+- `2026-04-22-dogbot-claude-prompt-design.md`
 
 ### 实施计划
 
@@ -54,6 +55,7 @@
 - `2026-04-19-dogbot-control-plane-phase-a.md`
 - `2026-04-19-dogbot-control-plane-phase-b.md`
 - `2026-04-19-dogbot-control-plane-phase-c.md`
+- `2026-04-22-dogbot-claude-prompt-migration.md`
 
 ## 3. 当前建议
 

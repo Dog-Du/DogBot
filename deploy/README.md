@@ -17,12 +17,11 @@
   - `--wechat`
   - `--qq --wechat`
 
-内容管理侧当前也已经接入部署流程：
+Claude prompt 内容当前也已经接入部署流程：
 
-- 部署前默认会把仓库中的 `content/` 同步到外部 `DOGBOT_CONTENT_ROOT`
-- `agent-runner` 运行时只读取 `DOGBOT_CONTENT_ROOT`
-- 是否在部署前联网刷新 upstream 内容，由 `DOGBOT_REFRESH_CONTENT_ON_DEPLOY` 显式控制
-- 是否在部署前清理 `/state/claude` 下的遗留内容，由 `DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY` 显式控制
+- 部署前会把仓库中的 `claude-prompt/` 同步到外部 `DOGBOT_CLAUDE_PROMPT_ROOT`
+- `agent-runner` 运行时从该目录为 Claude 提供静态 `CLAUDE.md` 和 `.claude/skills`
+- 动态 scope / history / session 约束仍由 `agent-runner` 在每次运行时注入
 
 当前支持两条主要链路：
 
@@ -187,14 +186,9 @@ cp deploy/dogbot.env.example deploy/dogbot.env
 说明：
 
 - 示例配置默认启用了 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1`
-- 示例配置默认启用了 `DOGBOT_SYNC_CONTENT_ON_DEPLOY=1`
-- 示例配置默认关闭 `DOGBOT_REFRESH_CONTENT_ON_DEPLOY`
-- 示例配置默认关闭 `DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY`
 - 如果你手动改成 `0`，部署脚本不会替你注册 webhook
 - 这时必须自行配置 `WECHATPADPRO_ADAPTER_WEBHOOK_URL`
-- 如果你手动把 `DOGBOT_SYNC_CONTENT_ON_DEPLOY=0`，运行时会直接读取你提供的 `DOGBOT_CONTENT_ROOT`
-- 如果你把 `DOGBOT_REFRESH_CONTENT_ON_DEPLOY=1`，部署前会执行 `scripts/sync_content_sources.py --content-root <repo>/content`
-- 如果你把 `DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY=1`，部署前会执行 `scripts/cleanup_legacy_claude_content.py <AGENT_STATE_DIR>/claude`
+- 部署前会自动把仓库内 `claude-prompt/` 同步到 `DOGBOT_CLAUDE_PROMPT_ROOT`
 
 如果 Docker 权限不够：
 
@@ -251,11 +245,8 @@ AGENT_STATE_DIR=/srv/dogbot/runtime/agent-state
 SESSION_DB_PATH=/srv/dogbot/runtime/agent-state/runner.db
 CONTROL_PLANE_DB_PATH=/srv/dogbot/runtime/agent-state/control.db
 HISTORY_DB_PATH=/srv/dogbot/runtime/agent-state/history.db
-DOGBOT_CONTENT_ROOT=/srv/dogbot/content
+DOGBOT_CLAUDE_PROMPT_ROOT=/srv/dogbot/runtime/agent-state/claude-prompt
 DOGBOT_ADMIN_ACTOR_IDS=qq:user:10001,wechat:user:wxid_admin
-DOGBOT_SYNC_CONTENT_ON_DEPLOY=1
-DOGBOT_REFRESH_CONTENT_ON_DEPLOY=0
-DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY=0
 ```
 
 建议：
@@ -270,30 +261,10 @@ DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY=0
 - `SESSION_DB_PATH` 保存短期 Claude session 映射
 - `CONTROL_PLANE_DB_PATH` 保存 memory candidate、authorization 等 control-plane 数据
 - `HISTORY_DB_PATH` 保存 history ingest 和 retrieval 基础数据
-- `DOGBOT_CONTENT_ROOT` 推荐使用绝对路径，指向运行时外部内容目录
-- `DOGBOT_SYNC_CONTENT_ON_DEPLOY=1` 时，部署脚本会把仓库内 `content/` 全量同步到 `DOGBOT_CONTENT_ROOT`
-- `DOGBOT_REFRESH_CONTENT_ON_DEPLOY=1` 时，部署脚本会先刷新仓库内 `content/upstream/` 和 `content/packs/`，再执行同步
-- `DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY=1` 时，部署脚本会清理 `/state/claude` 下已脱离主链路的遗留内容
+- `DOGBOT_CLAUDE_PROMPT_ROOT` 推荐使用绝对路径，指向运行时 Claude prompt 根目录
+- 部署脚本会把仓库内 `claude-prompt/` 同步到 `DOGBOT_CLAUDE_PROMPT_ROOT`
 - `DOGBOT_ADMIN_ACTOR_IDS` 用逗号分隔管理员 actor ID
 - `WeChatPadPro` 的 `data/mysql/redis` 目录也建议放到 `AGENT_STATE_DIR/wechatpadpro-data/`
-
-当前默认只清理保守集合：
-
-- `skills/`
-- `projects/*/memory`
-- `telemetry/`
-- `paste-cache/`
-- `shell-snapshots/`
-- `history.jsonl`
-- `cache/changelog.md`
-
-不会触碰：
-
-- `sessions/`
-- `session-env/`
-- `settings.json`
-- `plugins/`
-- `debug/`
 
 如果你改这些路径，旧会话和旧状态看起来会像“丢了”。
 

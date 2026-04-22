@@ -14,7 +14,7 @@ pub struct Settings {
     pub image_name: String,
     pub workspace_dir: String,
     pub state_dir: String,
-    pub content_root: String,
+    pub claude_prompt_root: String,
     pub anthropic_base_url: String,
     pub api_proxy_auth_token: String,
     pub napcat_api_base_url: String,
@@ -52,15 +52,19 @@ impl Settings {
         let bind_addr = string_or_default(&env_map, "BIND_ADDR", "127.0.0.1:8787");
         let default_timeout_secs = parse_or_default(&env_map, "DEFAULT_TIMEOUT_SECS", 120)?;
         let max_timeout_secs = parse_or_default(&env_map, "MAX_TIMEOUT_SECS", 300)?;
-        let container_name =
-            string_or_default(&env_map, "CLAUDE_CONTAINER_NAME", "claude-runner");
+        let container_name = string_or_default(&env_map, "CLAUDE_CONTAINER_NAME", "claude-runner");
         let image_name =
             string_or_default(&env_map, "CLAUDE_IMAGE_NAME", "dogbot/claude-runner:local");
-        let workspace_dir = string_or_default(&env_map, "AGENT_WORKSPACE_DIR", "/srv/agent-workdir");
+        let workspace_dir =
+            string_or_default(&env_map, "AGENT_WORKSPACE_DIR", "/srv/agent-workdir");
         let state_dir = string_or_default(&env_map, "AGENT_STATE_DIR", "/srv/agent-state");
-        let content_root = string_or_default(&env_map, "DOGBOT_CONTENT_ROOT", "./content");
-        let anthropic_base_url =
-            string_or_default(&env_map, "ANTHROPIC_BASE_URL", "http://host.docker.internal:9000");
+        let claude_prompt_root =
+            string_or_default(&env_map, "DOGBOT_CLAUDE_PROMPT_ROOT", "./claude-prompt");
+        let anthropic_base_url = string_or_default(
+            &env_map,
+            "ANTHROPIC_BASE_URL",
+            "http://host.docker.internal:9000",
+        );
         let api_proxy_auth_token = optional_trimmed(&env_map, "API_PROXY_AUTH_TOKEN")
             .unwrap_or_else(|| "local-proxy-token".to_string());
         let max_concurrent_runs = parse_or_default(&env_map, "MAX_CONCURRENT_RUNS", 10)?;
@@ -90,13 +94,10 @@ impl Settings {
             .unwrap_or_else(|| format!("{state_dir}/runner.db"));
         let history_db_path = optional_trimmed(&env_map, "HISTORY_DB_PATH")
             .unwrap_or_else(|| format!("{state_dir}/history.db"));
-        let container_cpu_cores =
-            parse_or_default(&env_map, "CLAUDE_CONTAINER_CPU_CORES", 4)?;
-        let container_memory_mb =
-            parse_or_default(&env_map, "CLAUDE_CONTAINER_MEMORY_MB", 4096)?;
+        let container_cpu_cores = parse_or_default(&env_map, "CLAUDE_CONTAINER_CPU_CORES", 4)?;
+        let container_memory_mb = parse_or_default(&env_map, "CLAUDE_CONTAINER_MEMORY_MB", 4096)?;
         let container_disk_gb = parse_or_default(&env_map, "CLAUDE_CONTAINER_DISK_GB", 50)?;
-        let container_pids_limit =
-            parse_or_default(&env_map, "CLAUDE_CONTAINER_PIDS_LIMIT", 256)?;
+        let container_pids_limit = parse_or_default(&env_map, "CLAUDE_CONTAINER_PIDS_LIMIT", 256)?;
 
         if default_timeout_secs > max_timeout_secs {
             return Err(ConfigError::InvalidTimeoutBounds);
@@ -110,7 +111,7 @@ impl Settings {
             image_name,
             workspace_dir,
             state_dir,
-            content_root,
+            claude_prompt_root,
             anthropic_base_url,
             api_proxy_auth_token,
             napcat_api_base_url,

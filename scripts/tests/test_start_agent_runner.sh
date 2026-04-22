@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 start_script="$repo_root/scripts/start_agent_runner.sh"
 
 patterns=(
-  'DOGBOT_CONTENT_ROOT="${DOGBOT_CONTENT_ROOT:-'
+  'DOGBOT_CLAUDE_PROMPT_ROOT="${DOGBOT_CLAUDE_PROMPT_ROOT:-'
   'CONTROL_PLANE_DB_PATH="${CONTROL_PLANE_DB_PATH:-'
   'HISTORY_DB_PATH="${HISTORY_DB_PATH:-'
   'DOGBOT_ADMIN_ACTOR_IDS="${DOGBOT_ADMIN_ACTOR_IDS:-}'
@@ -18,9 +18,14 @@ for pattern in "${patterns[@]}"; do
   fi
 done
 
-if ! grep -q 'mkdir -p "$AGENT_WORKSPACE_DIR" "$AGENT_STATE_DIR" "$log_dir" "$content_root"' "$start_script"; then
-  echo "FAIL: start_agent_runner.sh must prepare DOGBOT_CONTENT_ROOT before launch" >&2
+if ! grep -q 'mkdir -p "$AGENT_WORKSPACE_DIR" "$AGENT_STATE_DIR" "$log_dir" "$claude_prompt_root"' "$start_script"; then
+  echo "FAIL: start_agent_runner.sh must prepare DOGBOT_CLAUDE_PROMPT_ROOT before launch" >&2
   exit 1
 fi
 
-echo "start_agent_runner content env checks passed."
+if grep -q 'DOGBOT_CONTENT_ROOT' "$start_script"; then
+  echo "FAIL: start_agent_runner.sh must not export legacy DOGBOT_CONTENT_ROOT" >&2
+  exit 1
+fi
+
+echo "start_agent_runner claude prompt env checks passed."

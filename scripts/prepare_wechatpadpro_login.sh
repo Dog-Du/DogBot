@@ -97,6 +97,24 @@ refresh_account_key() {
   generate_account_key "Refreshed"
 }
 
+persist_account_key() {
+  local account_key="$1"
+  local action_word="${2:-Updated}"
+
+  [[ -n "$account_key" ]] || return 0
+  if [[ "${WECHATPADPRO_ACCOUNT_KEY:-}" == "$account_key" ]]; then
+    return 0
+  fi
+
+  WECHATPADPRO_ACCOUNT_KEY="$account_key"
+  if grep -q '^WECHATPADPRO_ACCOUNT_KEY=' "$env_file"; then
+    sed -i "s|^WECHATPADPRO_ACCOUNT_KEY=.*$|WECHATPADPRO_ACCOUNT_KEY=${account_key}|" "$env_file"
+  else
+    printf '\nWECHATPADPRO_ACCOUNT_KEY=%s\n' "$account_key" >>"$env_file"
+  fi
+  echo "${action_word} WECHATPADPRO_ACCOUNT_KEY and persisted it to $env_file"
+}
+
 request_login_qr() {
   local endpoint="$1"
   local request_timeout
@@ -120,7 +138,8 @@ trap cleanup_login_err_log EXIT
 
 write_login_artifacts() {
   local response="$1"
-  "$uv_bin" run python - <<'PY' "$response" "$login_dir" "$WECHATPADPRO_ACCOUNT_KEY"
+  local qr_info_output
+  qr_info_output="$("$uv_bin" run python - <<'PY' "$response" "$login_dir" "$WECHATPADPRO_ACCOUNT_KEY"
 import base64, json, pathlib, sys
 import datetime
 payload = json.loads(sys.argv[1])
@@ -147,23 +166,37 @@ meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 print(meta["qr_link"])
 print(png_path)
 print(meta_path)
+print(meta["account_key"] or "")
 PY
+)"
+  local -a qr_info=()
+  mapfile -t qr_info <<<"$qr_info_output"
+  if (( ${#qr_info[@]} < 4 )); then
+    return 1
+  fi
+  printf '%s\n' "${qr_info[@]}"
 }
 
 try_fetch_login_qr_endpoint() {
   local endpoint="$1"
-  local response
+  local response qr_info_output
   response="$(request_login_qr "$endpoint" 2>>"$login_err_log")" || return 1
-  write_login_artifacts "$response" 2>>"$login_err_log"
+  qr_info_output="$(write_login_artifacts "$response" 2>>"$login_err_log")" || return 1
+  printf '%s\n' "$qr_info_output"
 }
 
 fetch_login_qr() {
   local qr_info_output qr_link png_path meta_path
+  local -a qr_info=()
   : >"$login_err_log"
   qr_info_output="$(try_fetch_login_qr_endpoint "/login/GetLoginQrCodeNewX")" \
     || qr_info_output="$(try_fetch_login_qr_endpoint "/login/GetLoginQrCodePadX")" \
     || return 1
   mapfile -t qr_info <<<"$qr_info_output"
+  if (( ${#qr_info[@]} < 4 )); then
+    return 1
+  fi
+  persist_account_key "${qr_info[3]:-}" "Updated"
   qr_link="${qr_info[0]}"
   png_path="${qr_info[1]}"
   meta_path="${qr_info[2]}"

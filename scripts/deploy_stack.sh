@@ -143,27 +143,14 @@ if ! compose_cmd="$(dogbot_resolve_compose_cmd)"; then
   exit 1
 fi
 
-DOGBOT_CONTENT_ROOT="${DOGBOT_CONTENT_ROOT:-$repo_root/content}"
-DOGBOT_SYNC_CONTENT_ON_DEPLOY="$(dogbot_bool_to_flag "${DOGBOT_SYNC_CONTENT_ON_DEPLOY:-1}")"
-DOGBOT_REFRESH_CONTENT_ON_DEPLOY="$(dogbot_bool_to_flag "${DOGBOT_REFRESH_CONTENT_ON_DEPLOY:-0}")"
-DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY="$(dogbot_bool_to_flag "${DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY:-0}")"
+DOGBOT_CLAUDE_PROMPT_ROOT="${DOGBOT_CLAUDE_PROMPT_ROOT:-${AGENT_STATE_DIR:-/srv/agent-state}/claude-prompt}"
 
-if [[ "$DOGBOT_REFRESH_CONTENT_ON_DEPLOY" == "1" ]]; then
-  "$repo_root/scripts/sync_content_sources.py" --content-root "$repo_root/content"
-fi
-
-if [[ "$DOGBOT_SYNC_CONTENT_ON_DEPLOY" == "1" ]]; then
-  dogbot_sync_content_root "$repo_root/content" "$DOGBOT_CONTENT_ROOT"
-fi
-
-if [[ "$DOGBOT_PRUNE_LEGACY_CLAUDE_CONTENT_ON_DEPLOY" == "1" ]]; then
-  "$repo_root/scripts/cleanup_legacy_claude_content.py" "${AGENT_STATE_DIR:-/srv/agent-state}/claude"
-fi
+dogbot_sync_claude_prompt_root "$repo_root/claude-prompt" "$DOGBOT_CLAUDE_PROMPT_ROOT"
 
 mkdir -p \
   "${AGENT_WORKSPACE_DIR:-/srv/agent-workdir}" \
   "${AGENT_STATE_DIR:-/srv/agent-state}" \
-  "$DOGBOT_CONTENT_ROOT" \
+  "$DOGBOT_CLAUDE_PROMPT_ROOT" \
   "${NAPCAT_QQ_DIR:-/srv/napcat/qq}" \
   "${NAPCAT_CONFIG_DIR:-/srv/napcat/config}" \
   "${WECHATPADPRO_DATA_DIR:-/srv/wechatpadpro/data}" \

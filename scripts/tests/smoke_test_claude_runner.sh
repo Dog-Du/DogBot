@@ -77,6 +77,7 @@ run_args=(
   --add-host host.docker.internal:host-gateway
   -e "ANTHROPIC_BASE_URL=http://host.docker.internal:$api_proxy_port"
   -e "CLAUDE_CONFIG_DIR=/state/claude"
+  -e "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1"
   -v "$workspace_dir:/workspace"
   -v "$state_dir:/state"
   -w /workspace

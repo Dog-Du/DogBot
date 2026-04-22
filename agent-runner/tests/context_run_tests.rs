@@ -74,7 +74,7 @@ fn test_settings() -> Settings {
         image_name: "dogbot/claude-runner:local".into(),
         workspace_dir: root.join("workdir").display().to_string(),
         state_dir: root.join("state").display().to_string(),
-        content_root: root.join("content").display().to_string(),
+        claude_prompt_root: root.join("claude-prompt").display().to_string(),
         anthropic_base_url: "http://host.docker.internal:9000".into(),
         api_proxy_auth_token: "local-proxy-token".into(),
         napcat_api_base_url: "http://127.0.0.1:3001".into(),
@@ -250,34 +250,18 @@ async fn run_endpoint_rejects_control_characters_in_context_identifiers() {
 }
 
 #[tokio::test]
-async fn run_endpoint_includes_enabled_pack_items_in_context() {
+async fn run_endpoint_keeps_runtime_context_without_pack_items() {
     let settings = test_settings();
-    let pack_dir = std::path::Path::new(&settings.content_root).join("packs/base");
-    std::fs::create_dir_all(&pack_dir).expect("create pack dir");
-    std::fs::write(
-        pack_dir.join("manifest.json"),
-        r#"{
-            "pack_id":"base",
-            "version":1,
-            "title":"DogBot Base Pack",
-            "kind":"resource-pack",
-            "source":{"source_id":"dogbot_local","repo_url":"local","ref":"workspace","license":"Proprietary"},
-            "items":[
-                {
-                    "id":"base.system",
-                    "kind":"prompt",
-                    "path":"prompts/system.md",
-                    "title":"System Prompt",
-                    "summary":"base prompt",
-                    "tags":["base"],
-                    "enabled_by_default":true,
-                    "platform_overrides":[],
-                    "upstream_path":""
-                }
-            ]
-        }"#,
-    )
-    .expect("write manifest");
+    let store = HistoryStore::open(&settings.history_db_path).expect("history store");
+    store
+        .insert_message(
+            "hist-1",
+            "qq:private:1",
+            "qq:user:1",
+            "之前讨论过的上下文",
+            1,
+        )
+        .expect("seed history");
 
     let runner = Arc::new(CapturingRunner::default());
     let app = build_test_app_with_settings(runner.clone(), settings);
@@ -297,6 +281,7 @@ async fn run_endpoint_includes_enabled_pack_items_in_context() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let captured = runner.captured_prompt().expect("captured prompt");
-    assert!(captured.contains("Enabled pack items:"));
-    assert!(captured.contains("base.system"));
+    assert!(captured.starts_with("Readable scopes:\n"));
+    assert!(captured.contains("History evidence for qq:private:1"));
+    assert!(!captured.contains("Enabled pack items:"));
 }

@@ -44,8 +44,7 @@ impl DockerRunner {
             Err(err) => {
                 warn!(
                     "control-plane store unavailable at {}: {}; memory candidates will not be persisted",
-                    settings.control_plane_db_path,
-                    err
+                    settings.control_plane_db_path, err
                 );
                 None
             }
@@ -271,6 +270,7 @@ fn build_claude_command(
         "--add-dir".to_string(),
         "/workspace".to_string(),
         "/state".to_string(),
+        "/state/claude-prompt".to_string(),
     ];
 
     if is_new_session {
@@ -315,6 +315,7 @@ mod tests {
                 "--add-dir".to_string(),
                 "/workspace".to_string(),
                 "/state".to_string(),
+                "/state/claude-prompt".to_string(),
                 "--session-id".to_string(),
                 "uuid-1".to_string(),
                 "hello".to_string(),
@@ -334,6 +335,7 @@ mod tests {
                 "--add-dir".to_string(),
                 "/workspace".to_string(),
                 "/state".to_string(),
+                "/state/claude-prompt".to_string(),
                 "--resume".to_string(),
                 "uuid-1".to_string(),
                 "hello".to_string(),

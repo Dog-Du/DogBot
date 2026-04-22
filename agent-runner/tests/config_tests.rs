@@ -23,8 +23,11 @@ fn settings_use_expected_defaults() {
     assert_eq!(settings.global_rate_limit_per_minute, 10);
     assert_eq!(settings.user_rate_limit_per_minute, 3);
     assert_eq!(settings.conversation_rate_limit_per_minute, 5);
-    assert_eq!(settings.content_root, "./content");
-    assert_eq!(settings.control_plane_db_path, "/srv/agent-state/control.db");
+    assert_eq!(settings.claude_prompt_root, "./claude-prompt");
+    assert_eq!(
+        settings.control_plane_db_path,
+        "/srv/agent-state/control.db"
+    );
     assert!(settings.admin_actor_ids.is_empty());
     assert_eq!(settings.session_db_path, "/srv/agent-state/runner.db");
     assert_eq!(settings.history_db_path, "/srv/agent-state/history.db");
@@ -34,8 +37,8 @@ fn settings_use_expected_defaults() {
 fn settings_parse_control_plane_fields() {
     let env = std::collections::HashMap::from([
         (
-            "DOGBOT_CONTENT_ROOT".to_string(),
-            "./custom-content".to_string(),
+            "DOGBOT_CLAUDE_PROMPT_ROOT".to_string(),
+            "./custom-claude-prompt".to_string(),
         ),
         (
             "CONTROL_PLANE_DB_PATH".to_string(),
@@ -52,13 +55,27 @@ fn settings_parse_control_plane_fields() {
     ]);
 
     let settings = Settings::from_env_map(env).unwrap();
-    assert_eq!(settings.content_root, "./custom-content");
+    assert_eq!(settings.claude_prompt_root, "./custom-claude-prompt");
     assert_eq!(settings.control_plane_db_path, "/tmp/custom/control.db");
     assert_eq!(settings.history_db_path, "/tmp/custom/history.db");
     assert_eq!(
         settings.admin_actor_ids,
-        vec!["qq:user:1".to_string(), "wechat:user:wxid_admin".to_string()]
+        vec![
+            "qq:user:1".to_string(),
+            "wechat:user:wxid_admin".to_string()
+        ]
     );
+}
+
+#[test]
+fn settings_ignore_legacy_content_root_override() {
+    let env = std::collections::HashMap::from([(
+        "DOGBOT_CONTENT_ROOT".to_string(),
+        "./legacy-content".to_string(),
+    )]);
+
+    let settings = Settings::from_env_map(env).unwrap();
+    assert_eq!(settings.claude_prompt_root, "./claude-prompt");
 }
 
 #[test]
@@ -97,9 +114,8 @@ fn settings_treat_empty_napcat_token_as_absent() {
 
 #[test]
 fn settings_treat_empty_proxy_token_as_default() {
-    let env = std::collections::HashMap::from([
-        ("API_PROXY_AUTH_TOKEN".to_string(), "   ".to_string()),
-    ]);
+    let env =
+        std::collections::HashMap::from([("API_PROXY_AUTH_TOKEN".to_string(), "   ".to_string())]);
 
     let settings = Settings::from_env_map(env).unwrap();
     assert_eq!(settings.api_proxy_auth_token, "local-proxy-token");
@@ -118,7 +134,10 @@ fn settings_allow_runner_limit_overrides() {
             "ANTHROPIC_BASE_URL".to_string(),
             "http://proxy.internal:9000".to_string(),
         ),
-        ("API_PROXY_AUTH_TOKEN".to_string(), "local-proxy-token-2".to_string()),
+        (
+            "API_PROXY_AUTH_TOKEN".to_string(),
+            "local-proxy-token-2".to_string(),
+        ),
         (
             "NAPCAT_API_BASE_URL".to_string(),
             "http://127.0.0.1:3100".to_string(),
