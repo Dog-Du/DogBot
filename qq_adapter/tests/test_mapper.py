@@ -52,6 +52,28 @@ def test_group_accepts_reply_then_at_prefix_with_extra_cq_attributes():
     assert result["prompt"] == "hello"
 
 
+def test_group_accepts_segment_at_prefix_when_raw_message_is_plain_text():
+    event = {
+        "message_type": "group",
+        "raw_message": "@DogDu /agent hello",
+        "group_id": 2,
+        "user_id": 1,
+        "message": [
+            {"type": "at", "data": {"qq": "123", "name": "DogDu"}},
+            {"type": "text", "data": {"text": " /agent hello"}},
+        ],
+    }
+    result = classify_message(
+        event,
+        command_name="agent",
+        status_command_name="agent-status",
+        bot_id="123",
+    )
+    assert result is not None
+    assert result["mode"] == "run"
+    assert result["prompt"] == "hello"
+
+
 def test_group_plain_agent_without_at_is_ignored():
     event = {
         "message_type": "group",

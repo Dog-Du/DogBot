@@ -192,6 +192,79 @@ def test_group_enablement_triggers_limited_history_backfill(monkeypatch):
     assert calls["forwarded"] == 2
 
 
+def test_group_segment_mention_runs_even_without_cq_prefix_raw_message(monkeypatch):
+    calls = {}
+
+    async def fake_inbound(self, payload):
+        calls["inbound"] = payload
+        return {"status": "accepted"}
+
+    async def fake_run(self, payload, timeout_secs):
+        calls["payload"] = payload
+        return {"stdout": "pong", "stderr": ""}
+
+    async def fake_send_group(self, group_id, user_id, message):
+        calls["group"] = (group_id, user_id, message)
+
+    monkeypatch.setattr("qq_adapter.runner_client.AgentRunnerClient.send_inbound_message", fake_inbound)
+    monkeypatch.setattr("qq_adapter.runner_client.AgentRunnerClient.run", fake_run)
+    monkeypatch.setattr("qq_adapter.napcat_client.NapCatClient.send_group_msg", fake_send_group)
+    monkeypatch.setenv("QQ_ADAPTER_QQ_BOT_ID", "123")
+
+    app = create_app()
+    client = TestClient(app)
+    with client.websocket_connect("/napcat/ws") as websocket:
+        websocket.send_json(
+            {
+                "post_type": "message",
+                "message_type": "group",
+                "raw_message": "@DogDu /agent hello",
+                "group_id": 2,
+                "user_id": 1,
+                "message": [
+                    {"type": "at", "data": {"qq": "123", "name": "DogDu"}},
+                    {"type": "text", "data": {"text": " /agent hello"}},
+                ],
+            }
+        )
+
+    assert calls["inbound"]["mentions"] == ["qq:bot_uin:123"]
+    assert calls["payload"]["prompt"] == "hello"
+    assert calls["group"] == ("2", "1", "pong")
+
+
+def test_group_inbound_defaults_platform_account_id_from_bot_id(monkeypatch):
+    calls = {}
+
+    async def fake_inbound(self, payload):
+        calls["inbound"] = payload
+        return {"status": "ignored"}
+
+    monkeypatch.setattr("qq_adapter.runner_client.AgentRunnerClient.send_inbound_message", fake_inbound)
+    monkeypatch.setenv("QQ_ADAPTER_QQ_BOT_ID", "123")
+    monkeypatch.delenv("QQ_PLATFORM_ACCOUNT_ID", raising=False)
+
+    app = create_app()
+    client = TestClient(app)
+    with client.websocket_connect("/napcat/ws") as websocket:
+        websocket.send_json(
+            {
+                "post_type": "message",
+                "message_type": "group",
+                "raw_message": "[CQ:at,qq=123] /agent hello",
+                "group_id": 2,
+                "user_id": 1,
+                "message": [
+                    {"type": "at", "data": {"qq": "123"}},
+                    {"type": "text", "data": {"text": " /agent hello"}},
+                ],
+            }
+        )
+
+    assert calls["inbound"]["platform_account"] == "qq:bot_uin:123"
+    assert calls["inbound"]["mentions"] == ["qq:bot_uin:123"]
+
+
 def test_group_without_at_is_ignored(monkeypatch):
     calls = {}
 

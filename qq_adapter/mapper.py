@@ -34,6 +34,13 @@ def classify_message(
     if str(event.get("message_type") or "") == "group":
         normalized, mentioned = strip_qq_at_prefix(raw_message, bot_id)
         if not mentioned:
+            segments = _extract_segments(event)
+            bot_mention_id = _normalize_mention_id(bot_id) if bot_id else ""
+            mentions = _extract_mentions(raw_message, segments)
+            if not bot_mention_id or bot_mention_id not in mentions:
+                return None
+            normalized = _extract_normalized_text(raw_message, segments)
+        if not normalized:
             return None
     else:
         normalized = raw_message

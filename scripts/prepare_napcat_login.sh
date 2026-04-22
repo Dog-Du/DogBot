@@ -17,10 +17,8 @@ fi
 uv_bin="$(dogbot_resolve_uv_bin)"
 login_timeout_secs="${DOGBOT_LOGIN_TIMEOUT_SECS:-100}"
 login_request_timeout_secs="${DOGBOT_LOGIN_REQUEST_TIMEOUT_SECS:-1}"
-runtime_activity_window_minutes="${NAPCAT_RUNTIME_ACTIVITY_WINDOW_MINUTES:-120}"
 container_name="${NAPCAT_CONTAINER_NAME:-napcat}"
 login_dir="${NAPCAT_LOGIN_OUTPUT_DIR:-${AGENT_STATE_DIR:-$repo_root/agent-state}/napcat-login}"
-napcat_qq_dir="${NAPCAT_QQ_DIR:-${AGENT_STATE_DIR:-$repo_root/agent-state}/napcat-qq}"
 qr_png_path="$login_dir/napcat-login-qr.png"
 meta_path="$login_dir/napcat-login-meta.txt"
 mkdir -p "$login_dir"
@@ -116,22 +114,10 @@ raise SystemExit(0 if user_id else 1)
 PY
 }
 
-napcat_runtime_state_indicates_login() {
-  [[ -d "$napcat_qq_dir" ]] || return 1
-
-  find "$napcat_qq_dir" \
-    \( -path '*/nt_data/log/qq-log_*.qqxlog' -o -path '*/nt_data/log-cache/qq-log.mmap3' \) \
-    -type f \
-    -size +0c \
-    -mmin "-$runtime_activity_window_minutes" \
-    -print -quit 2>/dev/null \
-    | grep -q .
-}
-
 qr_prepared=0
 
 while (( $(date +%s%N) < deadline_epoch_ns )); do
-  if napcat_login_succeeded || napcat_runtime_state_indicates_login; then
+  if napcat_login_succeeded; then
     echo "NapCat login confirmed."
     exit 0
   fi

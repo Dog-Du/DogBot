@@ -47,12 +47,14 @@ case "\$1" in
           printf 'scan https://txz.qq.com/p?k=stale-link\n'
         fi
         ;;
-      fallback-account-log-success)
-        if [[ "\$*" != *"--since"* ]]; then
-          printf 'scan https://txz.qq.com/p?k=existing-link\n'
+      runtime-log-during-login-times-out)
+        if [[ "\$*" == *"--since"* ]]; then
+          if (( count >= 2 )); then
+            printf 'scan https://txz.qq.com/p?k=runtime-log-link\n'
+          fi
         fi
         ;;
-      preexisting-runtime-state-success)
+      preexisting-runtime-state-times-out)
         ;;
       already-logged-in)
         ;;
@@ -127,7 +129,7 @@ echo "\$count" >"\$state_dir/login_count"
       fi
       printf '{"status":"failed","retcode":1,"data":{}}\n'
       ;;
-    fallback-account-log-success)
+    runtime-log-during-login-times-out)
       if (( count < 2 )); then
         printf '{"status":"failed","retcode":1,"data":{}}\n'
       else
@@ -136,7 +138,7 @@ echo "\$count" >"\$state_dir/login_count"
         printf '{"status":"failed","retcode":1,"data":{}}\n'
       fi
       ;;
-    preexisting-runtime-state-success)
+    preexisting-runtime-state-times-out)
       printf '{"status":"failed","retcode":1,"data":{}}\n'
       ;;
     bounded-request-timeout-recovers)
@@ -162,7 +164,7 @@ EOF
 
   chmod +x "$case_dir/bin/docker" "$case_dir/bin/curl"
 
-  if [[ "$case_name" == "preexisting-runtime-state-success" ]]; then
+  if [[ "$case_name" == "preexisting-runtime-state-times-out" ]]; then
     mkdir -p "$qq_dir/nt_qq_dbpreexisting/nt_data/log"
     printf 'qq-online\n' >"$qq_dir/nt_qq_dbpreexisting/nt_data/log/qq-log_2026-04-17-19.qqxlog"
   elif [[ "$case_name" == "stale-runtime-state-times-out" ]]; then
@@ -222,8 +224,8 @@ EOF
   }
 
   if [[ "$case_name" != "already-logged-in" \
-        && "$case_name" != "fallback-account-log-success" \
-        && "$case_name" != "preexisting-runtime-state-success" \
+        && "$case_name" != "runtime-log-during-login-times-out" \
+        && "$case_name" != "preexisting-runtime-state-times-out" \
         && "$case_name" != "stale-runtime-state-times-out" \
         && ! -f "$state_dir/exec_test_seen" ]]; then
     echo "FAIL: case '$case_name' did not validate qrcode presence through docker exec test -f" >&2
@@ -285,17 +287,17 @@ if not (0.0 < value <= 1.0):
 PY
       grep -q 'NapCat login URL: https://txz.qq.com/p?k=bounded-link' <<<"$output"
       ;;
-    fallback-account-log-success)
-      if grep -q 'NapCat login URL:' <<<"$output"; then
-        echo "FAIL: case '$case_name' should confirm login from runtime state without reusing historical QR output" >&2
+    runtime-log-during-login-times-out)
+      if grep -q 'NapCat login confirmed.' <<<"$output"; then
+        echo "FAIL: case '$case_name' should not confirm login from runtime log activity alone" >&2
         echo "$output" >&2
         exit 1
       fi
       grep -q 'qq-online' "$qq_dir/nt_qq_dbtest/nt_data/log/qq-log_2026-04-17-19.qqxlog"
       ;;
-    preexisting-runtime-state-success)
-      if grep -q 'NapCat login URL:' <<<"$output"; then
-        echo "FAIL: case '$case_name' should confirm login from preexisting runtime state without requiring a new QR" >&2
+    preexisting-runtime-state-times-out)
+      if grep -q 'NapCat login confirmed.' <<<"$output"; then
+        echo "FAIL: case '$case_name' should not confirm login from preexisting runtime state alone" >&2
         echo "$output" >&2
         exit 1
       fi
@@ -317,6 +319,6 @@ run_case historical-log-filtering 0 "NapCat login confirmed."
 run_case already-logged-in 0 "NapCat login confirmed."
 run_case slow-login-budget 1 "NapCat login did not complete within 1 seconds." 1 0.05
 run_case bounded-request-timeout-recovers 0 "NapCat login confirmed." 2 0.05
-run_case fallback-account-log-success 0 "NapCat login confirmed."
-run_case preexisting-runtime-state-success 0 "NapCat login confirmed."
+run_case runtime-log-during-login-times-out 1 "NapCat login did not complete within 5 seconds."
+run_case preexisting-runtime-state-times-out 1 "NapCat login QR was not refreshed within 5 seconds."
 run_case stale-runtime-state-times-out 1 "NapCat login QR was not refreshed within 5 seconds."
