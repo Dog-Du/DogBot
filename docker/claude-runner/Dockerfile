@@ -78,6 +78,7 @@ RUN apt-get update \
     fonts-liberation \
     fonts-noto-cjk \
     fonts-noto-color-emoji \
+    vim \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /etc/apt/keyrings \
@@ -95,8 +96,7 @@ RUN mkdir -p /etc/apt/keyrings \
     @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
   && corepack enable \
   && npx playwright install --with-deps chromium \
-  && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
-  && rm -rf /var/lib/apt/lists/*
+  && ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
 COPY docker/claude-runner/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
