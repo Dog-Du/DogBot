@@ -12,7 +12,6 @@ class Settings:
     napcat_access_token: str | None
     default_cwd: str
     default_timeout_secs: int
-    command_name: str
     status_command_name: str
     qq_bot_id: str
     platform_account_id: str
@@ -31,7 +30,6 @@ class Settings:
             napcat_access_token=(os.getenv("NAPCAT_ACCESS_TOKEN") or "").strip() or None,
             default_cwd=os.getenv("QQ_ADAPTER_DEFAULT_CWD", "/workspace"),
             default_timeout_secs=int(os.getenv("QQ_ADAPTER_TIMEOUT_SECS", "120")),
-            command_name=os.getenv("QQ_ADAPTER_COMMAND_NAME", "agent").strip(),
             status_command_name=os.getenv("QQ_ADAPTER_STATUS_COMMAND_NAME", "agent-status").strip(),
             platform_account_id=platform_account_id.strip(),
             qq_bot_id=qq_bot_id,

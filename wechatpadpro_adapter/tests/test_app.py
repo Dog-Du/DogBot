@@ -23,7 +23,48 @@ def test_webhook_probe_supports_head_and_get():
     assert get_response.json()["status"] == "ok"
 
 
-def test_webhook_accepts_agent_command_payload(monkeypatch):
+def test_webhook_accepts_plain_private_text(monkeypatch):
+    calls = {}
+
+    async def fake_inbound(self, payload):
+        calls["inbound"] = payload["normalized_text"]
+        return {"status": "accepted"}
+
+    async def fake_run(self, payload):
+        calls["run"] = True
+        return {"stdout": "hello from runner", "stderr": ""}
+
+    async def fake_send(self, event, result):
+        calls["send"] = True
+
+    monkeypatch.setattr(
+        "wechatpadpro_adapter.runner_client.AgentRunnerClient.send_inbound_message",
+        fake_inbound,
+    )
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.run_agent", fake_run)
+    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.send_reply", fake_send)
+
+    app = create_app()
+    client = TestClient(app)
+    response = client.post(
+        "/wechatpadpro/events",
+        json={
+            "event_type": "message",
+            "message": {
+                "msgType": 1,
+                "content": "hi",
+                "fromUserName": "wxid_user",
+                "isGroup": False,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "accepted"
+    assert calls == {"inbound": "hi", "run": True, "send": True}
+
+
+def test_webhook_private_agent_text_stays_plain_text(monkeypatch):
     calls = {}
 
     async def fake_inbound(self, payload):
@@ -54,7 +95,6 @@ def test_webhook_accepts_agent_command_payload(monkeypatch):
                 "msgType": 1,
                 "content": "/agent hi",
                 "fromUserName": "wxid_user",
-                "isGroup": False,
             },
         },
     )
@@ -64,90 +104,7 @@ def test_webhook_accepts_agent_command_payload(monkeypatch):
     assert calls == {"inbound": "/agent hi", "run": True, "send": True}
 
 
-def test_webhook_ignores_text_without_agent_command_by_default(monkeypatch):
-    calls = {}
-
-    async def fake_inbound(self, payload):
-        calls["inbound"] = payload["normalized_text"]
-        return {"status": "ignored"}
-
-    async def fake_run(self, payload):
-        calls["run"] = True
-        return {"stdout": "hello from runner", "stderr": ""}
-
-    async def fake_send(self, event, result):
-        calls["send"] = True
-
-    monkeypatch.setattr(
-        "wechatpadpro_adapter.runner_client.AgentRunnerClient.send_inbound_message",
-        fake_inbound,
-    )
-    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.run_agent", fake_run)
-    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.send_reply", fake_send)
-
-    app = create_app()
-    client = TestClient(app)
-    response = client.post(
-        "/wechatpadpro/events",
-        json={
-            "event_type": "message",
-            "message": {
-                "msgType": 1,
-                "content": "hi",
-                "fromUserName": "wxid_user",
-            },
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "ignored"
-    assert calls == {"inbound": "hi"}
-
-
-def test_webhook_ignores_plain_text_when_prefix_not_required_because_command_is_still_mandatory(
-    monkeypatch,
-):
-    calls = {}
-
-    async def fake_inbound(self, payload):
-        calls["inbound"] = payload["normalized_text"]
-        return {"status": "accepted"}
-
-    async def fake_run(self, payload):
-        calls["run"] = True
-        return {"stdout": "hello from runner", "stderr": ""}
-
-    async def fake_send(self, event, result):
-        calls["send"] = True
-
-    monkeypatch.setenv("WECHATPADPRO_REQUIRE_COMMAND_PREFIX", "0")
-    monkeypatch.setattr(
-        "wechatpadpro_adapter.runner_client.AgentRunnerClient.send_inbound_message",
-        fake_inbound,
-    )
-    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.run_agent", fake_run)
-    monkeypatch.setattr("wechatpadpro_adapter.processor.EventProcessor.send_reply", fake_send)
-
-    app = create_app()
-    client = TestClient(app)
-    response = client.post(
-        "/wechatpadpro/events",
-        json={
-            "event_type": "message",
-            "message": {
-                "msgType": 1,
-                "content": "hi",
-                "fromUserName": "wxid_user",
-            },
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "ignored"
-    assert calls == {"inbound": "hi"}
-
-
-def test_webhook_strips_agent_prefix_before_runner(monkeypatch):
+def test_webhook_private_agent_text_is_not_stripped_before_runner(monkeypatch):
     calls = {}
 
     async def fake_inbound(self, payload):
@@ -161,7 +118,6 @@ def test_webhook_strips_agent_prefix_before_runner(monkeypatch):
     async def fake_send(self, event, result):
         calls["send"] = True
 
-    monkeypatch.setenv("WECHATPADPRO_REQUIRE_COMMAND_PREFIX", "1")
     monkeypatch.setenv("WECHATPADPRO_BOT_MENTION_NAMES", "DogDu")
     monkeypatch.setattr(
         "wechatpadpro_adapter.runner_client.AgentRunnerClient.send_inbound_message",
@@ -186,7 +142,7 @@ def test_webhook_strips_agent_prefix_before_runner(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "accepted"
-    assert calls == {"inbound": "/agent hi", "prompt": "hi", "send": True}
+    assert calls == {"inbound": "/agent hi", "prompt": "/agent hi", "send": True}
 
 
 def test_webhook_accepts_group_mention_before_agent_command(monkeypatch):
@@ -203,7 +159,6 @@ def test_webhook_accepts_group_mention_before_agent_command(monkeypatch):
     async def fake_send(self, event, result):
         calls["send"] = True
 
-    monkeypatch.setenv("WECHATPADPRO_REQUIRE_COMMAND_PREFIX", "1")
     monkeypatch.setenv("WECHATPADPRO_BOT_MENTION_NAMES", "DogDu")
     monkeypatch.setattr(
         "wechatpadpro_adapter.runner_client.AgentRunnerClient.send_inbound_message",
@@ -220,7 +175,7 @@ def test_webhook_accepts_group_mention_before_agent_command(monkeypatch):
             "event_type": "message",
             "message": {
                 "msgType": 1,
-                "content": "@DogDu /agent hi",
+                "content": "@DogDu hi",
                 "fromUserName": "123@chatroom",
                 "senderWxid": "wxid_user",
                 "msgId": "group-mention-1",
@@ -230,7 +185,7 @@ def test_webhook_accepts_group_mention_before_agent_command(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "accepted"
-    assert calls == {"inbound": "/agent hi", "prompt": "hi", "send": True}
+    assert calls == {"inbound": "hi", "prompt": "hi", "send": True}
 
 
 def test_webhook_ignores_group_agent_command_without_mention(monkeypatch):
@@ -247,7 +202,6 @@ def test_webhook_ignores_group_agent_command_without_mention(monkeypatch):
     async def fake_send(self, event, result):
         calls["send"] = True
 
-    monkeypatch.setenv("WECHATPADPRO_REQUIRE_COMMAND_PREFIX", "1")
     monkeypatch.setenv("WECHATPADPRO_REQUIRE_MENTION_IN_GROUP", "1")
     monkeypatch.setenv("WECHATPADPRO_BOT_MENTION_NAMES", "DogDu,%&*#")
     monkeypatch.setattr(
@@ -265,7 +219,7 @@ def test_webhook_ignores_group_agent_command_without_mention(monkeypatch):
             "event_type": "message",
             "message": {
                 "msgType": 1,
-                "content": "/agent hi",
+                "content": "hi",
                 "fromUserName": "123@chatroom",
                 "senderWxid": "wxid_user",
                 "msgId": "group-no-mention-1",
@@ -275,7 +229,7 @@ def test_webhook_ignores_group_agent_command_without_mention(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "ignored"
-    assert calls == {"inbound": "/agent hi"}
+    assert calls == {"inbound": "hi"}
 
 
 def test_webhook_status_command_replies_without_runner_execution(monkeypatch):
@@ -334,7 +288,7 @@ def test_webhook_rejects_invalid_signature(monkeypatch):
             "event_type": "message",
             "message": {
                 "msgType": 1,
-                "content": "/agent hi",
+                "content": "hi",
                 "fromUserName": "wxid_user",
             },
         },
@@ -422,7 +376,7 @@ def test_webhook_deduplicates_same_message_id(monkeypatch):
         "message": {
             "msgType": 1,
             "msgId": "dup-1",
-            "content": "/agent hello",
+            "content": "hello",
             "fromUserName": "wxid_user",
         },
     }

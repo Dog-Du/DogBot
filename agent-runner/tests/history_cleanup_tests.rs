@@ -56,7 +56,6 @@ fn test_settings(root: &std::path::Path) -> Settings {
     let mut settings = Settings::from_env_map(HashMap::new()).expect("default settings");
     settings.workspace_dir = root.join("workdir").display().to_string();
     settings.state_dir = root.join("state").display().to_string();
-    settings.control_plane_db_path = root.join("state/control.db").display().to_string();
     settings.session_db_path = root.join("state/runner.db").display().to_string();
     settings.history_db_path = root.join("state/history.db").display().to_string();
     settings

@@ -37,10 +37,9 @@ QQ
 当前 `agent-runner` 内部已经收敛出一层控制面，负责：
 
 - identity / session 归一化
-- scope 与权限判定
-- memory candidate 与 Claude prompt 注入
+- Claude prompt 轻量内容加载
 - inbound trigger 解析
-- 历史消息采集、检索和 retention cleanup
+- 历史消息采集和 retention cleanup
 
 ## Claude Prompt
 
@@ -52,8 +51,6 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - 放人格/语气源文件，由 `CLAUDE.md` 用 `@persona.md` 导入
 - `claude-prompt/.claude/skills/**`
   - 放仓库自带的轻量 skills
-- `agent-runner`
-  - 继续负责动态 prompt 注入，例如 scope、history evidence、当前回合约束
 - `deploy_stack.sh`
   - 部署时把仓库里的 `claude-prompt/` 同步到运行时 `DOGBOT_CLAUDE_PROMPT_ROOT`
 - `claude-runner`
@@ -157,26 +154,26 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
 
 ## 当前规则
 
-当前用户可见触发规则仍然保持显式命令：
+当前用户可见触发规则：
 
-- QQ 私聊：必须 `/agent ...`
-- QQ 群聊：必须 `@机器人 + /agent ...`
-- 微信私聊：必须 `/agent ...`
-- 微信群聊：必须 `@机器人名 + /agent ...`
+- QQ 私聊：任意非空文本
+- QQ 群聊：必须 `@机器人 + 正文`
+- 微信私聊：任意非空文本
+- 微信群聊：必须 `@机器人名 + 正文`
 - `/agent-status` 保留为状态检查命令
 
 补充说明：
 
-- `agent-runner` 内部的 normalized trigger resolver 已经支持更宽松的识别
-- 但两个 adapter 当前仍保留兼容性的本地 command gate
-- 联调和验收应以当前显式命令规则为准
+- `agent-runner` 与两个 adapter 当前已经按上述规则对齐
+- 群聊仍保留显式 mention gate，reply 本身不会单独触发执行
+- 联调和验收应以当前规则为准
 - WeChat 示例配置启用了群聊 mention 门禁，部署前需要把 `WECHATPADPRO_BOT_MENTION_NAMES` 改成真实群昵称
 
 ## 当前已落地
 
-- [x] Agent 内容管理与记忆管理主干
-  - 四层 scope：`user-private` / `conversation-shared` / `platform-account-shared` / `bot-global-admin`
-  - `control.db` 落地 memory candidate、authorization 和 control-plane 对象
+- [x] Agent 运行主干
+  - `runner.db` 保存 Claude session 映射
+  - `history.db` 保存 history ingest / retrieval 基础数据
   - `claude-prompt/` 承载仓库管理的静态 `CLAUDE.md` 与轻量 skills
 - [x] 触发识别与基础回复链路
   - QQ / WeChat 统一先走 `/v1/inbound-messages`
@@ -186,7 +183,6 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - 首次有效触发会启用当前会话的 history ingest
   - QQ 群聊支持有限 backfill
   - WeChat 支持启用后的 realtime mirror
-  - 当前 conversation 的 history evidence pack 会注入 `/v1/runs`
 
 ## 近期已收敛
 

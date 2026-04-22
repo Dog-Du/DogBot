@@ -46,8 +46,10 @@ def _strip_leading_mention(content: str, mention_names: tuple[str, ...]) -> tupl
         return "", []
 
     first = parts[0]
-    if first.startswith("@") and first[1:] in mention_names and len(parts) > 1:
-        return parts[1].strip(), ["wechatpadpro:account"]
+    if first.startswith("@") and first[1:] in mention_names:
+        if len(parts) > 1:
+            return parts[1].strip(), ["wechatpadpro:account"]
+        return "", ["wechatpadpro:account"]
 
     if len(parts) > 1:
         return parts[1].strip(), []

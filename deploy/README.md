@@ -243,10 +243,8 @@ CLAUDE_CODE_VERSION=2.1.104
 AGENT_WORKSPACE_DIR=/srv/dogbot/runtime/agent-workspace
 AGENT_STATE_DIR=/srv/dogbot/runtime/agent-state
 SESSION_DB_PATH=/srv/dogbot/runtime/agent-state/runner.db
-CONTROL_PLANE_DB_PATH=/srv/dogbot/runtime/agent-state/control.db
 HISTORY_DB_PATH=/srv/dogbot/runtime/agent-state/history.db
 DOGBOT_CLAUDE_PROMPT_ROOT=/srv/dogbot/runtime/agent-state/claude-prompt
-DOGBOT_ADMIN_ACTOR_IDS=qq:user:10001,wechat:user:wxid_admin
 ```
 
 建议：
@@ -259,11 +257,9 @@ DOGBOT_ADMIN_ACTOR_IDS=qq:user:10001,wechat:user:wxid_admin
   - 日志
   - NapCat / WeChatPadPro 状态
 - `SESSION_DB_PATH` 保存短期 Claude session 映射
-- `CONTROL_PLANE_DB_PATH` 保存 memory candidate、authorization 等 control-plane 数据
 - `HISTORY_DB_PATH` 保存 history ingest 和 retrieval 基础数据
 - `DOGBOT_CLAUDE_PROMPT_ROOT` 推荐使用绝对路径，指向运行时 Claude prompt 根目录
 - 部署脚本会把仓库内 `claude-prompt/` 同步到 `DOGBOT_CLAUDE_PROMPT_ROOT`
-- `DOGBOT_ADMIN_ACTOR_IDS` 用逗号分隔管理员 actor ID
 - `WeChatPadPro` 的 `data/mysql/redis` 目录也建议放到 `AGENT_STATE_DIR/wechatpadpro-data/`
 
 如果你改这些路径，旧会话和旧状态看起来会像“丢了”。
@@ -370,7 +366,6 @@ NapCat -> qq-adapter -> agent-runner
 QQ_ADAPTER_BIND_ADDR=0.0.0.0:19000
 QQ_ADAPTER_QQ_BOT_ID=你的QQ号
 QQ_PLATFORM_ACCOUNT_ID=qq:bot_uin:你的机器人QQ号
-QQ_ADAPTER_COMMAND_NAME=agent
 QQ_ADAPTER_STATUS_COMMAND_NAME=agent-status
 ```
 
@@ -378,17 +373,17 @@ QQ_ADAPTER_STATUS_COMMAND_NAME=agent-status
 
 当前项目统一规则如下：
 
-- QQ 私聊：必须 `/agent ...`
-- QQ 群聊：必须 `@机器人 + /agent ...`
-- 微信私聊：必须 `/agent ...`
-- 微信群聊：必须 `@机器人名 + /agent ...`
+- QQ 私聊：任意非空文本
+- QQ 群聊：必须 `@机器人 + 正文`
+- 微信私聊：任意非空文本
+- 微信群聊：必须 `@机器人名 + 正文`
 - `/agent-status` 保留
 
 补充说明：
 
-- `agent-runner` 内部的 normalized trigger resolver 已经支持更宽松的识别
-- 当前两个 adapter 仍保留兼容性的本地 command gate
-- 部署和联调请仍按上面的显式命令规则验收
+- `agent-runner` 与两个 adapter 当前已经按上面的规则对齐
+- 群聊仍保留显式 mention gate，reply 本身不会单独触发执行
+- 部署和联调请按上面的现态规则验收
 
 ## 9. WeChatPadPro 配置
 
@@ -445,7 +440,8 @@ WECHATPADPRO_PLATFORM_ACCOUNT_ID=wechatpadpro:account:你的机器人账号
 
 - 示例配置默认会自动向 WeChatPadPro 注册 webhook
 - 如果关闭 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK`，必须手动配置 webhook，否则 adapter 不会收到消息
-- 如果启用了 `WECHATPADPRO_REQUIRE_MENTION_IN_GROUP=1`，`WECHATPADPRO_BOT_MENTION_NAMES` 不能为空
+- 示例配置默认启用 `WECHATPADPRO_REQUIRE_MENTION_IN_GROUP=1`
+- 启用群聊 mention 门禁时，`WECHATPADPRO_BOT_MENTION_NAMES` 不能为空
 
 ## 10. Docker 资源限制
 
@@ -584,5 +580,5 @@ curl http://127.0.0.1:8787/healthz
 
 - 健康检查
 - QQ / WeChat 平台侧手工回归
-- `control.db` / `history.db` 核对
+- `history.db` 核对
 - Rust / Python 回归命令

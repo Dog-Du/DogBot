@@ -23,7 +23,6 @@ def strip_qq_at_prefix(raw_message: str, bot_id: str) -> tuple[str, bool]:
 def classify_message(
     event: dict[str, Any],
     *,
-    command_name: str,
     status_command_name: str,
     bot_id: str,
 ) -> dict[str, str] | None:
@@ -40,17 +39,21 @@ def classify_message(
             if not bot_mention_id or bot_mention_id not in mentions:
                 return None
             normalized = _extract_normalized_text(raw_message, segments)
-        if not normalized:
-            return None
     else:
         normalized = raw_message
 
+    normalized = normalized.strip()
+
     if normalized == f"/{status_command_name}":
         return {"mode": "status", "prompt": ""}
-    if normalized == f"/{command_name}":
-        return {"mode": "run", "prompt": ""}
-    if normalized.startswith(f"/{command_name} "):
-        return {"mode": "run", "prompt": normalized[len(command_name) + 2 :].strip()}
+
+    if str(event.get("message_type") or "") == "group":
+        if not normalized:
+            return {"mode": "run", "prompt": ""}
+        return {"mode": "run", "prompt": normalized}
+
+    if normalized:
+        return {"mode": "run", "prompt": normalized}
     return None
 
 
@@ -184,13 +187,13 @@ def _extract_normalized_text(raw_message: str, segments: list[dict[str, Any]]) -
 
     if text_parts:
         text = "".join(text_parts)
+    elif segments:
+        text = ""
     else:
         text = raw_message
 
     without_cq = _CQ_TOKEN_RE.sub(" ", text)
     return " ".join(without_cq.split()).strip()
-
-
 def _extract_timestamp_epoch_secs(event: dict[str, Any]) -> int:
     for key in ("time", "timestamp"):
         value = event.get(key)

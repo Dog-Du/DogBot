@@ -3,32 +3,38 @@ import json
 from qq_adapter.mapper import build_inbound_payload, build_run_payload, classify_message
 
 
-def test_private_requires_agent_prefix():
-    event = {"message_type": "private", "raw_message": "/agent hello", "user_id": 1}
-    result = classify_message(event, command_name="agent", status_command_name="agent-status", bot_id="123")
+def test_private_plain_text_runs_without_prefix():
+    event = {"message_type": "private", "raw_message": "hello", "user_id": 1}
+    result = classify_message(event, status_command_name="agent-status", bot_id="123")
     assert result is not None
     assert result["mode"] == "run"
     assert result["prompt"] == "hello"
 
 
-def test_private_plain_text_is_ignored():
-    event = {"message_type": "private", "raw_message": "hello", "user_id": 1}
-    assert classify_message(event, command_name="agent", status_command_name="agent-status", bot_id="123") is None
+def test_private_agent_text_is_not_stripped():
+    event = {"message_type": "private", "raw_message": "/agent hello", "user_id": 1}
+    result = classify_message(event, status_command_name="agent-status", bot_id="123")
+    assert result is not None
+    assert result["mode"] == "run"
+    assert result["prompt"] == "/agent hello"
 
 
-def test_private_plain_agent_text_is_ignored():
+def test_private_plain_agent_text_is_treated_as_normal_text():
     event = {"message_type": "private", "raw_message": "agent hello", "user_id": 1}
-    assert classify_message(event, command_name="agent", status_command_name="agent-status", bot_id="123") is None
+    result = classify_message(event, status_command_name="agent-status", bot_id="123")
+    assert result is not None
+    assert result["mode"] == "run"
+    assert result["prompt"] == "agent hello"
 
 
-def test_group_requires_at_and_agent_prefix():
+def test_group_requires_at_but_not_agent_prefix():
     event = {
         "message_type": "group",
-        "raw_message": "[CQ:at,qq=123] /agent hello",
+        "raw_message": "[CQ:at,qq=123] hello",
         "group_id": 2,
         "user_id": 1,
     }
-    result = classify_message(event, command_name="agent", status_command_name="agent-status", bot_id="123")
+    result = classify_message(event, status_command_name="agent-status", bot_id="123")
     assert result is not None
     assert result["mode"] == "run"
     assert result["prompt"] == "hello"
@@ -43,29 +49,27 @@ def test_group_accepts_reply_then_at_prefix_with_extra_cq_attributes():
     }
     result = classify_message(
         event,
-        command_name="agent",
         status_command_name="agent-status",
         bot_id="123",
     )
     assert result is not None
     assert result["mode"] == "run"
-    assert result["prompt"] == "hello"
+    assert result["prompt"] == "/agent hello"
 
 
 def test_group_accepts_segment_at_prefix_when_raw_message_is_plain_text():
     event = {
         "message_type": "group",
-        "raw_message": "@DogDu /agent hello",
+        "raw_message": "@DogDu hello",
         "group_id": 2,
         "user_id": 1,
         "message": [
             {"type": "at", "data": {"qq": "123", "name": "DogDu"}},
-            {"type": "text", "data": {"text": " /agent hello"}},
+            {"type": "text", "data": {"text": " hello"}},
         ],
     }
     result = classify_message(
         event,
-        command_name="agent",
         status_command_name="agent-status",
         bot_id="123",
     )
@@ -74,29 +78,32 @@ def test_group_accepts_segment_at_prefix_when_raw_message_is_plain_text():
     assert result["prompt"] == "hello"
 
 
-def test_group_plain_agent_without_at_is_ignored():
+def test_group_plain_text_without_at_is_ignored():
     event = {
         "message_type": "group",
-        "raw_message": "/agent hello",
+        "raw_message": "hello",
         "group_id": 2,
         "user_id": 1,
     }
-    assert classify_message(event, command_name="agent", status_command_name="agent-status", bot_id="123") is None
+    assert classify_message(event, status_command_name="agent-status", bot_id="123") is None
 
 
-def test_group_at_without_agent_is_ignored():
+def test_group_at_without_text_runs_empty_prompt():
     event = {
         "message_type": "group",
-        "raw_message": "[CQ:at,qq=123] hello",
+        "raw_message": "[CQ:at,qq=123]",
         "group_id": 2,
         "user_id": 1,
     }
-    assert classify_message(event, command_name="agent", status_command_name="agent-status", bot_id="123") is None
+    result = classify_message(event, status_command_name="agent-status", bot_id="123")
+    assert result is not None
+    assert result["mode"] == "run"
+    assert result["prompt"] == ""
 
 
 def test_private_status_command_is_supported():
     event = {"message_type": "private", "raw_message": "/agent-status", "user_id": 1}
-    result = classify_message(event, command_name="agent", status_command_name="agent-status", bot_id="123")
+    result = classify_message(event, status_command_name="agent-status", bot_id="123")
     assert result is not None
     assert result["mode"] == "status"
 

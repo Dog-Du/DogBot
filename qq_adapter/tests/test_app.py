@@ -11,15 +11,15 @@ def test_healthz():
     assert response.json() == {"status": "ok"}
 
 
-def test_private_plain_text_is_ignored(monkeypatch):
+def test_private_plain_text_runs_and_replies(monkeypatch):
     calls = {}
 
     async def fake_inbound(self, payload):
         calls["inbound"] = payload
-        return {"status": "ignored"}
+        return {"status": "accepted"}
 
     async def fake_run(self, payload, timeout_secs):
-        calls["run"] = True
+        calls["run"] = payload
         return {"stdout": "hello", "stderr": ""}
 
     async def fake_send_private(self, user_id, message):
@@ -35,11 +35,11 @@ def test_private_plain_text_is_ignored(monkeypatch):
         websocket.send_json({"post_type": "message", "message_type": "private", "raw_message": "hello", "user_id": 1})
 
     assert calls["inbound"]["normalized_text"] == "hello"
-    assert "run" not in calls
-    assert "private" not in calls
+    assert calls["run"]["prompt"] == "hello"
+    assert calls["private"] == ("1", "hello")
 
 
-def test_private_agent_command_runs_and_replies(monkeypatch):
+def test_private_agent_text_runs_without_special_stripping(monkeypatch):
     calls = {}
 
     async def fake_inbound(self, payload):
@@ -63,11 +63,11 @@ def test_private_agent_command_runs_and_replies(monkeypatch):
         websocket.send_json({"post_type": "message", "message_type": "private", "raw_message": "/agent hello", "user_id": 1})
 
     assert calls["inbound"]["normalized_text"] == "/agent hello"
-    assert calls["payload"]["prompt"] == "hello"
+    assert calls["payload"]["prompt"] == "/agent hello"
     assert calls["private"] == ("1", "pong")
 
 
-def test_private_inbound_accepted_without_legacy_command_match_is_ignored(monkeypatch):
+def test_private_inbound_accepted_without_legacy_command_match_runs_raw_text(monkeypatch):
     calls = {}
 
     async def fake_inbound(self, payload):
@@ -98,11 +98,11 @@ def test_private_inbound_accepted_without_legacy_command_match_is_ignored(monkey
         )
 
     assert calls["inbound"]["normalized_text"] == "请帮我 /agent 总结一下"
-    assert "run" not in calls
-    assert "private" not in calls
+    assert calls["run"]["prompt"] == "请帮我 /agent 总结一下"
+    assert calls["private"] == ("1", "pong")
 
 
-def test_group_requires_at_and_agent(monkeypatch):
+def test_group_requires_at_but_not_agent_prefix(monkeypatch):
     calls = {}
 
     async def fake_inbound(self, payload):
@@ -128,7 +128,7 @@ def test_group_requires_at_and_agent(monkeypatch):
             {
                 "post_type": "message",
                 "message_type": "group",
-                "raw_message": "[CQ:at,qq=123] /agent hello",
+                "raw_message": "[CQ:at,qq=123] hello",
                 "group_id": 2,
                 "user_id": 1,
             }
@@ -179,7 +179,7 @@ def test_group_enablement_triggers_limited_history_backfill(monkeypatch):
             {
                 "post_type": "message",
                 "message_type": "group",
-                "raw_message": "[CQ:at,qq=123] /agent hello",
+                "raw_message": "[CQ:at,qq=123] hello",
                 "group_id": 2,
                 "user_id": 1,
                 "message_id": 99,
@@ -218,12 +218,12 @@ def test_group_segment_mention_runs_even_without_cq_prefix_raw_message(monkeypat
             {
                 "post_type": "message",
                 "message_type": "group",
-                "raw_message": "@DogDu /agent hello",
+                "raw_message": "@DogDu hello",
                 "group_id": 2,
                 "user_id": 1,
                 "message": [
                     {"type": "at", "data": {"qq": "123", "name": "DogDu"}},
-                    {"type": "text", "data": {"text": " /agent hello"}},
+                    {"type": "text", "data": {"text": " hello"}},
                 ],
             }
         )
@@ -251,12 +251,12 @@ def test_group_inbound_defaults_platform_account_id_from_bot_id(monkeypatch):
             {
                 "post_type": "message",
                 "message_type": "group",
-                "raw_message": "[CQ:at,qq=123] /agent hello",
+                "raw_message": "[CQ:at,qq=123] hello",
                 "group_id": 2,
                 "user_id": 1,
                 "message": [
                     {"type": "at", "data": {"qq": "123"}},
-                    {"type": "text", "data": {"text": " /agent hello"}},
+                    {"type": "text", "data": {"text": " hello"}},
                 ],
             }
         )
@@ -287,13 +287,13 @@ def test_group_without_at_is_ignored(monkeypatch):
             {
                 "post_type": "message",
                 "message_type": "group",
-                "raw_message": "/agent hello",
+                "raw_message": "hello",
                 "group_id": 2,
                 "user_id": 1,
             }
         )
 
-    assert calls["inbound"]["normalized_text"] == "/agent hello"
+    assert calls["inbound"]["normalized_text"] == "hello"
     assert "run" not in calls
 
 
@@ -406,7 +406,7 @@ def test_websocket_continues_after_inbound_failure(monkeypatch):
             {
                 "post_type": "message",
                 "message_type": "private",
-                "raw_message": "/agent first",
+                "raw_message": "first",
                 "user_id": 1,
             }
         )
@@ -414,7 +414,7 @@ def test_websocket_continues_after_inbound_failure(monkeypatch):
             {
                 "post_type": "message",
                 "message_type": "private",
-                "raw_message": "/agent second",
+                "raw_message": "second",
                 "user_id": 1,
             }
         )

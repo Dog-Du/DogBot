@@ -19,13 +19,10 @@ use tracing::warn;
 
 use crate::{
     config::Settings,
-    context::{
-        context_pack::render_context_pack_with_history, identity::ActorId, scope::ScopeResolver,
-    },
     docker_client::DockerRuntime,
     exec::{DockerRunner, ExecutionBackend},
     history::{
-        cleanup::purge_expired_history, retrieval::build_history_evidence_pack, store::HistoryStore,
+        cleanup::purge_expired_history, store::HistoryStore,
     },
     inbound_models::InboundMessage,
     messenger::{MessageDelivery, NapCatMessenger},
@@ -199,10 +196,6 @@ pub fn build_test_app(runner: Arc<dyn Runner>) -> Router {
     ));
     settings.workspace_dir = temp_state_dir.join("workdir").display().to_string();
     settings.state_dir = temp_state_dir.join("state").display().to_string();
-    settings.control_plane_db_path = temp_state_dir
-        .join("state/control.db")
-        .display()
-        .to_string();
     settings.session_db_path = temp_state_dir.join("state/runner.db").display().to_string();
     settings.history_db_path = temp_state_dir
         .join("state/history.db")
@@ -390,22 +383,6 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
             }
         };
 
-    let actor_id = match ActorId::new(request.user_id.clone()) {
-        Some(actor_id) => actor_id,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    status: "error".into(),
-                    error_code: "invalid_request".into(),
-                    message: "user_id must be non-empty".into(),
-                    timed_out: false,
-                }),
-            )
-                .into_response();
-        }
-    };
-
     let validated = match request.validate(
         state.settings.default_timeout_secs,
         state.settings.max_timeout_secs,
@@ -424,20 +401,6 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
                 .into_response();
         }
     };
-
-    let scopes = ScopeResolver::new().readable_scopes(
-        &actor_id,
-        &request.conversation_id,
-        &request.platform_account_id,
-    );
-    let history_evidence =
-        load_history_evidence_pack(&state, &request.conversation_id, &request.prompt);
-    request.prompt = format!(
-        "{}{}",
-        render_context_pack_with_history(&scopes, history_evidence.as_deref()),
-        request.prompt
-    );
-
     let (responder, receiver) = oneshot::channel();
     match state.queue_tx.try_send(QueuedRun {
         request,
@@ -618,40 +581,6 @@ fn maybe_purge_expired_history(state: &AppState) {
         .expect("history store mutex poisoned");
     if let Err(err) = purge_expired_history(&store) {
         warn!("failed to purge expired history: {err}");
-    }
-}
-
-fn load_history_evidence_pack(
-    state: &AppState,
-    conversation_id: &str,
-    query: &str,
-) -> Option<String> {
-    let store = state
-        .history_store
-        .lock()
-        .expect("history store mutex poisoned");
-    match store.recent_rows(conversation_id, 5) {
-        Ok(rows) if rows.is_empty() => None,
-        Ok(rows) => {
-            let borrowed_rows = rows
-                .iter()
-                .map(|(message_id, text, has_attachment)| {
-                    (message_id.as_str(), text.as_str(), *has_attachment)
-                })
-                .collect::<Vec<_>>();
-            Some(build_history_evidence_pack(
-                conversation_id,
-                query,
-                &borrowed_rows,
-            ))
-        }
-        Err(err) => {
-            warn!(
-                conversation_id = %conversation_id,
-                "failed to load history evidence pack: {err}"
-            );
-            None
-        }
     }
 }
 

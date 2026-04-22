@@ -24,8 +24,6 @@ pub struct Settings {
     pub global_rate_limit_per_minute: usize,
     pub user_rate_limit_per_minute: usize,
     pub conversation_rate_limit_per_minute: usize,
-    pub control_plane_db_path: String,
-    pub admin_actor_ids: Vec<String>,
     pub session_db_path: String,
     pub history_db_path: String,
     pub container_cpu_cores: u64,
@@ -78,18 +76,6 @@ impl Settings {
             parse_or_default(&env_map, "USER_RATE_LIMIT_PER_MINUTE", 3)?;
         let conversation_rate_limit_per_minute =
             parse_or_default(&env_map, "CONVERSATION_RATE_LIMIT_PER_MINUTE", 5)?;
-        let control_plane_db_path = optional_trimmed(&env_map, "CONTROL_PLANE_DB_PATH")
-            .unwrap_or_else(|| format!("{state_dir}/control.db"));
-        let admin_actor_ids = env_map
-            .get("DOGBOT_ADMIN_ACTOR_IDS")
-            .map(|raw| {
-                raw.split(',')
-                    .map(|value| value.trim())
-                    .filter(|value| !value.is_empty())
-                    .map(|value| value.to_string())
-                    .collect()
-            })
-            .unwrap_or_default();
         let session_db_path = optional_trimmed(&env_map, "SESSION_DB_PATH")
             .unwrap_or_else(|| format!("{state_dir}/runner.db"));
         let history_db_path = optional_trimmed(&env_map, "HISTORY_DB_PATH")
@@ -121,8 +107,6 @@ impl Settings {
             global_rate_limit_per_minute,
             user_rate_limit_per_minute,
             conversation_rate_limit_per_minute,
-            control_plane_db_path,
-            admin_actor_ids,
             session_db_path,
             history_db_path,
             container_cpu_cores,

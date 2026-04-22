@@ -84,8 +84,6 @@ fn test_settings() -> Settings {
         global_rate_limit_per_minute: 10,
         user_rate_limit_per_minute: 3,
         conversation_rate_limit_per_minute: 5,
-        control_plane_db_path: root.join("state/control.db").display().to_string(),
-        admin_actor_ids: vec!["qq:user:1".into()],
         session_db_path: root.join("state/runner.db").display().to_string(),
         history_db_path: root.join("state/history.db").display().to_string(),
         container_cpu_cores: 4,
@@ -96,7 +94,7 @@ fn test_settings() -> Settings {
 }
 
 #[tokio::test]
-async fn run_endpoint_prepends_readable_scopes_context_pack() {
+async fn run_endpoint_keeps_plain_prompt_without_context_pack() {
     let runner = Arc::new(CapturingRunner::default());
     let app = build_test_app(runner.clone());
     let payload = serde_json::to_vec(&base_request()).expect("serialize request");
@@ -115,11 +113,7 @@ async fn run_endpoint_prepends_readable_scopes_context_pack() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let captured = runner.captured_prompt().expect("captured prompt");
-    assert!(captured.starts_with("Readable scopes:\n"));
-    assert!(captured.contains("- user-private: qq:user:1"));
-    assert!(captured.contains("qq:user:1"));
-    assert!(captured.contains("qq:private:1"));
-    assert!(captured.ends_with("hello"));
+    assert_eq!(captured, "hello");
 }
 
 #[tokio::test]
@@ -181,7 +175,7 @@ async fn run_endpoint_normalizes_context_identifiers_before_dispatch() {
 }
 
 #[tokio::test]
-async fn run_endpoint_appends_history_evidence_pack_when_history_exists() {
+async fn run_endpoint_does_not_inject_history_evidence_when_history_exists() {
     let settings = test_settings();
     let store = HistoryStore::open(&settings.history_db_path).expect("history store");
     store
@@ -212,9 +206,8 @@ async fn run_endpoint_appends_history_evidence_pack_when_history_exists() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let captured = runner.captured_prompt().expect("captured prompt");
-    assert!(captured.contains("History evidence for qq:private:1"));
-    assert!(captured.contains("Recent context"));
-    assert!(captured.contains("之前讨论过的上下文"));
+    assert!(!captured.contains("Readable scopes:\n"));
+    assert_eq!(captured, "hello");
 }
 
 #[tokio::test]
@@ -281,7 +274,6 @@ async fn run_endpoint_keeps_runtime_context_without_pack_items() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let captured = runner.captured_prompt().expect("captured prompt");
-    assert!(captured.starts_with("Readable scopes:\n"));
-    assert!(captured.contains("History evidence for qq:private:1"));
-    assert!(!captured.contains("Enabled pack items:"));
+    assert!(!captured.contains("Readable scopes:\n"));
+    assert_eq!(captured, "hello");
 }

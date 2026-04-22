@@ -2,11 +2,8 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use tokio::time::{Duration, timeout};
-use tracing::warn;
 
 use crate::config::Settings;
-use crate::context::memory_intent::capture_memory_intent;
-use crate::context::object_store::ContextObjectStore;
 use crate::docker_client::{ContainerSpec, DockerRuntime};
 use crate::models::{ErrorResponse, RunRequest, RunResponse, ValidatedRunRequest};
 use crate::session_store::{SessionStore, SessionStoreError};
@@ -25,7 +22,6 @@ pub struct DockerRunner {
     runtime: DockerRuntime,
     container_spec: ContainerSpec,
     session_store: SessionStore,
-    context_store: Option<ContextObjectStore>,
 }
 
 impl DockerRunner {
@@ -39,22 +35,10 @@ impl DockerRunner {
                 timed_out: false,
             })?;
 
-        let context_store = match ContextObjectStore::open(&settings.control_plane_db_path) {
-            Ok(store) => Some(store),
-            Err(err) => {
-                warn!(
-                    "control-plane store unavailable at {}: {}; memory candidates will not be persisted",
-                    settings.control_plane_db_path, err
-                );
-                None
-            }
-        };
-
         Ok(Self {
             runtime,
             container_spec,
             session_store,
-            context_store,
         })
     }
 }
@@ -88,14 +72,7 @@ impl ExecutionBackend for DockerRunner {
 
         let started = Instant::now();
         let first = self
-            .execute_once(
-                &request.prompt,
-                &validated,
-                &session,
-                &request.user_id,
-                &request.conversation_id,
-                &request.platform_account_id,
-            )
+            .execute_once(&request.prompt, &validated, &session)
             .await?;
 
         if should_retry_with_fresh_session(&first, session.is_new) {
@@ -110,14 +87,7 @@ impl ExecutionBackend for DockerRunner {
                 .map_err(map_session_store_error)?;
 
             let retried = self
-                .execute_once(
-                    &request.prompt,
-                    &validated,
-                    &reset_session,
-                    &request.user_id,
-                    &request.conversation_id,
-                    &request.platform_account_id,
-                )
+                .execute_once(&request.prompt, &validated, &reset_session)
                 .await?;
             return Ok(with_duration(retried, started.elapsed().as_millis()));
         }
@@ -132,9 +102,6 @@ impl DockerRunner {
         prompt: &str,
         validated: &ValidatedRunRequest,
         session: &crate::session_store::SessionRecord,
-        actor_id: &str,
-        conversation_id: &str,
-        platform_account_id: &str,
     ) -> Result<RunResponse, ErrorResponse> {
         let exec = self
             .runtime
@@ -159,44 +126,6 @@ impl DockerRunner {
 
         match result {
             Ok(Ok((stdout, stderr, exit_code))) => {
-                if let Some(store) = &self.context_store {
-                    if let Some(captured_intent) = capture_memory_intent(&stdout) {
-                        let store = store.clone();
-                        let actor_id = actor_id.to_string();
-                        let conversation_id = conversation_id.to_string();
-                        let platform_account_id = platform_account_id.to_string();
-                        let actor_id_for_store = actor_id.clone();
-                        let conversation_id_for_store = conversation_id.clone();
-                        let platform_account_id_for_store = platform_account_id.clone();
-                        let raw_json = captured_intent.raw_json;
-
-                        match tokio::task::spawn_blocking(move || {
-                            store.insert_memory_candidate(
-                                &actor_id_for_store,
-                                &conversation_id_for_store,
-                                &platform_account_id_for_store,
-                                &raw_json,
-                            )
-                        })
-                        .await
-                        {
-                            Ok(Ok(_candidate_id)) => {}
-                            Ok(Err(err)) => {
-                                warn!(
-                                    "failed to persist memory candidate for actor={} conversation={}: {}",
-                                    actor_id, conversation_id, err
-                                );
-                            }
-                            Err(err) => {
-                                warn!(
-                                    "memory candidate persistence task failed to join for actor={} conversation={}: {}",
-                                    actor_id, conversation_id, err
-                                );
-                            }
-                        }
-                    }
-                }
-
                 Ok(RunResponse {
                     status: "ok".into(),
                     stdout,

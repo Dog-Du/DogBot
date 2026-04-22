@@ -6,9 +6,7 @@ start_script="$repo_root/scripts/start_agent_runner.sh"
 
 patterns=(
   'DOGBOT_CLAUDE_PROMPT_ROOT="${DOGBOT_CLAUDE_PROMPT_ROOT:-'
-  'CONTROL_PLANE_DB_PATH="${CONTROL_PLANE_DB_PATH:-'
   'HISTORY_DB_PATH="${HISTORY_DB_PATH:-'
-  'DOGBOT_ADMIN_ACTOR_IDS="${DOGBOT_ADMIN_ACTOR_IDS:-}'
 )
 
 for pattern in "${patterns[@]}"; do

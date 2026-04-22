@@ -69,8 +69,6 @@ fn test_settings() -> agent_runner::config::Settings {
         global_rate_limit_per_minute: 10,
         user_rate_limit_per_minute: 3,
         conversation_rate_limit_per_minute: 5,
-        control_plane_db_path: root.join("state/control.db").display().to_string(),
-        admin_actor_ids: vec!["qq:user:1".into()],
         session_db_path: root.join("state/runner.db").display().to_string(),
         history_db_path: root.join("state/history.db").display().to_string(),
         container_cpu_cores: 4,
@@ -89,7 +87,7 @@ fn base_inbound_message() -> InboundMessage {
         message_id: "msg-1".into(),
         reply_to_message_id: None,
         raw_segments_json: "[]".into(),
-        normalized_text: "/agent hi".into(),
+        normalized_text: "hi".into(),
         mentions: vec![],
         is_group: false,
         is_private: true,
@@ -98,7 +96,7 @@ fn base_inbound_message() -> InboundMessage {
 }
 
 #[tokio::test]
-async fn inbound_messages_endpoint_accepts_agent_trigger() {
+async fn inbound_messages_endpoint_accepts_private_plain_text_trigger() {
     let app = agent_runner::server::build_test_app_with_message_support(
         Arc::new(MockRunner),
         Arc::new(NoopMessenger),
@@ -125,14 +123,17 @@ async fn inbound_messages_endpoint_accepts_agent_trigger() {
 }
 
 #[tokio::test]
-async fn inbound_messages_endpoint_returns_ignored_for_non_trigger() {
+async fn inbound_messages_endpoint_returns_ignored_for_group_message_without_bot_mention() {
     let app = agent_runner::server::build_test_app_with_message_support(
         Arc::new(MockRunner),
         Arc::new(NoopMessenger),
         test_settings(),
     );
     let mut message = base_inbound_message();
+    message.conversation_id = "qq:group:100".into();
     message.normalized_text = "只是普通聊天".into();
+    message.is_group = true;
+    message.is_private = false;
     let payload = serde_json::to_vec(&message).unwrap();
 
     let response = app
@@ -201,7 +202,7 @@ async fn inbound_api_persists_enabled_conversation_messages() {
         message_id: "m-enabled-1".into(),
         reply_to_message_id: None,
         raw_segments_json: "[]".into(),
-        normalized_text: "/agent summarize".into(),
+        normalized_text: "summarize".into(),
         mentions: vec!["qq:bot_uin:123".into()],
         is_group: true,
         is_private: false,
@@ -244,7 +245,7 @@ async fn inbound_api_enables_history_on_first_valid_trigger() {
         message_id: "m-enable-1".into(),
         reply_to_message_id: None,
         raw_segments_json: "[]".into(),
-        normalized_text: "/agent summarize".into(),
+        normalized_text: "summarize".into(),
         mentions: vec!["qq:bot_uin:123".into()],
         is_group: true,
         is_private: false,

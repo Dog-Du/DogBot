@@ -60,8 +60,6 @@ fn test_settings() -> agent_runner::config::Settings {
         global_rate_limit_per_minute: 10,
         user_rate_limit_per_minute: 3,
         conversation_rate_limit_per_minute: 5,
-        control_plane_db_path: root.join("state/control.db").display().to_string(),
-        admin_actor_ids: vec!["qq:user:1".into()],
         session_db_path: root.join("state/runner.db").display().to_string(),
         history_db_path: root.join("state/history.db").display().to_string(),
         container_cpu_cores: 4,
@@ -692,6 +690,5 @@ impl agent_runner::server::Messenger for MockMessenger {
 fn test_settings_with_session_db(db_path: &std::path::Path) -> agent_runner::config::Settings {
     let mut settings = test_settings();
     settings.session_db_path = db_path.display().to_string();
-    settings.control_plane_db_path = db_path.with_file_name("control.db").display().to_string();
     settings
 }

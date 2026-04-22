@@ -58,17 +58,17 @@ QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner
 
 ## 3. 当前触发规则
 
-- 当前用户可见规则仍保持显式命令：
-  - QQ 私聊：必须 `/agent ...`
-  - QQ 群聊：必须 `@机器人 + /agent ...`
-  - 微信私聊：必须 `/agent ...`
-  - 微信群聊：必须 `@机器人名 + /agent ...`
+- 当前用户可见规则：
+  - QQ 私聊：任意非空文本
+  - QQ 群聊：必须 `@机器人 + 正文`
+  - 微信私聊：任意非空文本
+  - 微信群聊：必须 `@机器人名 + 正文`
 - `/agent-status`：保留
 
 补充说明：
 
-- `agent-runner` 内部已经具备更宽松的 normalized trigger resolver
-- 但两个 adapter 当前仍保留兼容性的本地 command gate
+- `agent-runner` 已与两个 adapter 对齐到“私聊任意文本、群聊显式 mention”规则
+- 群聊 reply 本身不会单独触发执行
 - 不要把“reply 中带 `/agent` 就已经全量开放”当成当前现态
 
 ## 4. 重要目录
@@ -103,7 +103,7 @@ QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner
   - QQ 仅支持首次启用后的有限 backfill
   - WeChat 目前仅支持启用后的 realtime mirror
 - 图片链路尚未完成端到端出站发送
-- adapter 仍保留本地 command gate，reply/中段触发还未完全对外开放
+- adapter 仍保留群聊显式 mention gate，reply 单独触发还未对外开放
 
 ## 7. 后续方向
 

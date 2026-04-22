@@ -9,7 +9,18 @@ def make_settings(**overrides) -> Settings:
     return base
 
 
-def test_resolve_command_accepts_prefixed_private_command():
+def test_resolve_command_accepts_plain_private_text():
+    settings = make_settings()
+    match = resolve_command(
+        {"message": {"content": "hi", "fromUserName": "wxid_user"}},
+        settings,
+    )
+    assert match is not None
+    assert match.mode == "run"
+    assert match.prompt == "hi"
+
+
+def test_resolve_command_treats_private_agent_text_as_plain_text():
     settings = make_settings()
     match = resolve_command(
         {"message": {"content": "/agent hi", "fromUserName": "wxid_user"}},
@@ -17,7 +28,7 @@ def test_resolve_command_accepts_prefixed_private_command():
     )
     assert match is not None
     assert match.mode == "run"
-    assert match.prompt == "hi"
+    assert match.prompt == "/agent hi"
 
 
 def test_resolve_command_requires_group_mention_when_enabled():
@@ -26,11 +37,11 @@ def test_resolve_command_requires_group_mention_when_enabled():
         bot_mention_names=("DogDu",),
     )
     no_match = resolve_command(
-        {"message": {"content": "/agent hi", "fromUserName": "123@chatroom"}},
+        {"message": {"content": "hi", "fromUserName": "123@chatroom"}},
         settings,
     )
     yes_match = resolve_command(
-        {"message": {"content": "@DogDu /agent hi", "fromUserName": "123@chatroom"}},
+        {"message": {"content": "@DogDu hi", "fromUserName": "123@chatroom"}},
         settings,
     )
     assert no_match is None
@@ -46,7 +57,7 @@ def test_resolve_command_treats_room_id_events_as_group_for_mention_gate():
     no_match = resolve_command(
         {
             "message": {
-                "content": "/agent hi",
+                "content": "hi",
                 "fromUserName": "wxid_user",
                 "roomId": "123@chatroom",
                 "isGroup": True,
@@ -57,7 +68,7 @@ def test_resolve_command_treats_room_id_events_as_group_for_mention_gate():
     yes_match = resolve_command(
         {
             "message": {
-                "content": "@DogDu /agent hi",
+                "content": "@DogDu hi",
                 "fromUserName": "wxid_user",
                 "roomId": "123@chatroom",
                 "isGroup": True,
@@ -68,6 +79,20 @@ def test_resolve_command_treats_room_id_events_as_group_for_mention_gate():
     assert no_match is None
     assert yes_match is not None
     assert yes_match.prompt == "hi"
+
+
+def test_resolve_command_accepts_group_mention_without_extra_text():
+    settings = make_settings(
+        require_group_mention=True,
+        bot_mention_names=("DogDu",),
+    )
+    match = resolve_command(
+        {"message": {"content": "@DogDu", "fromUserName": "123@chatroom"}},
+        settings,
+    )
+    assert match is not None
+    assert match.mode == "run"
+    assert match.prompt == ""
 
 
 def test_resolve_command_accepts_status_command():

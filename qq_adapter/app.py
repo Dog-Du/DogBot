@@ -81,7 +81,6 @@ def create_app() -> FastAPI:
 
                     command = classify_message(
                         event,
-                        command_name=settings.command_name,
                         status_command_name=settings.status_command_name,
                         bot_id=settings.qq_bot_id,
                     )
