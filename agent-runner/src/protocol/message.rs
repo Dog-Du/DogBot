@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::AssetRef;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum MessagePart {
     Text { text: String },
     Mention { actor_id: String, display: String },
@@ -19,12 +20,15 @@ pub struct CanonicalMessage {
     pub message_id: String,
     pub reply_to: Option<String>,
     pub parts: Vec<MessagePart>,
-    pub plain_text: String,
     pub mentions: Vec<String>,
     pub native_metadata: serde_json::Value,
 }
 
 impl CanonicalMessage {
+    pub fn plain_text(&self) -> String {
+        self.project_plain_text()
+    }
+
     pub fn project_plain_text(&self) -> String {
         self.parts
             .iter()

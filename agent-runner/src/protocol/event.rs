@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::CanonicalMessage;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum EventKind {
     Message { message: CanonicalMessage },
     ReactionAdded { target_message_id: String, emoji: String },
@@ -31,6 +32,7 @@ impl CanonicalEvent {
         timestamp_epoch_secs: i64,
         target_message_id: &str,
         emoji: &str,
+        raw_native_payload: serde_json::Value,
     ) -> Self {
         Self {
             platform: platform.to_string(),
@@ -43,7 +45,7 @@ impl CanonicalEvent {
                 target_message_id: target_message_id.to_string(),
                 emoji: emoji.to_string(),
             },
-            raw_native_payload: serde_json::json!({}),
+            raw_native_payload,
         }
     }
 

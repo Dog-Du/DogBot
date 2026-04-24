@@ -26,12 +26,12 @@ fn canonical_message_plain_text_only_projects_text_and_mentions() {
                 },
             },
         ],
-        plain_text: String::new(),
         mentions: vec!["qq:bot_uin:123".into()],
         native_metadata: serde_json::json!({}),
     };
 
     assert_eq!(message.project_plain_text(), "@DogDu please check");
+    assert_eq!(message.plain_text(), "@DogDu please check");
 }
 
 #[test]
@@ -60,7 +60,73 @@ fn canonical_event_kind_distinguishes_message_and_reaction() {
         1710000000,
         "msg-9",
         "❤️",
+        serde_json::json!({"reaction_source": "bridge"}),
     );
 
     assert_eq!(event.kind_name(), "reaction_added");
+    assert_eq!(event.raw_native_payload, serde_json::json!({"reaction_source": "bridge"}));
+}
+
+#[test]
+fn canonical_event_message_accessor_returns_message_payload() {
+    let message = CanonicalMessage {
+        message_id: "msg-2".into(),
+        reply_to: Some("msg-1".into()),
+        parts: vec![MessagePart::Text {
+            text: "hello".into(),
+        }],
+        mentions: vec![],
+        native_metadata: serde_json::json!({"source": "native"}),
+    };
+    let event = CanonicalEvent {
+        platform: "qq".into(),
+        platform_account: "qq:account:bot".into(),
+        conversation: "qq:group:123".into(),
+        actor: "qq:user:alice".into(),
+        event_id: "evt-2".into(),
+        timestamp_epoch_secs: 1710000001,
+        kind: agent_runner::protocol::EventKind::Message {
+            message: message.clone(),
+        },
+        raw_native_payload: serde_json::json!({"native": true}),
+    };
+
+    assert_eq!(event.kind_name(), "message");
+    assert_eq!(event.message(), Some(&message));
+}
+
+#[test]
+fn outbound_message_text_uses_exact_defaults() {
+    let message = OutboundMessage::text("done");
+
+    assert_eq!(
+        message,
+        OutboundMessage {
+            parts: vec![MessagePart::Text {
+                text: "done".into(),
+            }],
+            reply_to: None,
+            delivery_policy: None,
+        }
+    );
+}
+
+#[test]
+fn serde_shape_is_explicit_for_message_part() {
+    let value = serde_json::to_value(MessagePart::Mention {
+        actor_id: "qq:user:42".into(),
+        display: "@DogDu".into(),
+    })
+    .unwrap();
+
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "type": "mention",
+            "data": {
+                "actor_id": "qq:user:42",
+                "display": "@DogDu"
+            }
+        })
+    );
 }
