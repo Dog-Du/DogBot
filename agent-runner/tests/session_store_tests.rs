@@ -70,3 +70,19 @@ fn session_store_reset_session_rotates_claude_session_id() {
     assert_eq!(reset.claude_session_id, fetched.claude_session_id);
     assert!(reset.is_new);
 }
+
+#[test]
+fn group_sessions_are_keyed_by_conversation_not_actor() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = SessionStore::open(temp.path().join("runner.db")).unwrap();
+
+    let first = store
+        .get_or_create_conversation_session("qq", "qq:bot_uin:123", "qq:group:5566")
+        .unwrap();
+
+    let second = store
+        .get_or_create_conversation_session("qq", "qq:bot_uin:123", "qq:group:5566")
+        .unwrap();
+
+    assert_eq!(first.claude_session_id, second.claude_session_id);
+}

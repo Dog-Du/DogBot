@@ -13,9 +13,11 @@ pub struct SessionStore {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRecord {
+    pub session_key: String,
     pub external_session_id: String,
     pub claude_session_id: String,
     pub platform: String,
+    pub platform_account: String,
     pub conversation_id: String,
     pub user_id: String,
     pub created_at_epoch_secs: i64,
@@ -48,6 +50,20 @@ impl SessionStore {
         Ok(store)
     }
 
+    pub fn get_or_create_conversation_session(
+        &self,
+        platform: &str,
+        platform_account: &str,
+        conversation_id: &str,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        self.get_or_create_by_key(
+            &conversation_session_key(platform, platform_account, conversation_id),
+            platform,
+            platform_account,
+            conversation_id,
+        )
+    }
+
     pub fn get_or_create_session(
         &self,
         external_session_id: &str,
@@ -55,67 +71,7 @@ impl SessionStore {
         conversation_id: &str,
         user_id: &str,
     ) -> Result<SessionRecord, SessionStoreError> {
-        let conn = self.open_connection()?;
-        let now = epoch_now();
-        let existing = self.fetch_session(&conn, external_session_id)?;
-
-        if let Some(mut record) = existing {
-            ensure_session_identity(&record, platform, conversation_id, user_id)?;
-            conn.execute(
-                "UPDATE sessions SET last_used_at_epoch_secs = ?1 WHERE external_session_id = ?2",
-                params![now, external_session_id],
-            )?;
-            record.last_used_at_epoch_secs = now;
-            return Ok(record);
-        }
-
-        let claude_session_id = Uuid::new_v4().to_string();
-        conn.execute(
-            "INSERT INTO sessions (
-                external_session_id,
-                claude_session_id,
-                platform,
-                conversation_id,
-                user_id,
-                created_at_epoch_secs,
-                last_used_at_epoch_secs
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(external_session_id) DO NOTHING",
-            params![
-                external_session_id,
-                claude_session_id,
-                platform,
-                conversation_id,
-                user_id,
-                now,
-                now
-            ],
-        )?;
-
-        let inserted = conn.changes() > 0;
-        if !inserted {
-            let mut record = self
-                .fetch_session(&conn, external_session_id)?
-                .expect("session should exist after insert conflict");
-            ensure_session_identity(&record, platform, conversation_id, user_id)?;
-            conn.execute(
-                "UPDATE sessions SET last_used_at_epoch_secs = ?1 WHERE external_session_id = ?2",
-                params![now, external_session_id],
-            )?;
-            record.last_used_at_epoch_secs = now;
-            return Ok(record);
-        }
-
-        Ok(SessionRecord {
-            external_session_id: external_session_id.to_string(),
-            claude_session_id,
-            platform: platform.to_string(),
-            conversation_id: conversation_id.to_string(),
-            user_id: user_id.to_string(),
-            created_at_epoch_secs: now,
-            last_used_at_epoch_secs: now,
-            is_new: true,
-        })
+        self.get_or_create_by_key(external_session_id, platform, user_id, conversation_id)
     }
 
     pub fn get_session(
@@ -133,18 +89,98 @@ impl SessionStore {
         conversation_id: &str,
         user_id: &str,
     ) -> Result<SessionRecord, SessionStoreError> {
+        self.reset_by_key(external_session_id, platform, user_id, conversation_id)
+    }
+
+    fn get_or_create_by_key(
+        &self,
+        session_key: &str,
+        platform: &str,
+        platform_account: &str,
+        conversation_id: &str,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        let conn = self.open_connection()?;
+        let now = epoch_now();
+        let existing = self.fetch_session(&conn, session_key)?;
+
+        if let Some(mut record) = existing {
+            ensure_session_identity(&record, platform, platform_account, conversation_id)?;
+            conn.execute(
+                "UPDATE sessions SET last_used_at_epoch_secs = ?1 WHERE session_key = ?2",
+                params![now, session_key],
+            )?;
+            record.last_used_at_epoch_secs = now;
+            return Ok(record);
+        }
+
+        let claude_session_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO sessions (
+                session_key,
+                claude_session_id,
+                platform,
+                platform_account,
+                conversation_id,
+                created_at_epoch_secs,
+                last_used_at_epoch_secs
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(session_key) DO NOTHING",
+            params![
+                session_key,
+                claude_session_id,
+                platform,
+                platform_account,
+                conversation_id,
+                now,
+                now
+            ],
+        )?;
+
+        let inserted = conn.changes() > 0;
+        if !inserted {
+            let mut record = self
+                .fetch_session(&conn, session_key)?
+                .expect("session should exist after insert conflict");
+            ensure_session_identity(&record, platform, platform_account, conversation_id)?;
+            conn.execute(
+                "UPDATE sessions SET last_used_at_epoch_secs = ?1 WHERE session_key = ?2",
+                params![now, session_key],
+            )?;
+            record.last_used_at_epoch_secs = now;
+            return Ok(record);
+        }
+
+        Ok(build_session_record(
+            session_key,
+            claude_session_id,
+            platform.to_string(),
+            platform_account.to_string(),
+            conversation_id.to_string(),
+            now,
+            now,
+            true,
+        ))
+    }
+
+    fn reset_by_key(
+        &self,
+        session_key: &str,
+        platform: &str,
+        platform_account: &str,
+        conversation_id: &str,
+    ) -> Result<SessionRecord, SessionStoreError> {
         let conn = self.open_connection()?;
         let now = epoch_now();
         let existing = self
-            .fetch_session(&conn, external_session_id)?
+            .fetch_session(&conn, session_key)?
             .ok_or_else(|| SessionStoreError::SessionConflict {
-                external_session_id: external_session_id.to_string(),
+                external_session_id: session_key.to_string(),
                 platform: platform.to_string(),
                 conversation_id: conversation_id.to_string(),
-                user_id: user_id.to_string(),
+                user_id: platform_account.to_string(),
             })?;
 
-        ensure_session_identity(&existing, platform, conversation_id, user_id)?;
+        ensure_session_identity(&existing, platform, platform_account, conversation_id)?;
 
         let claude_session_id = Uuid::new_v4().to_string();
         conn.execute(
@@ -152,31 +188,31 @@ impl SessionStore {
              SET claude_session_id = ?1,
                  created_at_epoch_secs = ?2,
                  last_used_at_epoch_secs = ?2
-             WHERE external_session_id = ?3",
-            params![claude_session_id, now, external_session_id],
+             WHERE session_key = ?3",
+            params![claude_session_id, now, session_key],
         )?;
 
-        Ok(SessionRecord {
-            external_session_id: external_session_id.to_string(),
+        Ok(build_session_record(
+            session_key,
             claude_session_id,
-            platform: platform.to_string(),
-            conversation_id: conversation_id.to_string(),
-            user_id: user_id.to_string(),
-            created_at_epoch_secs: now,
-            last_used_at_epoch_secs: now,
-            is_new: true,
-        })
+            platform.to_string(),
+            platform_account.to_string(),
+            conversation_id.to_string(),
+            now,
+            now,
+            true,
+        ))
     }
 
     fn initialize(&self) -> Result<(), SessionStoreError> {
         let conn = self.open_connection()?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS sessions (
-                external_session_id TEXT PRIMARY KEY,
+                session_key TEXT PRIMARY KEY,
                 claude_session_id TEXT NOT NULL,
                 platform TEXT NOT NULL,
+                platform_account TEXT NOT NULL,
                 conversation_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
                 created_at_epoch_secs INTEGER NOT NULL,
                 last_used_at_epoch_secs INTEGER NOT NULL
             );",
@@ -199,28 +235,60 @@ impl SessionStore {
     fn fetch_session(
         &self,
         conn: &Connection,
-        external_session_id: &str,
+        session_key: &str,
     ) -> Result<Option<SessionRecord>, SessionStoreError> {
         Ok(conn
             .query_row(
-                "SELECT claude_session_id, platform, conversation_id, user_id, created_at_epoch_secs, last_used_at_epoch_secs
-                 FROM sessions WHERE external_session_id = ?1",
-                params![external_session_id],
+                "SELECT claude_session_id, platform, platform_account, conversation_id, created_at_epoch_secs, last_used_at_epoch_secs
+                 FROM sessions WHERE session_key = ?1",
+                params![session_key],
                 |row| {
-                    Ok(SessionRecord {
-                        external_session_id: external_session_id.to_string(),
-                        claude_session_id: row.get(0)?,
-                        platform: row.get(1)?,
-                        conversation_id: row.get(2)?,
-                        user_id: row.get(3)?,
-                        created_at_epoch_secs: row.get(4)?,
-                        last_used_at_epoch_secs: row.get(5)?,
-                        is_new: false,
-                    })
+                    Ok(build_session_record(
+                        session_key,
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        false,
+                    ))
                 },
             )
             .optional()?)
     }
+}
+
+fn build_session_record(
+    session_key: &str,
+    claude_session_id: String,
+    platform: String,
+    platform_account: String,
+    conversation_id: String,
+    created_at_epoch_secs: i64,
+    last_used_at_epoch_secs: i64,
+    is_new: bool,
+) -> SessionRecord {
+    SessionRecord {
+        session_key: session_key.to_string(),
+        external_session_id: session_key.to_string(),
+        claude_session_id,
+        platform,
+        platform_account: platform_account.clone(),
+        conversation_id,
+        user_id: platform_account,
+        created_at_epoch_secs,
+        last_used_at_epoch_secs,
+        is_new,
+    }
+}
+
+fn conversation_session_key(
+    platform: &str,
+    platform_account: &str,
+    conversation_id: &str,
+) -> String {
+    format!("conversation::{platform}::{platform_account}::{conversation_id}")
 }
 
 fn epoch_now() -> i64 {
@@ -233,12 +301,12 @@ fn epoch_now() -> i64 {
 fn ensure_session_identity(
     record: &SessionRecord,
     platform: &str,
+    platform_account: &str,
     conversation_id: &str,
-    user_id: &str,
 ) -> Result<(), SessionStoreError> {
     if record.platform == platform
+        && record.platform_account == platform_account
         && record.conversation_id == conversation_id
-        && record.user_id == user_id
     {
         return Ok(());
     }

@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 
 pub struct HistoryStore {
     conn: Connection,
@@ -14,23 +14,47 @@ impl HistoryStore {
         }
         let conn = Connection::open(path)?;
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS message_store (
-                message_id TEXT PRIMARY KEY,
+            "CREATE TABLE IF NOT EXISTS event_store (
+                event_id TEXT PRIMARY KEY,
+                platform TEXT NOT NULL,
+                platform_account TEXT NOT NULL,
                 conversation_id TEXT NOT NULL,
                 actor_id TEXT NOT NULL,
-                normalized_text TEXT NOT NULL,
-                created_at_epoch_secs INTEGER NOT NULL
+                event_kind TEXT NOT NULL,
+                created_at_epoch_secs INTEGER NOT NULL,
+                raw_native_payload_json TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS message_attachment (
-                attachment_id TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS message_store (
+                message_id TEXT PRIMARY KEY,
+                event_id TEXT NOT NULL,
+                reply_to_message_id TEXT,
+                plain_text TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS message_part_store (
                 message_id TEXT NOT NULL,
-                attachment_type TEXT NOT NULL,
-                asset_id TEXT
+                ordinal INTEGER NOT NULL,
+                part_kind TEXT NOT NULL,
+                text_value TEXT,
+                asset_id TEXT,
+                target_actor_id TEXT,
+                target_message_id TEXT,
+                PRIMARY KEY (message_id, ordinal)
+            );
+            CREATE TABLE IF NOT EXISTS message_relation_store (
+                relation_id TEXT PRIMARY KEY,
+                source_message_id TEXT NOT NULL,
+                relation_kind TEXT NOT NULL,
+                target_message_id TEXT,
+                target_actor_id TEXT,
+                emoji TEXT
             );
             CREATE TABLE IF NOT EXISTS asset_store (
                 asset_id TEXT PRIMARY KEY,
-                storage_path TEXT NOT NULL,
+                asset_kind TEXT NOT NULL,
                 mime_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                source_kind TEXT NOT NULL,
+                source_value TEXT NOT NULL,
                 availability_status TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS conversation_ingest_state (
@@ -61,7 +85,7 @@ impl HistoryStore {
              VALUES (?1, ?2, ?3)
              ON CONFLICT(conversation_id) DO UPDATE
              SET enabled = excluded.enabled, retention_days = excluded.retention_days",
-            rusqlite::params![conversation_id, enabled as i64, retention_days],
+            params![conversation_id, enabled as i64, retention_days],
         )?;
         Ok(())
     }
@@ -86,28 +110,64 @@ impl HistoryStore {
         normalized_text: &str,
         created_at_epoch_secs: i64,
     ) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "INSERT OR IGNORE INTO message_store (
-                message_id,
+        let platform = platform_from_conversation_id(conversation_id);
+        let event_id = event_id_for_message(message_id);
+        let tx = self.conn.unchecked_transaction()?;
+
+        tx.execute(
+            "INSERT OR IGNORE INTO event_store (
+                event_id,
+                platform,
+                platform_account,
                 conversation_id,
                 actor_id,
-                normalized_text,
-                created_at_epoch_secs
-            ) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![
-                message_id,
+                event_kind,
+                created_at_epoch_secs,
+                raw_native_payload_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, 'message', ?6, ?7)",
+            params![
+                event_id,
+                platform,
+                "compat:unknown",
                 conversation_id,
                 actor_id,
-                normalized_text,
-                created_at_epoch_secs
+                created_at_epoch_secs,
+                "{}"
             ],
         )?;
-        Ok(())
+
+        tx.execute(
+            "INSERT OR IGNORE INTO message_store (
+                message_id,
+                event_id,
+                reply_to_message_id,
+                plain_text
+            ) VALUES (?1, ?2, NULL, ?3)",
+            params![message_id, event_id, normalized_text],
+        )?;
+
+        tx.execute(
+            "INSERT OR IGNORE INTO message_part_store (
+                message_id,
+                ordinal,
+                part_kind,
+                text_value,
+                asset_id,
+                target_actor_id,
+                target_message_id
+            ) VALUES (?1, 0, 'text', ?2, NULL, NULL, NULL)",
+            params![message_id, normalized_text],
+        )?;
+
+        tx.commit()
     }
 
     pub fn message_count(&self, conversation_id: &str) -> rusqlite::Result<i64> {
         self.conn.query_row(
-            "SELECT COUNT(*) FROM message_store WHERE conversation_id = ?1",
+            "SELECT COUNT(*)
+             FROM message_store m
+             INNER JOIN event_store e ON e.event_id = m.event_id
+             WHERE e.conversation_id = ?1",
             [conversation_id],
             |row| row.get::<_, i64>(0),
         )
@@ -120,18 +180,20 @@ impl HistoryStore {
     ) -> rusqlite::Result<Vec<(String, String, bool)>> {
         let mut stmt = self.conn.prepare(
             "SELECT m.message_id,
-                    m.normalized_text,
+                    m.plain_text,
                     EXISTS(
                         SELECT 1
-                        FROM message_attachment a
-                        WHERE a.message_id = m.message_id
+                        FROM message_part_store p
+                        WHERE p.message_id = m.message_id
+                            AND p.asset_id IS NOT NULL
                     ) AS has_attachment
              FROM message_store m
-             WHERE m.conversation_id = ?1
-             ORDER BY m.created_at_epoch_secs DESC, m.message_id DESC
+             INNER JOIN event_store e ON e.event_id = m.event_id
+             WHERE e.conversation_id = ?1
+             ORDER BY e.created_at_epoch_secs DESC, m.message_id DESC
              LIMIT ?2",
         )?;
-        let rows = stmt.query_map(rusqlite::params![conversation_id, limit as i64], |row| {
+        let rows = stmt.query_map(params![conversation_id, limit as i64], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -160,7 +222,7 @@ impl HistoryStore {
     pub fn insert_live_asset_for_test(
         &self,
         asset_id: &str,
-        storage_path: &str,
+        source_value: &str,
     ) -> rusqlite::Result<()> {
         let now = now_secs()?;
         let message_id = format!("asset-holder-{asset_id}");
@@ -175,14 +237,28 @@ impl HistoryStore {
             now,
         )?;
         self.conn.execute(
-            "INSERT OR REPLACE INTO asset_store (asset_id, storage_path, mime_type, availability_status)
-             VALUES (?1, ?2, 'image/png', 'available')",
-            rusqlite::params![asset_id, storage_path],
+            "INSERT OR REPLACE INTO asset_store (
+                asset_id,
+                asset_kind,
+                mime_type,
+                size_bytes,
+                source_kind,
+                source_value,
+                availability_status
+            ) VALUES (?1, 'image', 'image/png', 0, 'path', ?2, 'available')",
+            params![asset_id, source_value],
         )?;
         self.conn.execute(
-            "INSERT OR REPLACE INTO message_attachment (attachment_id, message_id, attachment_type, asset_id)
-             VALUES (?1, ?2, 'image', ?3)",
-            rusqlite::params![format!("attachment-{asset_id}"), message_id, asset_id],
+            "INSERT OR REPLACE INTO message_part_store (
+                message_id,
+                ordinal,
+                part_kind,
+                text_value,
+                asset_id,
+                target_actor_id,
+                target_message_id
+            ) VALUES (?1, 1, 'asset', NULL, ?2, NULL, NULL)",
+            params![message_id, asset_id],
         )?;
         Ok(())
     }
@@ -199,27 +275,63 @@ impl HistoryStore {
         let now = now_secs()?;
 
         tx.execute(
-            "DELETE FROM message_attachment
+            "DELETE FROM message_relation_store
+             WHERE source_message_id IN (
+                SELECT m.message_id
+                FROM message_store m
+                INNER JOIN event_store e ON e.event_id = m.event_id
+                INNER JOIN conversation_ingest_state s ON s.conversation_id = e.conversation_id
+                WHERE s.enabled = 1
+                    AND e.created_at_epoch_secs < (?1 - (s.retention_days * 86_400))
+             )
+             OR target_message_id IN (
+                SELECT m.message_id
+                FROM message_store m
+                INNER JOIN event_store e ON e.event_id = m.event_id
+                INNER JOIN conversation_ingest_state s ON s.conversation_id = e.conversation_id
+                WHERE s.enabled = 1
+                    AND e.created_at_epoch_secs < (?1 - (s.retention_days * 86_400))
+             )",
+            params![now],
+        )?;
+
+        tx.execute(
+            "DELETE FROM message_part_store
              WHERE message_id IN (
                 SELECT m.message_id
                 FROM message_store m
-                INNER JOIN conversation_ingest_state s ON s.conversation_id = m.conversation_id
+                INNER JOIN event_store e ON e.event_id = m.event_id
+                INNER JOIN conversation_ingest_state s ON s.conversation_id = e.conversation_id
                 WHERE s.enabled = 1
-                    AND m.created_at_epoch_secs < (?1 - (s.retention_days * 86_400))
+                    AND e.created_at_epoch_secs < (?1 - (s.retention_days * 86_400))
              )",
-            rusqlite::params![now],
+            params![now],
         )?;
 
         tx.execute(
             "DELETE FROM message_store
-             WHERE EXISTS (
-                SELECT 1
-                FROM conversation_ingest_state s
-                WHERE s.conversation_id = message_store.conversation_id
-                    AND s.enabled = 1
-                    AND message_store.created_at_epoch_secs < (?1 - (s.retention_days * 86_400))
+             WHERE message_id IN (
+                SELECT m.message_id
+                FROM message_store m
+                INNER JOIN event_store e ON e.event_id = m.event_id
+                INNER JOIN conversation_ingest_state s ON s.conversation_id = e.conversation_id
+                WHERE s.enabled = 1
+                    AND e.created_at_epoch_secs < (?1 - (s.retention_days * 86_400))
              )",
-            rusqlite::params![now],
+            params![now],
+        )?;
+
+        tx.execute(
+            "DELETE FROM event_store
+             WHERE event_kind = 'message'
+               AND EXISTS (
+                    SELECT 1
+                    FROM conversation_ingest_state s
+                    WHERE s.conversation_id = event_store.conversation_id
+                      AND s.enabled = 1
+                      AND event_store.created_at_epoch_secs < (?1 - (s.retention_days * 86_400))
+               )",
+            params![now],
         )?;
 
         tx.commit()
@@ -230,13 +342,21 @@ impl HistoryStore {
             "DELETE FROM asset_store
              WHERE asset_id NOT IN (
                 SELECT DISTINCT asset_id
-                FROM message_attachment
+                FROM message_part_store
                 WHERE asset_id IS NOT NULL
              )",
             [],
         )?;
         Ok(())
     }
+}
+
+fn event_id_for_message(message_id: &str) -> String {
+    format!("event::{message_id}")
+}
+
+fn platform_from_conversation_id(conversation_id: &str) -> &str {
+    conversation_id.split(':').next().unwrap_or("unknown")
 }
 
 fn now_secs() -> rusqlite::Result<i64> {
