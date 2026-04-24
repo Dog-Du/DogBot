@@ -13,7 +13,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing::warn;
 
@@ -22,12 +22,12 @@ use crate::{
     docker_client::DockerRuntime,
     exec::{DockerRunner, ExecutionBackend},
     history::{cleanup::purge_expired_history, store::HistoryStore},
-    inbound_models::InboundMessage,
-    messenger::{MessageDelivery, NapCatMessenger},
     models::{
         ErrorResponse, MessageRequest, MessageResponse, RunRequest, RunResponse,
         ValidatedRunRequest,
     },
+    platforms::{qq, wechatpadpro},
+    protocol::CanonicalEvent,
     session_store::SessionStore,
     trigger_resolver::{TriggerDecision, TriggerResolver},
 };
@@ -61,14 +61,22 @@ impl Runner for DockerRunner {
     }
 }
 
+#[derive(Clone)]
+struct UnsupportedMessenger;
+
 #[async_trait]
-impl Messenger for NapCatMessenger {
+impl Messenger for UnsupportedMessenger {
     async fn send(
         &self,
-        request: MessageRequest,
-        session: crate::session_store::SessionRecord,
+        _request: MessageRequest,
+        _session: crate::session_store::SessionRecord,
     ) -> Result<MessageResponse, ErrorResponse> {
-        MessageDelivery::send(self, request, session).await
+        Err(ErrorResponse {
+            status: "error".into(),
+            error_code: "unsupported_platform".into(),
+            message: "message dispatch is not configured in this runtime".into(),
+            timed_out: false,
+        })
     }
 }
 
@@ -105,6 +113,9 @@ struct InMemoryRateLimiter {
 
 const DEFAULT_HISTORY_RETENTION_DAYS: i64 = 180;
 const HISTORY_CLEANUP_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const DEFAULT_QQ_ACCOUNT_ID: &str = "qq:bot_uin:123";
+const DEFAULT_QQ_BOT_ID: &str = "123";
+const DEFAULT_WECHATPADPRO_ACCOUNT_ID: &str = "wechatpadpro:account:bot";
 
 #[derive(Default)]
 struct HistoryCleanupState {
@@ -199,6 +210,9 @@ pub fn build_test_app(runner: Arc<dyn Runner>) -> Router {
         .join("state/history.db")
         .display()
         .to_string();
+    settings.platform_qq_account_id = Some(DEFAULT_QQ_ACCOUNT_ID.into());
+    settings.platform_qq_bot_id = Some(DEFAULT_QQ_BOT_ID.into());
+    settings.platform_wechatpadpro_account_id = Some(DEFAULT_WECHATPADPRO_ACCOUNT_ID.into());
     build_test_app_with_settings(runner, settings)
 }
 
@@ -208,15 +222,13 @@ pub fn build_test_app_with_settings(runner: Arc<dyn Runner>, settings: Settings)
         HistoryStore::open(&settings.history_db_path).expect("history store"),
     ));
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
-    let messenger =
-        Arc::new(NapCatMessenger::from_settings(&settings).expect("default NapCat messenger"));
     router(AppState {
         settings,
         queue_tx,
         session_store,
         history_store,
         history_cleanup_state: Arc::new(StdMutex::new(HistoryCleanupState::default())),
-        messenger,
+        messenger: Arc::new(UnsupportedMessenger),
     })
 }
 
@@ -252,9 +264,6 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
         HistoryStore::open(&settings.history_db_path)
             .map_err(|err| io::Error::other(err.to_string()))?,
     ));
-    let messenger = Arc::new(
-        NapCatMessenger::from_settings(&settings).map_err(|err| io::Error::other(err.message))?,
-    );
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
     Ok(router(AppState {
         settings,
@@ -262,7 +271,7 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
         session_store,
         history_store,
         history_cleanup_state: Arc::new(StdMutex::new(HistoryCleanupState::default())),
-        messenger,
+        messenger: Arc::new(UnsupportedMessenger),
     }))
 }
 
@@ -271,7 +280,16 @@ fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/v1/runs", post(run))
         .route("/v1/messages", post(send_message))
-        .route("/v1/inbound-messages", post(handle_inbound_message))
+        .route(
+            "/v1/platforms/wechatpadpro/events",
+            get(wechat_probe)
+                .head(wechat_probe)
+                .post(handle_wechatpadpro_event),
+        )
+        .route(
+            "/v1/platforms/qq/napcat/ws",
+            get(qq_probe).post(handle_qq_napcat_event),
+        )
         .with_state(state)
 }
 
@@ -310,7 +328,15 @@ fn spawn_dispatcher(settings: Settings, runner: Arc<dyn Runner>) -> mpsc::Sender
     queue_tx
 }
 
-async fn healthz() -> Json<serde_json::Value> {
+async fn healthz() -> Json<Value> {
+    Json(json!({ "status": "ok" }))
+}
+
+async fn wechat_probe() -> Json<Value> {
+    Json(json!({ "status": "ok" }))
+}
+
+async fn qq_probe() -> Json<Value> {
     Json(json!({ "status": "ok" }))
 }
 
@@ -336,15 +362,7 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
     request.user_id = match normalize_context_identifier(&request.user_id, "user_id") {
         Ok(user_id) => user_id,
         Err(message) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    status: "error".into(),
-                    error_code: "invalid_request".into(),
-                    message,
-                    timed_out: false,
-                }),
-            )
+            return error_response(StatusCode::BAD_REQUEST, "invalid_request", &message)
                 .into_response();
         }
     };
@@ -352,15 +370,7 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
         match normalize_context_identifier(&request.conversation_id, "conversation_id") {
             Ok(conversation_id) => conversation_id,
             Err(message) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse {
-                        status: "error".into(),
-                        error_code: "invalid_request".into(),
-                        message,
-                        timed_out: false,
-                    }),
-                )
+                return error_response(StatusCode::BAD_REQUEST, "invalid_request", &message)
                     .into_response();
             }
         };
@@ -368,82 +378,14 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
         match normalize_context_identifier(&request.platform_account_id, "platform_account_id") {
             Ok(platform_account_id) => platform_account_id,
             Err(message) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse {
-                        status: "error".into(),
-                        error_code: "invalid_request".into(),
-                        message,
-                        timed_out: false,
-                    }),
-                )
+                return error_response(StatusCode::BAD_REQUEST, "invalid_request", &message)
                     .into_response();
             }
         };
 
-    let validated = match request.validate(
-        state.settings.default_timeout_secs,
-        state.settings.max_timeout_secs,
-    ) {
-        Ok(validated) => validated,
-        Err(message) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    status: "error".into(),
-                    error_code: "invalid_request".into(),
-                    message,
-                    timed_out: false,
-                }),
-            )
-                .into_response();
-        }
-    };
-    let (responder, receiver) = oneshot::channel();
-    match state.queue_tx.try_send(QueuedRun {
-        request,
-        validated,
-        responder,
-    }) {
-        Ok(()) => {}
-        Err(mpsc::error::TrySendError::Full(_)) => {
-            return (
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(ErrorResponse {
-                    status: "error".into(),
-                    error_code: "queue_full".into(),
-                    message: "run queue is full".into(),
-                    timed_out: false,
-                }),
-            )
-                .into_response();
-        }
-        Err(mpsc::error::TrySendError::Closed(_)) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(to_internal_error_message("run queue is closed")),
-            )
-                .into_response();
-        }
-    }
-
-    match receiver.await {
-        Ok(Ok(response)) => (StatusCode::OK, Json(response)).into_response(),
-        Ok(Err(error)) if error.timed_out => {
-            (StatusCode::REQUEST_TIMEOUT, Json(error)).into_response()
-        }
-        Ok(Err(error)) if error.error_code == "rate_limited" => {
-            (StatusCode::TOO_MANY_REQUESTS, Json(error)).into_response()
-        }
-        Ok(Err(error)) if error.error_code == "session_conflict" => {
-            (StatusCode::CONFLICT, Json(error)).into_response()
-        }
-        Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response(),
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(to_internal_error_message("dispatcher dropped run result")),
-        )
-            .into_response(),
+    match enqueue_run_request(&state, request).await {
+        Ok(response) => response,
+        Err(response) => response,
     }
 }
 
@@ -484,14 +426,6 @@ async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
         }
     };
 
-    if request.mention_user_id.is_none()
-        && is_group_conversation(&session.conversation_id)
-        && !session.user_id.trim().is_empty()
-        && session.user_id != session.platform_account
-    {
-        request.mention_user_id = Some(session.user_id.clone());
-    }
-
     match state.messenger.send(request, session).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) if error.error_code == "unsupported_platform" => {
@@ -504,45 +438,187 @@ async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
     }
 }
 
-async fn handle_inbound_message(State(state): State<AppState>, body: Bytes) -> Response {
+async fn handle_wechatpadpro_event(State(state): State<AppState>, body: Bytes) -> Response {
     maybe_purge_expired_history(&state);
 
-    let message: InboundMessage = match serde_json::from_slice(&body) {
-        Ok(message) => message,
+    let payload: Value = match serde_json::from_slice(&body) {
+        Ok(payload) => payload,
         Err(err) => {
             return error_response(StatusCode::BAD_REQUEST, "invalid_json", &err.to_string())
                 .into_response();
         }
     };
 
-    let decision = TriggerResolver::default().resolve(&message);
-    let status = match decision {
-        TriggerDecision::Ignore => "ignored",
-        TriggerDecision::Run | TriggerDecision::Status => "accepted",
+    let platform_account = state
+        .settings
+        .platform_wechatpadpro_account_id
+        .clone()
+        .unwrap_or_else(|| DEFAULT_WECHATPADPRO_ACCOUNT_ID.to_string());
+    let mention_names = state
+        .settings
+        .platform_wechatpadpro_bot_mention_names
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+
+    let Some(event) =
+        wechatpadpro::decode_webhook_event(&payload, &platform_account, &mention_names)
+    else {
+        return accepted_response("ignored");
     };
 
-    if let Err(err) = ensure_history_ingest_state_for_trigger(&state, &message, &decision) {
+    handle_canonical_event(&state, event).await
+}
+
+async fn handle_qq_napcat_event(State(state): State<AppState>, body: Bytes) -> Response {
+    maybe_purge_expired_history(&state);
+
+    let payload: Value = match serde_json::from_slice(&body) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return error_response(StatusCode::BAD_REQUEST, "invalid_json", &err.to_string())
+                .into_response();
+        }
+    };
+
+    let platform_account = state
+        .settings
+        .platform_qq_account_id
+        .clone()
+        .or_else(|| {
+            state
+                .settings
+                .platform_qq_bot_id
+                .as_ref()
+                .map(|bot_id| format!("qq:bot_uin:{bot_id}"))
+        })
+        .unwrap_or_else(|| DEFAULT_QQ_ACCOUNT_ID.to_string());
+
+    let Some(event) = qq::decode_napcat_event(&payload, &platform_account) else {
+        return accepted_response("ignored");
+    };
+
+    handle_canonical_event(&state, event).await
+}
+
+async fn handle_canonical_event(state: &AppState, event: CanonicalEvent) -> Response {
+    let decision = TriggerResolver::default().resolve(&event);
+
+    if let Err(err) = ensure_history_ingest_state_for_trigger(state, &event, &decision) {
         warn!(
-            conversation_id = %message.conversation_id,
-            message_id = %message.message_id,
+            conversation = %event.conversation,
+            event_id = %event.event_id,
             "failed to update history ingest state: {err}"
         );
     }
 
-    if let Err(err) = mirror_history_message_if_enabled(&state, &message) {
+    if let Err(err) = mirror_history_event_if_enabled(state, &event) {
         warn!(
-            conversation_id = %message.conversation_id,
-            message_id = %message.message_id,
-            "failed to mirror inbound message into history store: {err}"
+            conversation = %event.conversation,
+            event_id = %event.event_id,
+            "failed to mirror canonical event into history store: {err}"
         );
     }
 
-    (StatusCode::OK, Json(json!({ "status": status }))).into_response()
+    match decision {
+        TriggerDecision::Ignore => accepted_response("ignored"),
+        TriggerDecision::Run | TriggerDecision::Status => {
+            let Some(request) = build_run_request_from_event(&event) else {
+                return accepted_response("ignored");
+            };
+            match enqueue_run_request(state, request).await {
+                Ok(response) => response,
+                Err(response) => response,
+            }
+        }
+    }
+}
+
+fn build_run_request_from_event(event: &CanonicalEvent) -> Option<RunRequest> {
+    let message = event.message()?;
+    let prompt = message.project_plain_text().trim().to_string();
+    let chat_type = match conversation_scope(&event.conversation) {
+        Some("private") => "private",
+        Some("group") => "group",
+        _ => "unknown",
+    };
+
+    Some(RunRequest {
+        platform: event.platform.clone(),
+        platform_account_id: event.platform_account.clone(),
+        conversation_id: event.conversation.clone(),
+        session_id: event.conversation.clone(),
+        user_id: event.actor.clone(),
+        chat_type: chat_type.into(),
+        cwd: "/workspace".into(),
+        prompt: prompt.clone(),
+        trigger_summary: Some(prompt),
+        reply_excerpt: None,
+        timeout_secs: None,
+    })
+}
+
+async fn enqueue_run_request(state: &AppState, request: RunRequest) -> Result<Response, Response> {
+    let validated = match request.validate(
+        state.settings.default_timeout_secs,
+        state.settings.max_timeout_secs,
+    ) {
+        Ok(validated) => validated,
+        Err(message) => {
+            return Err(
+                error_response(StatusCode::BAD_REQUEST, "invalid_request", &message)
+                    .into_response(),
+            );
+        }
+    };
+
+    let (responder, receiver) = oneshot::channel();
+    match state.queue_tx.try_send(QueuedRun {
+        request,
+        validated,
+        responder,
+    }) {
+        Ok(()) => {}
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            return Err(error_response(
+                StatusCode::TOO_MANY_REQUESTS,
+                "queue_full",
+                "run queue is full",
+            )
+            .into_response());
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(to_internal_error_message("run queue is closed")),
+            )
+                .into_response());
+        }
+    }
+
+    match receiver.await {
+        Ok(Ok(response)) => Ok((StatusCode::OK, Json(response)).into_response()),
+        Ok(Err(error)) if error.timed_out => {
+            Ok((StatusCode::REQUEST_TIMEOUT, Json(error)).into_response())
+        }
+        Ok(Err(error)) if error.error_code == "rate_limited" => {
+            Ok((StatusCode::TOO_MANY_REQUESTS, Json(error)).into_response())
+        }
+        Ok(Err(error)) if error.error_code == "session_conflict" => {
+            Ok((StatusCode::CONFLICT, Json(error)).into_response())
+        }
+        Ok(Err(error)) => Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()),
+        Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(to_internal_error_message("dispatcher dropped run result")),
+        )
+            .into_response()),
+    }
 }
 
 fn ensure_history_ingest_state_for_trigger(
     state: &AppState,
-    message: &InboundMessage,
+    event: &CanonicalEvent,
     decision: &TriggerDecision,
 ) -> rusqlite::Result<()> {
     if matches!(decision, TriggerDecision::Ignore) {
@@ -553,16 +629,31 @@ fn ensure_history_ingest_state_for_trigger(
         .history_store
         .lock()
         .expect("history store mutex poisoned");
-    if store.ingest_enabled(&message.platform_account, &message.conversation_id)? {
+    if store.ingest_enabled(&event.platform_account, &event.conversation)? {
         return Ok(());
     }
 
     store.upsert_ingest_state(
-        &message.platform_account,
-        &message.conversation_id,
+        &event.platform_account,
+        &event.conversation,
         true,
         DEFAULT_HISTORY_RETENTION_DAYS,
     )
+}
+
+fn mirror_history_event_if_enabled(
+    state: &AppState,
+    event: &CanonicalEvent,
+) -> rusqlite::Result<()> {
+    let store = state
+        .history_store
+        .lock()
+        .expect("history store mutex poisoned");
+    if !store.ingest_enabled(&event.platform_account, &event.conversation)? {
+        return Ok(());
+    }
+
+    store.insert_canonical_event(event)
 }
 
 fn maybe_purge_expired_history(state: &AppState) {
@@ -587,28 +678,12 @@ fn maybe_purge_expired_history(state: &AppState) {
     }
 }
 
-fn mirror_history_message_if_enabled(
-    state: &AppState,
-    message: &InboundMessage,
-) -> rusqlite::Result<()> {
-    let store = state
-        .history_store
-        .lock()
-        .expect("history store mutex poisoned");
-    if !store.ingest_enabled(&message.platform_account, &message.conversation_id)? {
-        return Ok(());
-    }
-    store.insert_inbound_message(message)
+fn accepted_response(status: &str) -> Response {
+    (StatusCode::OK, Json(json!({ "status": status }))).into_response()
 }
 
 fn is_limit_exhausted(limit: usize, current_len: usize) -> bool {
     limit > 0 && current_len >= limit
-}
-
-fn is_group_conversation(conversation_id: &str) -> bool {
-    let mut parts = conversation_id.splitn(3, ':');
-    let _platform = parts.next();
-    matches!(parts.next(), Some("group" | "GroupMessage"))
 }
 
 fn prune_window(events: &mut VecDeque<Instant>, now: Instant, window: Duration) {
@@ -668,4 +743,10 @@ fn normalize_context_identifier(value: &str, field_name: &str) -> Result<String,
     }
 
     Ok(normalized.to_string())
+}
+
+fn conversation_scope(conversation: &str) -> Option<&str> {
+    let mut parts = conversation.splitn(3, ':');
+    let _platform = parts.next()?;
+    parts.next()
 }

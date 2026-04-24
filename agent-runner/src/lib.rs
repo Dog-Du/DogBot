@@ -2,6 +2,7 @@ pub mod api_proxy;
 pub mod api_proxy_config;
 pub mod bootstrap;
 pub mod config;
+pub mod dispatch;
 pub mod docker_client;
 pub mod env_helpers;
 pub mod exec;

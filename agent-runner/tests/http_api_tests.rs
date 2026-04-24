@@ -63,6 +63,10 @@ fn test_settings() -> agent_runner::config::Settings {
         bifrost_upstream_provider_type: "anthropic".into(),
         napcat_api_base_url: "http://127.0.0.1:3001".into(),
         napcat_access_token: None,
+        platform_qq_account_id: None,
+        platform_qq_bot_id: None,
+        platform_wechatpadpro_account_id: Some("wechatpadpro:account:bot".into()),
+        platform_wechatpadpro_bot_mention_names: vec!["DogDu".into()],
         max_concurrent_runs: 1,
         max_queue_depth: 1,
         global_rate_limit_per_minute: 10,
@@ -149,6 +153,54 @@ async fn health_endpoint_returns_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn app_exposes_platform_ingress_routes() {
+    let app = agent_runner::server::build_test_app(Arc::new(MockRunner::success()));
+
+    let wechat = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("HEAD")
+                .uri("/v1/platforms/wechatpadpro/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wechat.status(), StatusCode::OK);
+
+    let qq = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/platforms/qq/napcat/ws")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(qq.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn inbound_messages_route_is_removed() {
+    let app = agent_runner::server::build_test_app(Arc::new(MockRunner::success()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/inbound-messages")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

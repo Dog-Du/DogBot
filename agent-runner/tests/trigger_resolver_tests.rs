@@ -1,23 +1,51 @@
-use agent_runner::inbound_models::InboundMessage;
+use agent_runner::protocol::{CanonicalEvent, CanonicalMessage, EventKind, MessagePart};
 use agent_runner::trigger_resolver::{TriggerDecision, TriggerResolver};
+
+fn message_event(
+    conversation: &str,
+    platform_account: &str,
+    text: &str,
+    mentions: Vec<&str>,
+    reply_to: Option<&str>,
+) -> CanonicalEvent {
+    CanonicalEvent {
+        platform: conversation
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .to_string(),
+        platform_account: platform_account.into(),
+        conversation: conversation.into(),
+        actor: "platform:user:1".into(),
+        event_id: "evt-1".into(),
+        timestamp_epoch_secs: 1,
+        kind: EventKind::Message {
+            message: CanonicalMessage {
+                message_id: "m1".into(),
+                reply_to: reply_to.map(str::to_string),
+                parts: if text.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![MessagePart::Text { text: text.into() }]
+                },
+                mentions: mentions.into_iter().map(str::to_string).collect(),
+                native_metadata: serde_json::json!({}),
+            },
+        },
+        raw_native_payload: serde_json::json!({}),
+    }
+}
 
 #[test]
 fn private_message_runs_for_any_non_empty_text() {
     let resolver = TriggerResolver::default();
-    let message = InboundMessage {
-        platform: "qq".into(),
-        platform_account: "qq:bot_uin:123".into(),
-        conversation_id: "qq:private:1".into(),
-        actor_id: "qq:user:1".into(),
-        message_id: "m1".into(),
-        reply_to_message_id: None,
-        raw_segments_json: "[]".into(),
-        normalized_text: "请帮我总结一下".into(),
-        mentions: vec![],
-        is_group: false,
-        is_private: true,
-        timestamp_epoch_secs: 1,
-    };
+    let message = message_event(
+        "qq:private:1",
+        "qq:bot_uin:123",
+        "请帮我总结一下",
+        vec![],
+        None,
+    );
 
     assert_eq!(resolver.resolve(&message), TriggerDecision::Run);
 }
@@ -25,20 +53,13 @@ fn private_message_runs_for_any_non_empty_text() {
 #[test]
 fn private_status_command_is_still_supported() {
     let resolver = TriggerResolver::default();
-    let message = InboundMessage {
-        platform: "qq".into(),
-        platform_account: "qq:bot_uin:123".into(),
-        conversation_id: "qq:private:1".into(),
-        actor_id: "qq:user:1".into(),
-        message_id: "m-status".into(),
-        reply_to_message_id: None,
-        raw_segments_json: "[]".into(),
-        normalized_text: "/agent-status".into(),
-        mentions: vec![],
-        is_group: false,
-        is_private: true,
-        timestamp_epoch_secs: 1,
-    };
+    let message = message_event(
+        "qq:private:1",
+        "qq:bot_uin:123",
+        "/agent-status",
+        vec![],
+        None,
+    );
 
     assert_eq!(resolver.resolve(&message), TriggerDecision::Status);
 }
@@ -46,20 +67,13 @@ fn private_status_command_is_still_supported() {
 #[test]
 fn group_message_requires_bot_mention() {
     let resolver = TriggerResolver::default();
-    let message = InboundMessage {
-        platform: "wechatpadpro".into(),
-        platform_account: "wechatpadpro:account:wxid_bot".into(),
-        conversation_id: "wechat:group:123@chatroom".into(),
-        actor_id: "wechat:user:wxid_user".into(),
-        message_id: "m2".into(),
-        reply_to_message_id: None,
-        raw_segments_json: "[]".into(),
-        normalized_text: "看这个".into(),
-        mentions: vec![],
-        is_group: true,
-        is_private: false,
-        timestamp_epoch_secs: 1,
-    };
+    let message = message_event(
+        "wechatpadpro:group:123@chatroom",
+        "wechatpadpro:account:wxid_bot",
+        "看这个",
+        vec![],
+        None,
+    );
 
     assert_eq!(resolver.resolve(&message), TriggerDecision::Ignore);
 }
@@ -67,20 +81,13 @@ fn group_message_requires_bot_mention() {
 #[test]
 fn group_message_runs_when_bot_mention_present_without_command_prefix() {
     let resolver = TriggerResolver::default();
-    let message = InboundMessage {
-        platform: "qq".into(),
-        platform_account: "qq:bot_uin:123".into(),
-        conversation_id: "qq:group:100".into(),
-        actor_id: "qq:user:1".into(),
-        message_id: "m3".into(),
-        reply_to_message_id: None,
-        raw_segments_json: "[]".into(),
-        normalized_text: "麻烦看下".into(),
-        mentions: vec!["qq:bot_uin:123".into()],
-        is_group: true,
-        is_private: false,
-        timestamp_epoch_secs: 1,
-    };
+    let message = message_event(
+        "qq:group:100",
+        "qq:bot_uin:123",
+        "麻烦看下",
+        vec!["qq:bot_uin:123"],
+        None,
+    );
 
     assert_eq!(resolver.resolve(&message), TriggerDecision::Run);
 }
@@ -88,19 +95,26 @@ fn group_message_runs_when_bot_mention_present_without_command_prefix() {
 #[test]
 fn group_message_runs_when_mention_has_no_extra_text() {
     let resolver = TriggerResolver::default();
-    let message = InboundMessage {
+    let message = CanonicalEvent {
         platform: "wechatpadpro".into(),
         platform_account: "wechatpadpro:account:wxid_bot".into(),
-        conversation_id: "wechat:group:123@chatroom".into(),
-        actor_id: "wechat:user:wxid_user".into(),
-        message_id: "m4".into(),
-        reply_to_message_id: None,
-        raw_segments_json: "[]".into(),
-        normalized_text: "".into(),
-        mentions: vec!["wechatpadpro:account:wxid_bot".into()],
-        is_group: true,
-        is_private: false,
+        conversation: "wechatpadpro:group:123@chatroom".into(),
+        actor: "wechatpadpro:user:wxid_user".into(),
+        event_id: "evt-4".into(),
         timestamp_epoch_secs: 1,
+        kind: EventKind::Message {
+            message: CanonicalMessage {
+                message_id: "m4".into(),
+                reply_to: None,
+                parts: vec![MessagePart::Mention {
+                    actor_id: "wechatpadpro:account:wxid_bot".into(),
+                    display: "@bot".into(),
+                }],
+                mentions: vec!["wechatpadpro:account:wxid_bot".into()],
+                native_metadata: serde_json::json!({}),
+            },
+        },
+        raw_native_payload: serde_json::json!({}),
     };
 
     assert_eq!(resolver.resolve(&message), TriggerDecision::Run);
@@ -109,20 +123,13 @@ fn group_message_runs_when_mention_has_no_extra_text() {
 #[test]
 fn group_message_mentioning_someone_else_does_not_run() {
     let resolver = TriggerResolver::default();
-    let message = InboundMessage {
-        platform: "qq".into(),
-        platform_account: "qq:bot_uin:123".into(),
-        conversation_id: "qq:group:100".into(),
-        actor_id: "qq:user:1".into(),
-        message_id: "m5".into(),
-        reply_to_message_id: None,
-        raw_segments_json: "[]".into(),
-        normalized_text: "但是 @别的人".into(),
-        mentions: vec!["qq:user:999".into()],
-        is_group: true,
-        is_private: false,
-        timestamp_epoch_secs: 1,
-    };
+    let message = message_event(
+        "qq:group:100",
+        "qq:bot_uin:123",
+        "但是 @别的人",
+        vec!["qq:user:999"],
+        None,
+    );
 
     assert_eq!(resolver.resolve(&message), TriggerDecision::Ignore);
 }
@@ -130,20 +137,13 @@ fn group_message_mentioning_someone_else_does_not_run() {
 #[test]
 fn group_message_status_command_requires_bot_mention() {
     let resolver = TriggerResolver::default();
-    let message = InboundMessage {
-        platform: "wechatpadpro".into(),
-        platform_account: "wechatpadpro:account:wxid_bot".into(),
-        conversation_id: "wechat:group:123@chatroom".into(),
-        actor_id: "wechat:user:wxid_user".into(),
-        message_id: "m6".into(),
-        reply_to_message_id: None,
-        raw_segments_json: "[]".into(),
-        normalized_text: "/agent-status".into(),
-        mentions: vec![],
-        is_group: true,
-        is_private: false,
-        timestamp_epoch_secs: 1,
-    };
+    let message = message_event(
+        "wechatpadpro:group:123@chatroom",
+        "wechatpadpro:account:wxid_bot",
+        "/agent-status",
+        vec![],
+        None,
+    );
 
     assert_eq!(resolver.resolve(&message), TriggerDecision::Ignore);
 }
@@ -151,20 +151,13 @@ fn group_message_status_command_requires_bot_mention() {
 #[test]
 fn group_message_status_command_with_bot_mention_returns_status() {
     let resolver = TriggerResolver::default();
-    let message = InboundMessage {
-        platform: "wechatpadpro".into(),
-        platform_account: "wechatpadpro:account:wxid_bot".into(),
-        conversation_id: "wechat:group:123@chatroom".into(),
-        actor_id: "wechat:user:wxid_user".into(),
-        message_id: "m6b".into(),
-        reply_to_message_id: None,
-        raw_segments_json: "[]".into(),
-        normalized_text: "/agent-status".into(),
-        mentions: vec!["wechatpadpro:account:wxid_bot".into()],
-        is_group: true,
-        is_private: false,
-        timestamp_epoch_secs: 1,
-    };
+    let message = message_event(
+        "wechatpadpro:group:123@chatroom",
+        "wechatpadpro:account:wxid_bot",
+        "/agent-status",
+        vec!["wechatpadpro:account:wxid_bot"],
+        None,
+    );
 
     assert_eq!(resolver.resolve(&message), TriggerDecision::Status);
 }
@@ -172,20 +165,13 @@ fn group_message_status_command_with_bot_mention_returns_status() {
 #[test]
 fn private_non_status_command_like_text_still_runs() {
     let resolver = TriggerResolver::default();
-    let message = InboundMessage {
-        platform: "qq".into(),
-        platform_account: "qq:bot_uin:123".into(),
-        conversation_id: "qq:private:1".into(),
-        actor_id: "qq:user:1".into(),
-        message_id: "m7".into(),
-        reply_to_message_id: None,
-        raw_segments_json: "[]".into(),
-        normalized_text: "这个是 /agent-status2 不是状态命令，/agented 也不是".into(),
-        mentions: vec![],
-        is_group: false,
-        is_private: true,
-        timestamp_epoch_secs: 1,
-    };
+    let message = message_event(
+        "qq:private:1",
+        "qq:bot_uin:123",
+        "这个是 /agent-status2 不是状态命令，/agented 也不是",
+        vec![],
+        None,
+    );
 
     assert_eq!(resolver.resolve(&message), TriggerDecision::Run);
 }
@@ -193,20 +179,13 @@ fn private_non_status_command_like_text_still_runs() {
 #[test]
 fn group_reply_without_mention_does_not_run() {
     let resolver = TriggerResolver::default();
-    let message = InboundMessage {
-        platform: "qq".into(),
-        platform_account: "qq:bot_uin:123".into(),
-        conversation_id: "qq:group:100".into(),
-        actor_id: "qq:user:1".into(),
-        message_id: "m8".into(),
-        reply_to_message_id: Some("bot-msg-1".into()),
-        raw_segments_json: "[]".into(),
-        normalized_text: "我补充一下".into(),
-        mentions: vec![],
-        is_group: true,
-        is_private: false,
-        timestamp_epoch_secs: 1,
-    };
+    let message = message_event(
+        "qq:group:100",
+        "qq:bot_uin:123",
+        "我补充一下",
+        vec![],
+        Some("bot-msg-1"),
+    );
 
     assert_eq!(resolver.resolve(&message), TriggerDecision::Ignore);
 }
@@ -214,20 +193,13 @@ fn group_reply_without_mention_does_not_run() {
 #[test]
 fn non_group_non_private_message_does_not_run() {
     let resolver = TriggerResolver::default();
-    let message = InboundMessage {
-        platform: "qq".into(),
-        platform_account: "qq:bot_uin:123".into(),
-        conversation_id: "qq:system:1".into(),
-        actor_id: "qq:user:1".into(),
-        message_id: "m9".into(),
-        reply_to_message_id: Some("bot-msg-1".into()),
-        raw_segments_json: "[]".into(),
-        normalized_text: "still should not run".into(),
-        mentions: vec!["qq:bot_uin:123".into()],
-        is_group: false,
-        is_private: false,
-        timestamp_epoch_secs: 1,
-    };
+    let message = message_event(
+        "qq:system:1",
+        "qq:bot_uin:123",
+        "still should not run",
+        vec!["qq:bot_uin:123"],
+        Some("bot-msg-1"),
+    );
 
     assert_eq!(resolver.resolve(&message), TriggerDecision::Ignore);
 }
