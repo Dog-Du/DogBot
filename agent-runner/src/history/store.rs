@@ -3,6 +3,47 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, params};
 
+const EXPECTED_EVENT_STORE_COLUMNS: &[&str] = &[
+    "event_id",
+    "platform",
+    "platform_account",
+    "conversation_id",
+    "actor_id",
+    "event_kind",
+    "created_at_epoch_secs",
+    "raw_native_payload_json",
+];
+const EXPECTED_MESSAGE_STORE_COLUMNS: &[&str] =
+    &["message_id", "event_id", "reply_to_message_id", "plain_text"];
+const EXPECTED_MESSAGE_PART_STORE_COLUMNS: &[&str] = &[
+    "message_id",
+    "ordinal",
+    "part_kind",
+    "text_value",
+    "asset_id",
+    "target_actor_id",
+    "target_message_id",
+];
+const EXPECTED_MESSAGE_RELATION_STORE_COLUMNS: &[&str] = &[
+    "relation_id",
+    "source_message_id",
+    "relation_kind",
+    "target_message_id",
+    "target_actor_id",
+    "emoji",
+];
+const EXPECTED_ASSET_STORE_COLUMNS: &[&str] = &[
+    "asset_id",
+    "asset_kind",
+    "mime_type",
+    "size_bytes",
+    "source_kind",
+    "source_value",
+    "availability_status",
+];
+const EXPECTED_CONVERSATION_INGEST_STATE_COLUMNS: &[&str] =
+    &["conversation_id", "enabled", "retention_days"];
+
 pub struct HistoryStore {
     conn: Connection,
 }
@@ -13,56 +54,7 @@ impl HistoryStore {
             let _ = std::fs::create_dir_all(parent);
         }
         let conn = Connection::open(path)?;
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS event_store (
-                event_id TEXT PRIMARY KEY,
-                platform TEXT NOT NULL,
-                platform_account TEXT NOT NULL,
-                conversation_id TEXT NOT NULL,
-                actor_id TEXT NOT NULL,
-                event_kind TEXT NOT NULL,
-                created_at_epoch_secs INTEGER NOT NULL,
-                raw_native_payload_json TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS message_store (
-                message_id TEXT PRIMARY KEY,
-                event_id TEXT NOT NULL,
-                reply_to_message_id TEXT,
-                plain_text TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS message_part_store (
-                message_id TEXT NOT NULL,
-                ordinal INTEGER NOT NULL,
-                part_kind TEXT NOT NULL,
-                text_value TEXT,
-                asset_id TEXT,
-                target_actor_id TEXT,
-                target_message_id TEXT,
-                PRIMARY KEY (message_id, ordinal)
-            );
-            CREATE TABLE IF NOT EXISTS message_relation_store (
-                relation_id TEXT PRIMARY KEY,
-                source_message_id TEXT NOT NULL,
-                relation_kind TEXT NOT NULL,
-                target_message_id TEXT,
-                target_actor_id TEXT,
-                emoji TEXT
-            );
-            CREATE TABLE IF NOT EXISTS asset_store (
-                asset_id TEXT PRIMARY KEY,
-                asset_kind TEXT NOT NULL,
-                mime_type TEXT NOT NULL,
-                size_bytes INTEGER NOT NULL,
-                source_kind TEXT NOT NULL,
-                source_value TEXT NOT NULL,
-                availability_status TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS conversation_ingest_state (
-                conversation_id TEXT PRIMARY KEY,
-                enabled INTEGER NOT NULL,
-                retention_days INTEGER NOT NULL
-            );",
-        )?;
+        initialize_history_schema(&conn)?;
         Ok(Self { conn })
     }
 
@@ -349,6 +341,113 @@ impl HistoryStore {
         )?;
         Ok(())
     }
+}
+
+fn initialize_history_schema(conn: &Connection) -> rusqlite::Result<()> {
+    if history_schema_requires_reset(conn)? {
+        drop_history_schema(conn)?;
+    }
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS event_store (
+            event_id TEXT PRIMARY KEY,
+            platform TEXT NOT NULL,
+            platform_account TEXT NOT NULL,
+            conversation_id TEXT NOT NULL,
+            actor_id TEXT NOT NULL,
+            event_kind TEXT NOT NULL,
+            created_at_epoch_secs INTEGER NOT NULL,
+            raw_native_payload_json TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS message_store (
+            message_id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL,
+            reply_to_message_id TEXT,
+            plain_text TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS message_part_store (
+            message_id TEXT NOT NULL,
+            ordinal INTEGER NOT NULL,
+            part_kind TEXT NOT NULL,
+            text_value TEXT,
+            asset_id TEXT,
+            target_actor_id TEXT,
+            target_message_id TEXT,
+            PRIMARY KEY (message_id, ordinal)
+        );
+        CREATE TABLE IF NOT EXISTS message_relation_store (
+            relation_id TEXT PRIMARY KEY,
+            source_message_id TEXT NOT NULL,
+            relation_kind TEXT NOT NULL,
+            target_message_id TEXT,
+            target_actor_id TEXT,
+            emoji TEXT
+        );
+        CREATE TABLE IF NOT EXISTS asset_store (
+            asset_id TEXT PRIMARY KEY,
+            asset_kind TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            source_kind TEXT NOT NULL,
+            source_value TEXT NOT NULL,
+            availability_status TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS conversation_ingest_state (
+            conversation_id TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL,
+            retention_days INTEGER NOT NULL
+        );",
+    )?;
+    Ok(())
+}
+
+fn history_schema_requires_reset(conn: &Connection) -> rusqlite::Result<bool> {
+    if table_columns(conn, "message_attachment")?.is_some() {
+        return Ok(true);
+    }
+
+    for (table_name, expected_columns) in [
+        ("event_store", EXPECTED_EVENT_STORE_COLUMNS),
+        ("message_store", EXPECTED_MESSAGE_STORE_COLUMNS),
+        ("message_part_store", EXPECTED_MESSAGE_PART_STORE_COLUMNS),
+        ("message_relation_store", EXPECTED_MESSAGE_RELATION_STORE_COLUMNS),
+        ("asset_store", EXPECTED_ASSET_STORE_COLUMNS),
+        (
+            "conversation_ingest_state",
+            EXPECTED_CONVERSATION_INGEST_STATE_COLUMNS,
+        ),
+    ] {
+        if table_columns(conn, table_name)?
+            .is_some_and(|columns| columns != expected_columns)
+        {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn drop_history_schema(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS message_attachment;
+         DROP TABLE IF EXISTS message_relation_store;
+         DROP TABLE IF EXISTS message_part_store;
+         DROP TABLE IF EXISTS message_store;
+         DROP TABLE IF EXISTS event_store;
+         DROP TABLE IF EXISTS asset_store;
+         DROP TABLE IF EXISTS conversation_ingest_state;",
+    )?;
+    Ok(())
+}
+
+fn table_columns(conn: &Connection, table_name: &str) -> rusqlite::Result<Option<Vec<String>>> {
+    let pragma = format!("PRAGMA table_info({table_name})");
+    let mut stmt = conn.prepare(&pragma)?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let columns: Vec<String> = rows.collect::<Result<_, _>>()?;
+    if columns.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(columns))
 }
 
 fn event_id_for_message(message_id: &str) -> String {

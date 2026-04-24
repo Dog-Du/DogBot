@@ -6,6 +6,18 @@ use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 use uuid::Uuid;
 
+const LEGACY_PLATFORM_ACCOUNT: &str = "compat:legacy-platform-account";
+const EXPECTED_SESSION_COLUMNS: &[&str] = &[
+    "session_key",
+    "claude_session_id",
+    "platform",
+    "platform_account",
+    "conversation_id",
+    "created_at_epoch_secs",
+    "last_used_at_epoch_secs",
+];
+const EXPECTED_SESSION_ALIAS_COLUMNS: &[&str] = &["external_session_id", "session_key"];
+
 #[derive(Debug, Clone)]
 pub struct SessionStore {
     db_path: PathBuf,
@@ -56,11 +68,15 @@ impl SessionStore {
         platform_account: &str,
         conversation_id: &str,
     ) -> Result<SessionRecord, SessionStoreError> {
+        let conn = self.open_connection()?;
+        let session_key = conversation_session_key(platform, platform_account, conversation_id);
         self.get_or_create_by_key(
-            &conversation_session_key(platform, platform_account, conversation_id),
+            &conn,
+            &session_key,
             platform,
             platform_account,
             conversation_id,
+            &session_key,
         )
     }
 
@@ -69,9 +85,21 @@ impl SessionStore {
         external_session_id: &str,
         platform: &str,
         conversation_id: &str,
-        user_id: &str,
+        _user_id: &str,
     ) -> Result<SessionRecord, SessionStoreError> {
-        self.get_or_create_by_key(external_session_id, platform, user_id, conversation_id)
+        let conn = self.open_connection()?;
+        let session_key =
+            conversation_session_key(platform, LEGACY_PLATFORM_ACCOUNT, conversation_id);
+        let record = self.get_or_create_by_key(
+            &conn,
+            &session_key,
+            platform,
+            LEGACY_PLATFORM_ACCOUNT,
+            conversation_id,
+            external_session_id,
+        )?;
+        upsert_session_alias(&conn, external_session_id, &session_key)?;
+        Ok(record)
     }
 
     pub fn get_session(
@@ -79,7 +107,11 @@ impl SessionStore {
         external_session_id: &str,
     ) -> Result<Option<SessionRecord>, SessionStoreError> {
         let conn = self.open_connection()?;
-        self.fetch_session(&conn, external_session_id)
+        if let Some(session_key) = lookup_session_alias(&conn, external_session_id)? {
+            return self.fetch_session(&conn, &session_key, external_session_id);
+        }
+
+        self.fetch_session(&conn, external_session_id, external_session_id)
     }
 
     pub fn reset_session(
@@ -87,21 +119,34 @@ impl SessionStore {
         external_session_id: &str,
         platform: &str,
         conversation_id: &str,
-        user_id: &str,
+        _user_id: &str,
     ) -> Result<SessionRecord, SessionStoreError> {
-        self.reset_by_key(external_session_id, platform, user_id, conversation_id)
+        let conn = self.open_connection()?;
+        let session_key =
+            conversation_session_key(platform, LEGACY_PLATFORM_ACCOUNT, conversation_id);
+        let record = self.reset_by_key(
+            &conn,
+            &session_key,
+            platform,
+            LEGACY_PLATFORM_ACCOUNT,
+            conversation_id,
+            external_session_id,
+        )?;
+        upsert_session_alias(&conn, external_session_id, &session_key)?;
+        Ok(record)
     }
 
     fn get_or_create_by_key(
         &self,
+        conn: &Connection,
         session_key: &str,
         platform: &str,
         platform_account: &str,
         conversation_id: &str,
+        external_session_id: &str,
     ) -> Result<SessionRecord, SessionStoreError> {
-        let conn = self.open_connection()?;
         let now = epoch_now();
-        let existing = self.fetch_session(&conn, session_key)?;
+        let existing = self.fetch_session(conn, session_key, external_session_id)?;
 
         if let Some(mut record) = existing {
             ensure_session_identity(&record, platform, platform_account, conversation_id)?;
@@ -139,7 +184,7 @@ impl SessionStore {
         let inserted = conn.changes() > 0;
         if !inserted {
             let mut record = self
-                .fetch_session(&conn, session_key)?
+                .fetch_session(conn, session_key, external_session_id)?
                 .expect("session should exist after insert conflict");
             ensure_session_identity(&record, platform, platform_account, conversation_id)?;
             conn.execute(
@@ -152,6 +197,7 @@ impl SessionStore {
 
         Ok(build_session_record(
             session_key,
+            external_session_id,
             claude_session_id,
             platform.to_string(),
             platform_account.to_string(),
@@ -164,17 +210,18 @@ impl SessionStore {
 
     fn reset_by_key(
         &self,
+        conn: &Connection,
         session_key: &str,
         platform: &str,
         platform_account: &str,
         conversation_id: &str,
+        external_session_id: &str,
     ) -> Result<SessionRecord, SessionStoreError> {
-        let conn = self.open_connection()?;
         let now = epoch_now();
         let existing = self
-            .fetch_session(&conn, session_key)?
+            .fetch_session(conn, session_key, external_session_id)?
             .ok_or_else(|| SessionStoreError::SessionConflict {
-                external_session_id: session_key.to_string(),
+                external_session_id: external_session_id.to_string(),
                 platform: platform.to_string(),
                 conversation_id: conversation_id.to_string(),
                 user_id: platform_account.to_string(),
@@ -194,6 +241,7 @@ impl SessionStore {
 
         Ok(build_session_record(
             session_key,
+            external_session_id,
             claude_session_id,
             platform.to_string(),
             platform_account.to_string(),
@@ -206,6 +254,9 @@ impl SessionStore {
 
     fn initialize(&self) -> Result<(), SessionStoreError> {
         let conn = self.open_connection()?;
+        if session_schema_requires_reset(&conn)? {
+            drop_session_schema(&conn)?;
+        }
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS sessions (
                 session_key TEXT PRIMARY KEY,
@@ -215,6 +266,10 @@ impl SessionStore {
                 conversation_id TEXT NOT NULL,
                 created_at_epoch_secs INTEGER NOT NULL,
                 last_used_at_epoch_secs INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS session_aliases (
+                external_session_id TEXT PRIMARY KEY,
+                session_key TEXT NOT NULL
             );",
         )?;
         Ok(())
@@ -236,6 +291,7 @@ impl SessionStore {
         &self,
         conn: &Connection,
         session_key: &str,
+        external_session_id: &str,
     ) -> Result<Option<SessionRecord>, SessionStoreError> {
         Ok(conn
             .query_row(
@@ -245,6 +301,7 @@ impl SessionStore {
                 |row| {
                     Ok(build_session_record(
                         session_key,
+                        external_session_id,
                         row.get(0)?,
                         row.get(1)?,
                         row.get(2)?,
@@ -261,6 +318,7 @@ impl SessionStore {
 
 fn build_session_record(
     session_key: &str,
+    external_session_id: &str,
     claude_session_id: String,
     platform: String,
     platform_account: String,
@@ -271,7 +329,7 @@ fn build_session_record(
 ) -> SessionRecord {
     SessionRecord {
         session_key: session_key.to_string(),
-        external_session_id: session_key.to_string(),
+        external_session_id: external_session_id.to_string(),
         claude_session_id,
         platform,
         platform_account: platform_account.clone(),
@@ -317,4 +375,67 @@ fn ensure_session_identity(
         conversation_id: record.conversation_id.clone(),
         user_id: record.user_id.clone(),
     })
+}
+
+fn upsert_session_alias(
+    conn: &Connection,
+    external_session_id: &str,
+    session_key: &str,
+) -> Result<(), SessionStoreError> {
+    conn.execute(
+        "INSERT INTO session_aliases (external_session_id, session_key)
+         VALUES (?1, ?2)
+         ON CONFLICT(external_session_id) DO UPDATE
+         SET session_key = excluded.session_key",
+        params![external_session_id, session_key],
+    )?;
+    Ok(())
+}
+
+fn lookup_session_alias(
+    conn: &Connection,
+    external_session_id: &str,
+) -> Result<Option<String>, SessionStoreError> {
+    Ok(conn
+        .query_row(
+            "SELECT session_key FROM session_aliases WHERE external_session_id = ?1",
+            params![external_session_id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+fn session_schema_requires_reset(conn: &Connection) -> Result<bool, SessionStoreError> {
+    if table_columns(conn, "sessions")?
+        .is_some_and(|columns| columns != EXPECTED_SESSION_COLUMNS)
+    {
+        return Ok(true);
+    }
+
+    if table_columns(conn, "session_aliases")?
+        .is_some_and(|columns| columns != EXPECTED_SESSION_ALIAS_COLUMNS)
+    {
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+fn drop_session_schema(conn: &Connection) -> Result<(), SessionStoreError> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS session_aliases;
+         DROP TABLE IF EXISTS sessions;",
+    )?;
+    Ok(())
+}
+
+fn table_columns(conn: &Connection, table_name: &str) -> Result<Option<Vec<String>>, SessionStoreError> {
+    let pragma = format!("PRAGMA table_info({table_name})");
+    let mut stmt = conn.prepare(&pragma)?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let columns: Vec<String> = rows.collect::<Result<_, _>>()?;
+    if columns.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(columns))
 }
