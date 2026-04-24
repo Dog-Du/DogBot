@@ -7,7 +7,6 @@ files=(
   "docker/claude-runner/entrypoint.sh"
   "claude-prompt/CLAUDE.md"
   "claude-prompt/persona.md"
-  "claude-prompt/.claude/skills/emit-memory-candidate/SKILL.md"
   "qq_adapter/app.py"
   "qq_adapter/config.py"
   "qq_adapter/mapper.py"
@@ -93,6 +92,7 @@ ensure_pattern() {
 
 pattern_errors=0
 ensure_pattern "docker/claude-runner/Dockerfile" "@anthropic-ai/claude-code" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "docker/claude-runner/Dockerfile" "@maximhq/bifrost" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "docker/claude-runner/Dockerfile" "tini" || pattern_errors=$((pattern_errors+1))
 entrypoint_has_sudo=$(grep -q "sudo" "$repo_root/docker/claude-runner/entrypoint.sh" && echo yes || echo no)
 entrypoint_has_gosu=$(grep -q "gosu" "$repo_root/docker/claude-runner/entrypoint.sh" && echo yes || echo no)
@@ -104,6 +104,9 @@ if [[ $entrypoint_has_gosu == yes ]]; then
 fi
 ensure_pattern "docker/claude-runner/Dockerfile" "claude-bootstrap.sh" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "docker/claude-runner/entrypoint.sh" "/usr/local/bin/claude-bootstrap.sh" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "docker/claude-runner/entrypoint.sh" "/state/claude-runner/launch.sh" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/lib/common.sh" "dogbot_write_claude_runner_runtime" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/lib/common.sh" "bifrost -host 127.0.0.1 -port" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/docker-compose.yml" "mem_limit" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/docker-compose.yml" "CLAUDE_CONFIG_DIR" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "qq_adapter/app.py" "/napcat/ws" || pattern_errors=$((pattern_errors+1))
@@ -113,6 +116,7 @@ ensure_pattern "scripts/configure_napcat_ws.sh" "host.docker.internal:19000/napc
 ensure_pattern "scripts/configure_napcat_ws.sh" "dogbot_resolve_uv_bin" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "deploy/dogbot.env.example" "AGENT_RUNNER_BIND_ADDR" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/deploy_stack.sh" "docker compose --env-file" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/deploy_stack.sh" "dogbot_write_claude_runner_runtime" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/start_agent_runner.sh" "build --release --manifest-path" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/start_qq_adapter.sh" "qq_adapter.app:create_app" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/apply_runner_network_policy.sh" "INPUT" || pattern_errors=$((pattern_errors+1))

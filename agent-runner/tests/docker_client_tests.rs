@@ -9,16 +9,34 @@ fn container_spec_matches_runner_defaults() {
     assert_eq!(spec.image_name, "dogbot/claude-runner:local");
     assert_eq!(spec.workspace_dir, "/srv/agent-workdir");
     assert_eq!(spec.state_dir, "/srv/agent-state");
-    assert_eq!(spec.anthropic_base_url, "http://host.docker.internal:9000");
-    assert_eq!(spec.api_proxy_auth_token, "local-proxy-token");
+    assert_eq!(spec.anthropic_base_url, "http://127.0.0.1:8080/anthropic");
+    assert_eq!(spec.anthropic_api_key, "dummy");
+    assert_eq!(spec.bifrost_model, "primary/model-id");
+    assert_eq!(spec.bifrost_upstream_base_url, "https://example.com");
+    assert_eq!(spec.bifrost_upstream_api_key, "replace-me");
+    assert_eq!(spec.bifrost_upstream_provider_type, "openai");
 }
 
 #[test]
 fn create_container_config_carries_runtime_limits_and_mounts() {
-    let settings = Settings::from_env_map(std::collections::HashMap::from([(
-        "API_PROXY_AUTH_TOKEN".to_string(),
-        "local-proxy-token-2".to_string(),
-    )]))
+    let settings = Settings::from_env_map(std::collections::HashMap::from([
+        (
+            "BIFROST_UPSTREAM_BASE_URL".to_string(),
+            "https://llm-gateway.example".to_string(),
+        ),
+        (
+            "BIFROST_UPSTREAM_API_KEY".to_string(),
+            "provider-token".to_string(),
+        ),
+        (
+            "BIFROST_MODEL".to_string(),
+            "primary/gpt-5".to_string(),
+        ),
+        (
+            "BIFROST_UPSTREAM_PROVIDER_TYPE".to_string(),
+            "openai".to_string(),
+        ),
+    ]))
     .unwrap();
     let spec = agent_runner::docker_client::ContainerSpec::from_settings(&settings);
     let config = spec.create_config();
@@ -28,14 +46,23 @@ fn create_container_config_carries_runtime_limits_and_mounts() {
     assert_eq!(config.working_dir.as_deref(), Some("/workspace"));
     let env = config.env.as_ref().expect("env");
     let required_env = [
-        "ANTHROPIC_BASE_URL=http://host.docker.internal:9000",
-        "ANTHROPIC_AUTH_TOKEN=local-proxy-token-2",
+        "ANTHROPIC_BASE_URL=http://127.0.0.1:8080/anthropic",
+        "ANTHROPIC_API_KEY=dummy",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL=primary/gpt-5",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL=primary/gpt-5",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL=primary/gpt-5",
         "CLAUDE_CONFIG_DIR=/state/claude",
         "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1",
         "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
         "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1",
         "CLAUDE_CODE_ATTRIBUTION_HEADER=0",
+        "BIFROST_PORT=8080",
+        "BIFROST_PROVIDER_NAME=primary",
+        "BIFROST_MODEL=primary/gpt-5",
+        "BIFROST_UPSTREAM_PROVIDER_TYPE=openai",
+        "BIFROST_UPSTREAM_BASE_URL=https://llm-gateway.example",
+        "BIFROST_UPSTREAM_API_KEY=provider-token",
     ];
 
     for required in required_env {

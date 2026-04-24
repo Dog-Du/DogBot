@@ -11,6 +11,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let settings = Settings::from_env()?;
-    let proxy_settings = ApiProxySettings::from_env()?;
+    let proxy_settings = ApiProxySettings::from_env_optional()?;
     bootstrap::run(settings, proxy_settings).await
 }

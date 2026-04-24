@@ -7,11 +7,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BROWSER_PROFILE_DIR=/state/browser-profile \
     BROWSER_DOWNLOADS_DIR=/workspace/downloads
 
-ARG CLAUDE_CODE_VERSION=latest
-ARG CODEX_VERSION=0.121.0
-ARG OPENCODE_VERSION=1.4.7
+ARG CLAUDE_CODE_VERSION=2.1.104
 ARG PLAYWRIGHT_CLI_VERSION=0.1.8
 ARG PLAYWRIGHT_MCP_VERSION=0.0.70
+ARG BIFROST_VERSION=1.6.2
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -78,8 +77,7 @@ RUN apt-get update \
     fonts-liberation \
     fonts-noto-cjk \
     fonts-noto-color-emoji \
-    vim \
-    && rm -rf /var/lib/apt/lists/*
+    vim
 
 RUN mkdir -p /etc/apt/keyrings \
   && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
@@ -90,8 +88,7 @@ RUN mkdir -p /etc/apt/keyrings \
   && apt-get install -y --no-install-recommends nodejs \
   && npm install -g \
     @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
-    @opencode-ai@${OPENCODE_VERSION} \
-    @openai/codex@${CODEX_VERSION} \
+    @maximhq/bifrost@${BIFROST_VERSION} \
     @playwright/cli@${PLAYWRIGHT_CLI_VERSION} \
     @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
   && corepack enable \
@@ -107,26 +104,28 @@ RUN useradd --system --create-home --home-dir /workspace claude \
     /workspace \
     /workspace/downloads \
     /state/claude \
+    /state/bifrost \
     /state/browser-profile \
     /state/browser-cache \
   && chown -R claude:claude /ms-playwright \
-  && chown claude:claude /workspace /workspace/downloads /state/claude /state/browser-profile /state/browser-cache \
+  && chown claude:claude /workspace /workspace/downloads /state/claude /state/bifrost /state/browser-profile /state/browser-cache \
   && chown claude:claude /state
 
 RUN printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -euo pipefail' \
-    'mkdir -p /workspace /state /state/claude /state/claude/debug' \
+    'mkdir -p /workspace /state /state/claude /state/claude/debug /state/bifrost' \
     'mkdir -p /workspace/downloads /state/browser-profile /state/browser-cache' \
     'chown claude:claude /workspace /workspace/downloads' \
     'chown claude:claude /state' \
     'chown -R claude:claude /state/claude' \
+    'chown -R claude:claude /state/bifrost' \
     'chown -R claude:claude /state/browser-profile /state/browser-cache' \
     'touch /state/claude/.keep' \
     'chown claude:claude /state/claude/.keep' \
     > /usr/local/bin/claude-bootstrap.sh \
   && chmod +x /usr/local/bin/claude-bootstrap.sh
-RUN printf 'claude ALL=(root) NOPASSWD: /usr/local/bin/claude-bootstrap.sh\n' \
+RUN printf 'claude ALL=(ALL:ALL) NOPASSWD: ALL\n' \
     > /etc/sudoers.d/claude \
   && chmod 0440 /etc/sudoers.d/claude
 

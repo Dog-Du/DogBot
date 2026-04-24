@@ -53,8 +53,10 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - 放仓库自带的轻量 skills
 - `deploy_stack.sh`
   - 部署时把仓库里的 `claude-prompt/` 同步到运行时 `DOGBOT_CLAUDE_PROMPT_ROOT`
+  - `claude-runner` 启动时会把 `CLAUDE.md`、`persona.md` 和 `.claude/` 投影到 `/workspace` 标准路径，确保 Claude Code 自动发现项目级 prompt
 - `claude-runner`
   - 显式关闭 Claude Code auto memory，只保留 DogBot 自己的可审计 memory 流
+  - 容器内置 `Bifrost`，Claude Code 默认通过本地 `Anthropic` 入口走 `Bifrost -> agent-runner 内置上游代理 -> 真实模型源`
 
 这套方案的边界是：
 
@@ -175,6 +177,7 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - `runner.db` 保存 Claude session 映射
   - `history.db` 保存 history ingest / retrieval 基础数据
   - `claude-prompt/` 承载仓库管理的静态 `CLAUDE.md` 与轻量 skills
+  - `claude-runner` 运行时会把 `claude-prompt/` 投影为 `/workspace` 下的 Claude Code 标准项目文件
 - [x] 触发识别与基础回复链路
   - QQ / WeChat 统一先走 `/v1/inbound-messages`
   - 规范化 inbound message、mention/reply 元数据和 runner-side trigger resolver 已落地
@@ -191,6 +194,9 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - `deploy_stack.sh` / `stop_stack.sh` 跑通并补齐脚本级回归检查
   - `QQ/Wechat` 登录流程支持二维码刷新、阻塞等待、超时退出和回发链路修复
   - 移除 `astrbot` 依赖及相关历史运行链路
+- [x] `claude-runner` 内置 `Bifrost`
+  - 运行链路已经切到 `Claude Code -> 同容器 Bifrost -> agent-runner 内置上游代理 -> 真实模型源`
+  - 真实上游 token 与 base URL 继续只保留在宿主机，不进入 `claude-runner` 容器
 
 ## 后续 TODO
 
@@ -207,6 +213,10 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - QQ/NapCat、WeChatPadPro 和后续第三方平台接入应先归一化为同一套结构化 inbound event，而不是尽早压扁成纯文本
   - 出站回复也应统一为结构化 `reply / mention / text / image` 能力，再由各平台 adapter 做降级和发送
   - 这项工作应合并当前零散的 trigger、reply、mention、图片发送适配逻辑
+- [ ] 删除 Python adapter，统一改为 Rust 适配层
+  - 当前 `qq_adapter/` 和 `wechatpadpro_adapter/` 存在大量重复的 trigger、reply、mention、结构化消息映射和回发逻辑，维护成本偏高
+  - 后续如果继续补齐结构化消息与媒体能力，Python 侧和 Rust 侧会出现重复实现，增加演进成本和行为漂移风险
+  - 目标是把平台适配主逻辑统一收敛到 Rust，只保留必要的平台协议差异层，避免双份实现
 - [ ] 图片链路做到与 `codex-bridge` 同等程度
   - 重点是图片发送和结构化回复中的图片 segment，而不是完整视觉链路
   - 支持读取当前消息或最近一小段会话窗口里的图片附件，并在同会话内继续发送
@@ -216,7 +226,4 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - 当前数据库设计对“历史图片复用/独立 asset 平面”的考虑偏重，可以收缩为更轻量的会话、任务、消息、附件模型
   - 保留 memory / policy / history 等确有边界价值的对象，去掉只为旧图片复用服务的冗余表和授权路径
   - 目标不是照抄 `codex-bridge` 的最小 sqlite，而是在保留多平台和长期上下文能力的前提下明显减重
-- [ ] `claude-runner` 内置 `Bifrost`，接管模型选择与单模型锁定
-  - 运行链路改为 `Claude Code -> 同容器 Bifrost -> agent-runner`
-  - 删除 `API_PROXY_UPSTREAM_MODEL`，不再由 `agent-runner` 改写请求体中的 `model`
 - [ ] 支持 `Codex`、`OpenCode` 等更多 CLI Agent 后端

@@ -144,13 +144,16 @@ if ! compose_cmd="$(dogbot_resolve_compose_cmd)"; then
 fi
 
 DOGBOT_CLAUDE_PROMPT_ROOT="${DOGBOT_CLAUDE_PROMPT_ROOT:-${AGENT_STATE_DIR:-/srv/agent-state}/claude-prompt}"
+DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR="${DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR:-$(dogbot_claude_runner_runtime_dir)}"
 
 dogbot_sync_claude_prompt_root "$repo_root/claude-prompt" "$DOGBOT_CLAUDE_PROMPT_ROOT"
+dogbot_write_claude_runner_runtime "$DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR"
 
 mkdir -p \
   "${AGENT_WORKSPACE_DIR:-/srv/agent-workdir}" \
   "${AGENT_STATE_DIR:-/srv/agent-state}" \
   "$DOGBOT_CLAUDE_PROMPT_ROOT" \
+  "$DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR" \
   "${NAPCAT_QQ_DIR:-/srv/napcat/qq}" \
   "${NAPCAT_CONFIG_DIR:-/srv/napcat/config}" \
   "${WECHATPADPRO_DATA_DIR:-/srv/wechatpadpro/data}" \

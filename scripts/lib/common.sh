@@ -233,3 +233,140 @@ dogbot_sync_claude_prompt_root() {
   find "$dest_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   cp -a "$source_dir"/. "$dest_dir"/
 }
+
+dogbot_claude_runner_runtime_dir() {
+  local state_dir="${AGENT_STATE_DIR:-/srv/agent-state}"
+  printf '%s\n' "$state_dir/claude-runner"
+}
+
+dogbot_write_claude_runner_runtime() {
+  local runtime_dir="$1"
+  local launch_path="$runtime_dir/launch.sh"
+
+  mkdir -p "$runtime_dir"
+
+  cat >"$launch_path" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+bifrost_dir="/state/bifrost"
+config_path="$bifrost_dir/config.json"
+log_path="$bifrost_dir/bifrost.log"
+prompt_root="/state/claude-prompt"
+project_root="/workspace"
+port="${BIFROST_PORT:-8080}"
+provider_name="${BIFROST_PROVIDER_NAME:-primary}"
+default_model="${BIFROST_MODEL:-primary/model-id}"
+stripped_model="${default_model#*/}"
+upstream_base_url="${BIFROST_UPSTREAM_BASE_URL:-https://example.com}"
+upstream_provider_type="${BIFROST_UPSTREAM_PROVIDER_TYPE:-openai}"
+upstream_api_key="${BIFROST_UPSTREAM_API_KEY:-replace-me}"
+
+mkdir -p "$bifrost_dir"
+
+ensure_link() {
+  local source_path="$1"
+  local target_path="$2"
+  local target_dir
+  target_dir="$(dirname "$target_path")"
+
+  if [[ ! -e "$source_path" ]]; then
+    return 0
+  fi
+
+  mkdir -p "$target_dir"
+
+  if [[ -e "$target_path" && ! -L "$target_path" ]]; then
+    return 0
+  fi
+
+  ln -sfn "$source_path" "$target_path"
+}
+
+ensure_link "$prompt_root/CLAUDE.md" "$project_root/CLAUDE.md"
+ensure_link "$prompt_root/persona.md" "$project_root/persona.md"
+ensure_link "$prompt_root/.claude" "$project_root/.claude"
+
+if [[ -z "${BIFROST_ENCRYPTION_KEY:-}" ]]; then
+  export BIFROST_ENCRYPTION_KEY
+  BIFROST_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+fi
+
+export BIFROST_UPSTREAM_API_KEY="$upstream_api_key"
+
+jq -n \
+  --arg schema "https://www.getbifrost.ai/schema" \
+  --arg provider_name "$provider_name" \
+  --arg default_model "$default_model" \
+  --arg stripped_model "$stripped_model" \
+  --arg upstream_base_url "$upstream_base_url" \
+  --arg upstream_provider_type "$upstream_provider_type" \
+  '{
+    "$schema": $schema,
+    "encryption_key": "env.BIFROST_ENCRYPTION_KEY",
+    "providers": {
+      ($provider_name): {
+        "network_config": {
+          "base_url": $upstream_base_url
+        },
+        "custom_provider_config": {
+          "base_provider_type": $upstream_provider_type,
+          "allowed_requests": {
+            "chat_completion": true,
+            "chat_completion_stream": true,
+            "responses": true,
+            "responses_stream": true
+          }
+        },
+        "keys": [
+          {
+            "name": "default-key",
+            "value": "env.BIFROST_UPSTREAM_API_KEY",
+            "models": (
+              [$default_model, $stripped_model]
+              | map(select(length > 0))
+              | unique
+            ),
+            "weight": 1
+          }
+        ]
+      }
+    },
+    "config_store": {
+      "enabled": false
+    }
+  }' >"$config_path"
+
+bifrost -host 127.0.0.1 -port "$port" -app-dir "$bifrost_dir" >>"$log_path" 2>&1 &
+bifrost_pid=$!
+
+cleanup() {
+  if kill -0 "$bifrost_pid" >/dev/null 2>&1; then
+    kill "$bifrost_pid" >/dev/null 2>&1 || true
+    wait "$bifrost_pid" >/dev/null 2>&1 || true
+  fi
+}
+
+trap cleanup EXIT INT TERM
+
+for _ in $(seq 1 60); do
+  if ! kill -0 "$bifrost_pid" >/dev/null 2>&1; then
+    cat "$log_path" >&2 || true
+    exit 1
+  fi
+
+  if nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+    wait "$bifrost_pid"
+    exit $?
+  fi
+
+  sleep 1
+done
+
+echo "bifrost did not become ready on 127.0.0.1:${port}" >&2
+cat "$log_path" >&2 || true
+exit 1
+EOF
+
+  chmod +x "$launch_path"
+}

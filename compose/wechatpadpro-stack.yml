@@ -48,7 +48,6 @@ services:
         condition: service_healthy
     ports:
       - "${WECHATPADPRO_HOST_PORT:-38849}:1238"
-      - "${WECHATPADPRO_WECHAT_PORT:-8080}:8080"
     dns:
       - 223.5.5.5
       - 1.1.1.1

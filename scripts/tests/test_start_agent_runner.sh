@@ -3,10 +3,12 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 start_script="$repo_root/scripts/start_agent_runner.sh"
+env_example="$repo_root/deploy/dogbot.env.example"
 
 patterns=(
   'DOGBOT_CLAUDE_PROMPT_ROOT="${DOGBOT_CLAUDE_PROMPT_ROOT:-'
   'HISTORY_DB_PATH="${HISTORY_DB_PATH:-'
+  'DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR="${DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR:-'
 )
 
 for pattern in "${patterns[@]}"; do
@@ -16,13 +18,43 @@ for pattern in "${patterns[@]}"; do
   fi
 done
 
-if ! grep -q 'mkdir -p "$AGENT_WORKSPACE_DIR" "$AGENT_STATE_DIR" "$log_dir" "$claude_prompt_root"' "$start_script"; then
-  echo "FAIL: start_agent_runner.sh must prepare DOGBOT_CLAUDE_PROMPT_ROOT before launch" >&2
+if ! grep -q 'mkdir -p "$AGENT_WORKSPACE_DIR" "$AGENT_STATE_DIR" "$log_dir" "$claude_prompt_root" "$claude_runner_runtime_dir"' "$start_script"; then
+  echo "FAIL: start_agent_runner.sh must prepare DOGBOT_CLAUDE_PROMPT_ROOT and the claude-runner runtime directory before launch" >&2
+  exit 1
+fi
+
+if ! grep -q 'dogbot_write_claude_runner_runtime "$claude_runner_runtime_dir"' "$start_script"; then
+  echo "FAIL: start_agent_runner.sh must materialize the claude-runner launch script before startup" >&2
   exit 1
 fi
 
 if grep -q 'DOGBOT_CONTENT_ROOT' "$start_script"; then
   echo "FAIL: start_agent_runner.sh must not export legacy DOGBOT_CONTENT_ROOT" >&2
+  exit 1
+fi
+
+if ! grep -q '^BIFROST_UPSTREAM_BASE_URL=http://host.docker.internal:9000$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must point Bifrost to the host api-proxy by default" >&2
+  exit 1
+fi
+
+if ! grep -q '^BIFROST_UPSTREAM_API_KEY=local-proxy-token$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must use local-proxy-token for bifrost -> api-proxy auth" >&2
+  exit 1
+fi
+
+if ! grep -q '^API_PROXY_AUTH_TOKEN=local-proxy-token$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must keep the api-proxy auth token aligned with bifrost" >&2
+  exit 1
+fi
+
+if ! grep -q '^API_PROXY_UPSTREAM_BASE_URL=https://example.com$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must keep the real upstream base URL on the host api-proxy side" >&2
+  exit 1
+fi
+
+if ! grep -q '^API_PROXY_UPSTREAM_TOKEN=replace-me$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must keep the real upstream token on the host api-proxy side" >&2
   exit 1
 fi
 

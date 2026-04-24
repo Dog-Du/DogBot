@@ -15,8 +15,14 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 #[test]
-fn settings_require_only_local_proxy_token_for_claude_container() {
-    let settings = ApiProxySettings::from_env_map(HashMap::from([
+fn proxy_settings_are_optional_when_upstream_is_unset() {
+    let settings = ApiProxySettings::from_env_map_optional(HashMap::new()).unwrap();
+    assert!(settings.is_none());
+}
+
+#[test]
+fn proxy_settings_load_when_explicitly_configured() {
+    let settings = ApiProxySettings::from_env_map_optional(HashMap::from([
         (
             "API_PROXY_UPSTREAM_BASE_URL".into(),
             "https://upstream.example.com".into(),
@@ -28,6 +34,7 @@ fn settings_require_only_local_proxy_token_for_claude_container() {
     ]))
     .unwrap();
 
+    let settings = settings.expect("proxy settings");
     assert_eq!(settings.local_auth_token, "local-proxy-token");
     assert_eq!(
         settings.upstream.upstream_token,
@@ -93,8 +100,59 @@ async fn proxy_rewrites_model_and_auth_for_upstream() {
 }
 
 #[tokio::test]
+async fn proxy_deduplicates_version_prefix_when_base_url_already_contains_it() {
+    let captured = Arc::new(Mutex::new(None::<CapturedRequest>));
+    let upstream_app = upstream_router(captured.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, upstream_app).await.unwrap();
+    });
+
+    let settings = ApiProxySettings {
+        bind_addr: "127.0.0.1:9000".into(),
+        local_auth_token: "local-proxy-token".into(),
+        upstream: ProviderConfig {
+            base_url: format!("http://{upstream_addr}/v1"),
+            upstream_token: "upstream-secret".into(),
+            upstream_auth_header: "authorization".into(),
+            upstream_auth_scheme: Some("Bearer".into()),
+            model: Some("upstream-model".into()),
+        },
+    };
+
+    let app = build_test_app(settings);
+    let payload = json!({
+        "model": "should-be-replaced",
+        "messages": [{"role": "user", "content": "hello"}]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages")
+                .header("content-type", "application/json")
+                .header("x-api-key", "local-proxy-token")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let forwarded = captured.lock().unwrap().clone().expect("captured request");
+    assert_eq!(forwarded.path, "/v1/messages");
+    assert_eq!(
+        forwarded.headers.get("authorization").map(String::as_str),
+        Some("Bearer upstream-secret")
+    );
+}
+
+#[tokio::test]
 async fn proxy_rejects_invalid_local_auth_token() {
-    let settings = ApiProxySettings::from_env_map(HashMap::from([
+    let settings = ApiProxySettings::from_env_map_optional(HashMap::from([
         (
             "API_PROXY_UPSTREAM_BASE_URL".into(),
             "https://upstream.example.com".into(),
@@ -105,6 +163,7 @@ async fn proxy_rejects_invalid_local_auth_token() {
         ),
     ]))
     .unwrap();
+    let settings = settings.expect("proxy settings");
     let app = build_test_app(settings);
 
     let response = app

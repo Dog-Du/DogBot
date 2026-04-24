@@ -278,40 +278,63 @@ WECHATPADPRO_PLATFORM_ACCOUNT_ID=wechatpadpro:account:wxid_bot_1
 - 作为 `platform-account-shared` scope 的隔离键
 - 避免多个机器人账号共用同一套 platform 级上下文
 
-### 5.4 agent-runner 与内置代理
+### 5.4 agent-runner 与 Bifrost
 
 ```env
 AGENT_RUNNER_BIND_ADDR=127.0.0.1:8787
+ANTHROPIC_BASE_URL=http://127.0.0.1:8080/anthropic
+ANTHROPIC_API_KEY=dummy
+BIFROST_PORT=8080
+BIFROST_PROVIDER_NAME=primary
+BIFROST_MODEL=primary/model-id
+BIFROST_UPSTREAM_PROVIDER_TYPE=anthropic
+BIFROST_UPSTREAM_BASE_URL=http://host.docker.internal:9000
+BIFROST_UPSTREAM_API_KEY=local-proxy-token
 API_PROXY_BIND_ADDR=0.0.0.0:9000
-ANTHROPIC_BASE_URL=http://host.docker.internal:9000
 API_PROXY_AUTH_TOKEN=local-proxy-token
+API_PROXY_UPSTREAM_BASE_URL=https://example.com
+API_PROXY_UPSTREAM_TOKEN=你的真实 token
+API_PROXY_UPSTREAM_AUTH_HEADER=x-api-key
+API_PROXY_UPSTREAM_AUTH_SCHEME=
+API_PROXY_UPSTREAM_MODEL=
 ```
 
 说明：
 
 - `AGENT_RUNNER_BIND_ADDR` 给 QQ / 微信 adapter 调用
-- `API_PROXY_BIND_ADDR` 给 Docker 里的 Claude 调用
-- `API_PROXY_BIND_ADDR` 不能绑到 `127.0.0.1`，否则 Docker 内访问不到
-- `API_PROXY_AUTH_TOKEN` 不是上游真实 key，只是本地代理 token
+- `Claude Code` 本身只访问 `127.0.0.1:${BIFROST_PORT}/anthropic`
+- `BIFROST_MODEL` 是 Claude 在容器内默认使用的模型别名，格式通常是 `<provider-alias>/<model-id>`
+- `BIFROST_UPSTREAM_*` 只用于 `claude-runner` 内的 `bifrost -> 宿主机 api-proxy` 链路，不应放真实上游 token
+- `API_PROXY_UPSTREAM_BASE_URL` 和 `API_PROXY_UPSTREAM_TOKEN` 才是真实模型网关入口，只保留在宿主机上的 `agent-runner`
+- `API_PROXY_AUTH_TOKEN` 要和 `BIFROST_UPSTREAM_API_KEY` 保持一致，用来保护本地 `bifrost -> api-proxy` 调用
+- `API_PROXY_UPSTREAM_MODEL` 可选；如果需要把容器内模型别名重写成真实上游模型名，就在这里配置
 
 ### 5.5 上游配置
 
-当前只保留一套 Claude 协议上游配置：
+常见切换方式：
 
 ```env
-API_PROXY_UPSTREAM_BASE_URL=https://example.com
-API_PROXY_UPSTREAM_TOKEN=你的真实 token
-API_PROXY_UPSTREAM_AUTH_HEADER=x-api-key
-# API_PROXY_UPSTREAM_AUTH_SCHEME=
-# API_PROXY_UPSTREAM_MODEL=
+BIFROST_MODEL=primary/gpt-5
+API_PROXY_UPSTREAM_BASE_URL=https://api.openai.com/v1
+API_PROXY_UPSTREAM_TOKEN=你的 OpenAI key
+API_PROXY_UPSTREAM_MODEL=gpt-5
 ```
 
-说明：
+```env
+BIFROST_MODEL=primary/kimi-k2-0711-preview
+API_PROXY_UPSTREAM_BASE_URL=https://api.moonshot.cn/v1
+API_PROXY_UPSTREAM_TOKEN=你的 Kimi key
+API_PROXY_UPSTREAM_MODEL=kimi-k2-0711-preview
+```
 
-- `API_PROXY_UPSTREAM_BASE_URL` 是 Claude 容器最终访问的模型源地址
-- `API_PROXY_UPSTREAM_TOKEN` 是真实上游 key，只保留在宿主机
-- `API_PROXY_UPSTREAM_AUTH_HEADER` 和 `API_PROXY_UPSTREAM_AUTH_SCHEME` 用来适配上游鉴权方式
-- `API_PROXY_UPSTREAM_MODEL` 可选，填写后会覆盖请求体里的模型名
+```env
+BIFROST_MODEL=primary/minimax-text-01
+API_PROXY_UPSTREAM_BASE_URL=https://api.minimax.chat/v1
+API_PROXY_UPSTREAM_TOKEN=你的 Minimax key
+API_PROXY_UPSTREAM_MODEL=minimax-text-01
+```
+
+如果你的上游是 `anthropic-compatible` 网关，则保持 `BIFROST_UPSTREAM_PROVIDER_TYPE=anthropic`，并把 `API_PROXY_UPSTREAM_BASE_URL`、`API_PROXY_UPSTREAM_TOKEN`、`API_PROXY_UPSTREAM_MODEL` 改成该网关需要的真实值。
 
 ## 6. NapCat 配置
 
@@ -480,10 +503,11 @@ API_PROXY_UPSTREAM_BASE_URL=https://example.com
 
 ### 11.3 改模型
 
-如果上游支持模型字段：
+如果要同时修改 Claude 看到的默认模型别名和真实上游模型名，通常一起改：
 
 ```env
-API_PROXY_UPSTREAM_MODEL=xxx
+BIFROST_MODEL=primary/gpt-5
+API_PROXY_UPSTREAM_MODEL=gpt-5
 ```
 
 ### 11.4 重新生效
@@ -497,26 +521,28 @@ sudo ./deploy_stack.sh
 
 ## 12. 需要特别注意的事情
 
-### 12.1 只能使用 Claude 协议的 Base URL
+### 12.1 Claude 只认 Anthropic，Bifrost 负责转换
 
-现在 Docker 里的 Claude Code 调用的是 Claude 协议接口。
+现在 Docker 里的 Claude Code 仍然只调用 Claude 协议接口。
 
-所以你必须给它配置：
+但这不代表你的真实上游必须是 Anthropic 协议。
 
-- `Anthropic-compatible`
-- 或 `Claude-compatible`
+当前链路是：
 
-的上游地址。
+- `Claude Code -> http://127.0.0.1:${BIFROST_PORT}/anthropic`
+- `Bifrost -> 你配置的真实上游`
 
-不能把 OpenAI 协议地址直接塞给 Claude Code。
+所以只要 `Bifrost` 知道上游协议类型，你可以把真实上游切到 `openai-compatible`、`anthropic-compatible` 等不同协议族。
 
 ### 12.2 真实 key 不进 Docker
 
-真实 provider key 只放在宿主机环境变量里。  
-Docker 里的 `claude-runner` 只拿到：
+`Claude Code` 自己不需要真实 provider key。  
+Docker 里的 `claude-runner` 中，`Claude Code` 只拿到：
 
-- `ANTHROPIC_BASE_URL=http://host.docker.internal:9000`
-- `ANTHROPIC_AUTH_TOKEN=local-proxy-token`
+- `ANTHROPIC_BASE_URL=http://127.0.0.1:8080/anthropic`
+- `ANTHROPIC_API_KEY=dummy`
+
+真实 key 会进入 `claude-runner` 容器环境，但只供 `bifrost` 使用，不直接暴露给 `Claude Code`。
 
 ### 12.3 QQ 登录态容易受重建影响
 

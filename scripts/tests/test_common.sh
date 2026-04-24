@@ -25,6 +25,72 @@ assert_eq "$dogbot_default_env_file" "$(dogbot_resolve_env_file "")" \
 assert_eq "/tmp/custom.env" "$(dogbot_resolve_env_file "/tmp/custom.env")" \
   "explicit env-file override should be preserved"
 
+tmp_runtime_root="$(mktemp -d)"
+runtime_launch_dir="$tmp_runtime_root/claude-runner"
+dogbot_write_claude_runner_runtime "$runtime_launch_dir"
+
+if [[ ! -x "$runtime_launch_dir/launch.sh" ]]; then
+  echo "FAIL: dogbot_write_claude_runner_runtime must create an executable launch.sh" >&2
+  exit 1
+fi
+
+if ! grep -q 'bifrost -host 127.0.0.1 -port "$port" -app-dir "$bifrost_dir"' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must start bifrost" >&2
+  exit 1
+fi
+
+if ! grep -q 'jq -n' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must materialize bifrost config at runtime" >&2
+  exit 1
+fi
+
+if ! grep -q 'prompt_root="/state/claude-prompt"' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must define the Claude prompt source root" >&2
+  exit 1
+fi
+
+if ! grep -q 'project_root="/workspace"' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must define the Claude project root" >&2
+  exit 1
+fi
+
+if ! grep -q 'ensure_link "$prompt_root/CLAUDE.md" "$project_root/CLAUDE.md"' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must project CLAUDE.md into /workspace" >&2
+  exit 1
+fi
+
+if ! grep -q 'ensure_link "$prompt_root/persona.md" "$project_root/persona.md"' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must project persona.md into /workspace" >&2
+  exit 1
+fi
+
+if ! grep -q 'ensure_link "$prompt_root/.claude" "$project_root/.claude"' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must project .claude into /workspace" >&2
+  exit 1
+fi
+
+if ! grep -q 'default_model="${BIFROST_MODEL:-primary/model-id}"' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must derive the default Bifrost model" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'stripped_model="${default_model#*/}"' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must derive the provider-stripped model name" >&2
+  exit 1
+fi
+
+if ! grep -Fq '[$default_model, $stripped_model]' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must emit an explicit Bifrost model allowlist" >&2
+  exit 1
+fi
+
+if grep -q '"\*"' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must not rely on wildcard Bifrost model matching" >&2
+  exit 1
+fi
+
+rm -rf "$tmp_runtime_root"
+
 port=$((20000 + $$ % 10000))
 delayed_launcher_pid=""
 listener_pid=""

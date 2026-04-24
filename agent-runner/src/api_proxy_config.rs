@@ -33,28 +33,44 @@ impl ApiProxySettings {
         Self::from_env_map(env_map)
     }
 
+    pub fn from_env_optional() -> Result<Option<Self>, ConfigError> {
+        let env_map = env::vars().collect::<HashMap<_, _>>();
+        Self::from_env_map_optional(env_map)
+    }
+
     pub fn from_env_map(env_map: HashMap<String, String>) -> Result<Self, ConfigError> {
-        Ok(Self {
+        Self::from_env_map_optional(env_map)?.ok_or(ConfigError::MissingUpstream)
+    }
+
+    pub fn from_env_map_optional(env_map: HashMap<String, String>) -> Result<Option<Self>, ConfigError> {
+        let upstream = match parse_upstream(&env_map)? {
+            Some(upstream) => upstream,
+            None => return Ok(None),
+        };
+
+        Ok(Some(Self {
             bind_addr: string_or_default(&env_map, "API_PROXY_BIND_ADDR", "0.0.0.0:9000"),
             local_auth_token: optional_trimmed(&env_map, "API_PROXY_AUTH_TOKEN")
                 .unwrap_or_else(|| "local-proxy-token".to_string()),
-            upstream: parse_upstream(&env_map)?,
-        })
+            upstream,
+        }))
     }
 }
 
-fn parse_upstream(env_map: &HashMap<String, String>) -> Result<ProviderConfig, ConfigError> {
-    let base_url =
-        optional_trimmed(env_map, "API_PROXY_UPSTREAM_BASE_URL").ok_or(ConfigError::MissingUpstream)?;
-    let upstream_token =
-        optional_trimmed(env_map, "API_PROXY_UPSTREAM_TOKEN").ok_or(ConfigError::MissingUpstream)?;
+fn parse_upstream(env_map: &HashMap<String, String>) -> Result<Option<ProviderConfig>, ConfigError> {
+    let base_url = optional_trimmed(env_map, "API_PROXY_UPSTREAM_BASE_URL");
+    let upstream_token = optional_trimmed(env_map, "API_PROXY_UPSTREAM_TOKEN");
 
-    Ok(ProviderConfig {
-        base_url,
-        upstream_token,
-        upstream_auth_header: optional_trimmed(env_map, "API_PROXY_UPSTREAM_AUTH_HEADER")
-            .unwrap_or_else(|| "x-api-key".to_string()),
-        upstream_auth_scheme: optional_trimmed(env_map, "API_PROXY_UPSTREAM_AUTH_SCHEME"),
-        model: optional_trimmed(env_map, "API_PROXY_UPSTREAM_MODEL"),
-    })
+    match (base_url, upstream_token) {
+        (None, None) => return Ok(None),
+        (Some(_), None) | (None, Some(_)) => return Err(ConfigError::MissingUpstream),
+        (Some(base_url), Some(upstream_token)) => Ok(Some(ProviderConfig {
+            base_url,
+            upstream_token,
+            upstream_auth_header: optional_trimmed(env_map, "API_PROXY_UPSTREAM_AUTH_HEADER")
+                .unwrap_or_else(|| "x-api-key".to_string()),
+            upstream_auth_scheme: optional_trimmed(env_map, "API_PROXY_UPSTREAM_AUTH_SCHEME"),
+            model: optional_trimmed(env_map, "API_PROXY_UPSTREAM_MODEL"),
+        })),
+    }
 }

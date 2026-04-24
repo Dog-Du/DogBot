@@ -13,9 +13,18 @@ fn settings_use_expected_defaults() {
     assert_eq!(settings.state_dir, "/srv/agent-state");
     assert_eq!(
         settings.anthropic_base_url,
-        "http://host.docker.internal:9000"
+        "http://127.0.0.1:8080/anthropic"
     );
-    assert_eq!(settings.api_proxy_auth_token, "local-proxy-token");
+    assert_eq!(settings.anthropic_api_key, "dummy");
+    assert_eq!(settings.bifrost_port, 8080);
+    assert_eq!(settings.bifrost_provider_name, "primary");
+    assert_eq!(settings.bifrost_model, "primary/model-id");
+    assert_eq!(
+        settings.bifrost_upstream_base_url,
+        "https://example.com"
+    );
+    assert_eq!(settings.bifrost_upstream_api_key, "replace-me");
+    assert_eq!(settings.bifrost_upstream_provider_type, "openai");
     assert_eq!(settings.napcat_api_base_url, "http://127.0.0.1:3001");
     assert_eq!(settings.napcat_access_token, None);
     assert_eq!(settings.max_concurrent_runs, 10);
@@ -44,6 +53,56 @@ fn settings_parse_prompt_and_history_fields() {
     let settings = Settings::from_env_map(env).unwrap();
     assert_eq!(settings.claude_prompt_root, "./custom-claude-prompt");
     assert_eq!(settings.history_db_path, "/tmp/custom/history.db");
+}
+
+#[test]
+fn settings_parse_bifrost_fields() {
+    let env = std::collections::HashMap::from([
+        (
+            "BIFROST_PORT".to_string(),
+            "18080".to_string(),
+        ),
+        (
+            "BIFROST_PROVIDER_NAME".to_string(),
+            "gateway".to_string(),
+        ),
+        (
+            "BIFROST_MODEL".to_string(),
+            "gateway/gpt-5".to_string(),
+        ),
+        (
+            "BIFROST_UPSTREAM_BASE_URL".to_string(),
+            "https://llm-gateway.example".to_string(),
+        ),
+        (
+            "BIFROST_UPSTREAM_API_KEY".to_string(),
+            "provider-token".to_string(),
+        ),
+        (
+            "BIFROST_UPSTREAM_PROVIDER_TYPE".to_string(),
+            "anthropic".to_string(),
+        ),
+        (
+            "ANTHROPIC_API_KEY".to_string(),
+            "dummy-2".to_string(),
+        ),
+    ]);
+
+    let settings = Settings::from_env_map(env).unwrap();
+    assert_eq!(settings.bifrost_port, 18080);
+    assert_eq!(settings.bifrost_provider_name, "gateway");
+    assert_eq!(settings.bifrost_model, "gateway/gpt-5");
+    assert_eq!(
+        settings.bifrost_upstream_base_url,
+        "https://llm-gateway.example"
+    );
+    assert_eq!(settings.bifrost_upstream_api_key, "provider-token");
+    assert_eq!(settings.bifrost_upstream_provider_type, "anthropic");
+    assert_eq!(settings.anthropic_api_key, "dummy-2");
+    assert_eq!(
+        settings.anthropic_base_url,
+        "http://127.0.0.1:18080/anthropic"
+    );
 }
 
 #[test]
@@ -92,15 +151,6 @@ fn settings_treat_empty_napcat_token_as_absent() {
 }
 
 #[test]
-fn settings_treat_empty_proxy_token_as_default() {
-    let env =
-        std::collections::HashMap::from([("API_PROXY_AUTH_TOKEN".to_string(), "   ".to_string())]);
-
-    let settings = Settings::from_env_map(env).unwrap();
-    assert_eq!(settings.api_proxy_auth_token, "local-proxy-token");
-}
-
-#[test]
 fn settings_allow_runner_limit_overrides() {
     let env = std::collections::HashMap::from([
         (
@@ -110,12 +160,21 @@ fn settings_allow_runner_limit_overrides() {
         ("AGENT_WORKSPACE_DIR".to_string(), "/tmp/work".to_string()),
         ("AGENT_STATE_DIR".to_string(), "/tmp/state".to_string()),
         (
-            "ANTHROPIC_BASE_URL".to_string(),
-            "http://proxy.internal:9000".to_string(),
+            "ANTHROPIC_API_KEY".to_string(),
+            "dummy-2".to_string(),
+        ),
+        ("BIFROST_MODEL".to_string(), "primary/gpt-5".to_string()),
+        (
+            "BIFROST_UPSTREAM_BASE_URL".to_string(),
+            "https://models.example".to_string(),
         ),
         (
-            "API_PROXY_AUTH_TOKEN".to_string(),
-            "local-proxy-token-2".to_string(),
+            "BIFROST_UPSTREAM_API_KEY".to_string(),
+            "provider-token-2".to_string(),
+        ),
+        (
+            "BIFROST_UPSTREAM_PROVIDER_TYPE".to_string(),
+            "openai".to_string(),
         ),
         (
             "NAPCAT_API_BASE_URL".to_string(),
@@ -143,8 +202,12 @@ fn settings_allow_runner_limit_overrides() {
     assert_eq!(settings.image_name, "custom/claude:1");
     assert_eq!(settings.workspace_dir, "/tmp/work");
     assert_eq!(settings.state_dir, "/tmp/state");
-    assert_eq!(settings.anthropic_base_url, "http://proxy.internal:9000");
-    assert_eq!(settings.api_proxy_auth_token, "local-proxy-token-2");
+    assert_eq!(settings.anthropic_base_url, "http://127.0.0.1:8080/anthropic");
+    assert_eq!(settings.anthropic_api_key, "dummy-2");
+    assert_eq!(settings.bifrost_model, "primary/gpt-5");
+    assert_eq!(settings.bifrost_upstream_base_url, "https://models.example");
+    assert_eq!(settings.bifrost_upstream_api_key, "provider-token-2");
+    assert_eq!(settings.bifrost_upstream_provider_type, "openai");
     assert_eq!(settings.napcat_api_base_url, "http://127.0.0.1:3100");
     assert_eq!(
         settings.napcat_access_token.as_deref(),

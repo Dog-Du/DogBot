@@ -45,12 +45,9 @@ async fn proxy_request(
     }
 
     let provider = &state.settings.upstream;
+    let request_path_and_query = uri.path_and_query().map(|value| value.as_str()).unwrap_or("/");
 
-    let url = format!(
-        "{}{}",
-        provider.base_url.trim_end_matches('/'),
-        uri.path_and_query().map(|value| value.as_str()).unwrap_or("/")
-    );
+    let url = join_upstream_url(&provider.base_url, request_path_and_query);
 
     let forwarded_body = match rewrite_body_if_needed(provider, uri.path(), &headers, body).await {
         Ok(body) => body,
@@ -164,4 +161,36 @@ fn is_json(headers: &HeaderMap) -> bool {
         .and_then(|value| value.to_str().ok())
         .map(|value| value.starts_with("application/json"))
         .unwrap_or(false)
+}
+
+fn join_upstream_url(base_url: &str, request_path_and_query: &str) -> String {
+    let Ok(mut parsed_base_url) = reqwest::Url::parse(base_url) else {
+        return format!(
+            "{}{}",
+            base_url.trim_end_matches('/'),
+            request_path_and_query
+        );
+    };
+
+    let base_path = parsed_base_url.path().trim_end_matches('/').to_string();
+    let request_path = request_path_and_query
+        .split('?')
+        .next()
+        .unwrap_or(request_path_and_query);
+
+    parsed_base_url.set_path("");
+    parsed_base_url.set_query(None);
+    parsed_base_url.set_fragment(None);
+    let origin = parsed_base_url.to_string().trim_end_matches('/').to_string();
+
+    let prefix = if !base_path.is_empty()
+        && base_path != "/"
+        && request_path.starts_with(&base_path)
+    {
+        ""
+    } else {
+        base_path.as_str()
+    };
+
+    format!("{origin}{prefix}{request_path_and_query}")
 }

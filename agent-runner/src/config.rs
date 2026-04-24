@@ -16,7 +16,13 @@ pub struct Settings {
     pub state_dir: String,
     pub claude_prompt_root: String,
     pub anthropic_base_url: String,
-    pub api_proxy_auth_token: String,
+    pub anthropic_api_key: String,
+    pub bifrost_port: u16,
+    pub bifrost_provider_name: String,
+    pub bifrost_model: String,
+    pub bifrost_upstream_base_url: String,
+    pub bifrost_upstream_api_key: String,
+    pub bifrost_upstream_provider_type: String,
     pub napcat_api_base_url: String,
     pub napcat_access_token: Option<String>,
     pub max_concurrent_runs: usize,
@@ -58,13 +64,21 @@ impl Settings {
         let state_dir = string_or_default(&env_map, "AGENT_STATE_DIR", "/srv/agent-state");
         let claude_prompt_root =
             string_or_default(&env_map, "DOGBOT_CLAUDE_PROMPT_ROOT", "./claude-prompt");
-        let anthropic_base_url = string_or_default(
-            &env_map,
-            "ANTHROPIC_BASE_URL",
-            "http://host.docker.internal:9000",
-        );
-        let api_proxy_auth_token = optional_trimmed(&env_map, "API_PROXY_AUTH_TOKEN")
-            .unwrap_or_else(|| "local-proxy-token".to_string());
+        let bifrost_port = parse_or_default(&env_map, "BIFROST_PORT", 8080)?;
+        let bifrost_provider_name =
+            string_or_default(&env_map, "BIFROST_PROVIDER_NAME", "primary");
+        let bifrost_model =
+            string_or_default(&env_map, "BIFROST_MODEL", "primary/model-id");
+        let bifrost_upstream_base_url = optional_trimmed(&env_map, "BIFROST_UPSTREAM_BASE_URL")
+            .unwrap_or_else(|| "https://example.com".to_string());
+        let bifrost_upstream_api_key = optional_trimmed(&env_map, "BIFROST_UPSTREAM_API_KEY")
+            .unwrap_or_else(|| "replace-me".to_string());
+        let bifrost_upstream_provider_type =
+            string_or_default(&env_map, "BIFROST_UPSTREAM_PROVIDER_TYPE", "openai");
+        let anthropic_base_url = optional_trimmed(&env_map, "ANTHROPIC_BASE_URL")
+            .unwrap_or_else(|| format!("http://127.0.0.1:{bifrost_port}/anthropic"));
+        let anthropic_api_key = optional_trimmed(&env_map, "ANTHROPIC_API_KEY")
+            .unwrap_or_else(|| "dummy".to_string());
         let max_concurrent_runs = parse_or_default(&env_map, "MAX_CONCURRENT_RUNS", 10)?;
         let napcat_api_base_url =
             string_or_default(&env_map, "NAPCAT_API_BASE_URL", "http://127.0.0.1:3001");
@@ -99,7 +113,13 @@ impl Settings {
             state_dir,
             claude_prompt_root,
             anthropic_base_url,
-            api_proxy_auth_token,
+            anthropic_api_key,
+            bifrost_port,
+            bifrost_provider_name,
+            bifrost_model,
+            bifrost_upstream_base_url,
+            bifrost_upstream_api_key,
+            bifrost_upstream_provider_type,
             napcat_api_base_url,
             napcat_access_token,
             max_concurrent_runs,
