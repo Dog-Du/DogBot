@@ -22,6 +22,7 @@ use crate::{
     docker_client::DockerRuntime,
     exec::{DockerRunner, ExecutionBackend},
     history::{cleanup::purge_expired_history, store::HistoryStore},
+    messenger::{MessageDelivery, NapCatMessenger},
     models::{
         ErrorResponse, MessageRequest, MessageResponse, RunRequest, RunResponse,
         ValidatedRunRequest,
@@ -61,22 +62,14 @@ impl Runner for DockerRunner {
     }
 }
 
-#[derive(Clone)]
-struct UnsupportedMessenger;
-
 #[async_trait]
-impl Messenger for UnsupportedMessenger {
+impl Messenger for NapCatMessenger {
     async fn send(
         &self,
-        _request: MessageRequest,
-        _session: crate::session_store::SessionRecord,
+        request: MessageRequest,
+        session: crate::session_store::SessionRecord,
     ) -> Result<MessageResponse, ErrorResponse> {
-        Err(ErrorResponse {
-            status: "error".into(),
-            error_code: "unsupported_platform".into(),
-            message: "message dispatch is not configured in this runtime".into(),
-            timed_out: false,
-        })
+        MessageDelivery::send(self, request, session).await
     }
 }
 
@@ -222,13 +215,15 @@ pub fn build_test_app_with_settings(runner: Arc<dyn Runner>, settings: Settings)
         HistoryStore::open(&settings.history_db_path).expect("history store"),
     ));
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
+    let messenger =
+        Arc::new(NapCatMessenger::from_settings(&settings).expect("default NapCat messenger"));
     router(AppState {
         settings,
         queue_tx,
         session_store,
         history_store,
         history_cleanup_state: Arc::new(StdMutex::new(HistoryCleanupState::default())),
-        messenger: Arc::new(UnsupportedMessenger),
+        messenger,
     })
 }
 
@@ -264,6 +259,9 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
         HistoryStore::open(&settings.history_db_path)
             .map_err(|err| io::Error::other(err.to_string()))?,
     ));
+    let messenger = Arc::new(
+        NapCatMessenger::from_settings(&settings).map_err(|err| io::Error::other(err.message))?,
+    );
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
     Ok(router(AppState {
         settings,
@@ -271,7 +269,7 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
         session_store,
         history_store,
         history_cleanup_state: Arc::new(StdMutex::new(HistoryCleanupState::default())),
-        messenger: Arc::new(UnsupportedMessenger),
+        messenger,
     }))
 }
 
