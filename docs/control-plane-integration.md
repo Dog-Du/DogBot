@@ -16,8 +16,9 @@
   - `session`
   - `history`
   - `trigger resolver`
-- inbound-first 链路
-  - QQ / WeChat adapter 会先把规范化后的消息发送给 `agent-runner /v1/inbound-messages`
+- direct platform ingress 链路
+  - QQ: `NapCat -> agent-runner /v1/platforms/qq/napcat/ws`
+  - WeChatPadPro: `WeChatPadPro -> agent-runner /v1/platforms/wechatpadpro/events`
 - 历史消息基础版
   - 首次有效触发会启用当前会话的 history ingest
   - QQ 群聊首次启用后会做一次有界 backfill
@@ -35,7 +36,7 @@
   - 微信私聊：任意非空文本
   - 微信群聊：`@机器人名 + 正文`
   - `/agent-status` 保留
-- `agent-runner` 与两个 adapter 当前已经按上面的规则对齐
+- `agent-runner` 当前直接执行平台侧 trigger gate
 - 群聊仍保留显式 mention gate
   - reply 本身不会单独触发执行
   - 所以联调时不要把“reply 中带 `/agent` 就能直接执行”当成现态
@@ -75,36 +76,33 @@ SESSION_DB_PATH=/srv/dogbot/runtime/agent-state/runner.db
 HISTORY_DB_PATH=/srv/dogbot/runtime/agent-state/history.db
 DOGBOT_CLAUDE_PROMPT_ROOT=/srv/dogbot/runtime/agent-state/claude-prompt
 
-QQ_PLATFORM_ACCOUNT_ID=qq:bot_uin:123456
-WECHATPADPRO_PLATFORM_ACCOUNT_ID=wechatpadpro:account:wxid_bot_1
+PLATFORM_QQ_ACCOUNT_ID=qq:bot_uin:123456
+PLATFORM_QQ_BOT_ID=123456
+PLATFORM_WECHATPADPRO_ACCOUNT_ID=wechatpadpro:account:wxid_bot_1
 WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1
-WECHATPADPRO_BOT_MENTION_NAMES=DogDu
+PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES=DogDu
 ```
 
 说明：
 
-- `QQ_PLATFORM_ACCOUNT_ID` / `WECHATPADPRO_PLATFORM_ACCOUNT_ID` 决定 platform-account scope 的隔离键
+- `PLATFORM_QQ_ACCOUNT_ID` / `PLATFORM_WECHATPADPRO_ACCOUNT_ID` 决定 platform-account scope 的隔离键
 - `DOGBOT_CLAUDE_PROMPT_ROOT` 推荐使用绝对路径，部署时会把仓库中的 `claude-prompt/` 同步到这里
 - 示例配置默认启用 `WECHATPADPRO_REQUIRE_MENTION_IN_GROUP=1`
-- 启用群聊 mention 门禁时，必须保证 `WECHATPADPRO_BOT_MENTION_NAMES` 非空并与群昵称一致
+- 启用群聊 mention 门禁时，必须保证 `PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES` 非空并与群昵称一致
 - 如果关闭 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK`，必须手动配置 webhook，否则不会收到微信消息
 
 ## 5. 联调前准备
 
 如果 NapCat 和 WeChatPadPro 已经在线并保持登录，本轮联调通常不需要重新扫码。
 
-建议只确认三类进程：
+建议只确认一类宿主机进程：
 
 - `agent-runner`
-- `qq-adapter`
-- `wechatpadpro-adapter`
 
 健康检查：
 
 ```bash
 curl -fsS http://127.0.0.1:8787/healthz
-curl -fsS http://127.0.0.1:19000/healthz
-curl -fsS http://127.0.0.1:18999/healthz
 ```
 
 预期都返回：
@@ -139,9 +137,9 @@ curl -fsS http://127.0.0.1:18999/healthz
 
 预期：
 
-- 当前消息先进入 `/v1/inbound-messages`
+- 当前消息先进入 `/v1/platforms/qq/napcat/ws`
 - 首次有效触发时会启用该群的 history ingest
-- QQ adapter 会对该群做一次最多 `50` 条的有界 history backfill
+- QQ 平台侧会对该群做一次最多 `50` 条的有界 history backfill
 - 机器人回复时会 `@` 当前发言人
 
 ### 6.3 WeChat 私聊
@@ -155,7 +153,7 @@ curl -fsS http://127.0.0.1:18999/healthz
 
 预期：
 
-- webhook 命中后先做 inbound 归一化
+- webhook 命中 `agent-runner /v1/platforms/wechatpadpro/events` 后先做 inbound 归一化
 - `/agent-status` 返回 `agent-runner ok`
 - 普通文本能正常回消息
 
@@ -197,7 +195,7 @@ sqlite3 /srv/dogbot/runtime/agent-state/history.db \
 - 历史只做当前 conversation 注入，不跨会话检索
 - 静态 `CLAUDE.md / skills` 仍然是仓库管理，不支持在聊天里直接生效修改
 - 图片链路目前只完成了 schema / action validation 基础，不作为本轮联调验收项
-- adapter 仍保留群聊显式 mention gate，所以 reply 本身还不会单独触发执行
+- 当前平台入口仍保留群聊显式 mention gate，所以 reply 本身还不会单独触发执行
 
 ## 9. 回归命令
 
@@ -205,8 +203,8 @@ sqlite3 /srv/dogbot/runtime/agent-state/history.db \
 
 ```bash
 cargo test --test history_cleanup_tests --test history_ingest_tests --test inbound_api_tests --test context_run_tests --test http_api_tests --manifest-path agent-runner/Cargo.toml
-uv run --with pytest --with fastapi --with httpx python -m pytest qq_adapter/tests -q
-uv run --with pytest --with fastapi --with httpx python -m pytest wechatpadpro_adapter/tests -q
+bash scripts/tests/test_configure_napcat_ws.sh
+bash scripts/tests/test_configure_wechatpadpro_webhook.sh
 ```
 
 ## 10. Content Bootstrap Checks

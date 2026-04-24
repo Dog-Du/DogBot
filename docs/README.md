@@ -41,6 +41,7 @@
 - `2026-04-15-code-cleanup-design.md`
 - `2026-04-19-dogbot-control-plane-design.md`
 - `2026-04-22-dogbot-claude-prompt-design.md`
+- `2026-04-24-unified-platform-protocol-design.md`
 
 ### 实施计划
 

@@ -4,8 +4,8 @@
 
 当前已经落地两条接入链路：
 
-- `QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner`
-- `微信 -> WeChatPadPro -> wechatpadpro-adapter -> agent-runner -> claude-runner`
+- `QQ -> NapCat -> agent-runner -> claude-runner`
+- `微信 -> WeChatPadPro -> agent-runner -> claude-runner`
 
 目标：
 
@@ -19,7 +19,6 @@
 ```text
 QQ
 -> NapCat
--> qq-adapter
 -> agent-runner
 -> claude-runner 容器
 -> agent-runner 内置上游代理
@@ -27,7 +26,6 @@ QQ
 
 微信
 -> WeChatPadPro
--> wechatpadpro-adapter
 -> agent-runner
 -> claude-runner 容器
 -> agent-runner 内置上游代理
@@ -77,9 +75,7 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
 │   └── README.md                 # 高级用户的 compose 说明
 ├── deploy/                       # 配置模板与部署说明
 ├── docker/claude-runner/         # Claude 容器镜像
-├── qq_adapter/                   # 宿主机 QQ 适配器
 ├── scripts/                      # 启停、配置、诊断脚本
-├── wechatpadpro_adapter/         # 宿主机微信适配器
 └── docs/                         # 设计文档
 ```
 
@@ -166,10 +162,10 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
 
 补充说明：
 
-- `agent-runner` 与两个 adapter 当前已经按上述规则对齐
+- `agent-runner` 当前直接接收平台事件
 - 群聊仍保留显式 mention gate，reply 本身不会单独触发执行
 - 联调和验收应以当前规则为准
-- WeChat 示例配置启用了群聊 mention 门禁，部署前需要把 `WECHATPADPRO_BOT_MENTION_NAMES` 改成真实群昵称
+- WeChat 示例配置启用了群聊 mention 门禁，部署前需要把 `PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES` 改成真实群昵称
 
 ## 当前已落地
 
@@ -179,7 +175,9 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - `claude-prompt/` 承载仓库管理的静态 `CLAUDE.md` 与轻量 skills
   - `claude-runner` 运行时会把 `claude-prompt/` 投影为 `/workspace` 下的 Claude Code 标准项目文件
 - [x] 触发识别与基础回复链路
-  - QQ / WeChat 统一先走 `/v1/inbound-messages`
+  - QQ / WeChat 统一先走 `agent-runner` 平台入口
+  - QQ: `/v1/platforms/qq/napcat/ws`
+  - WeChatPadPro: `/v1/platforms/wechatpadpro/events`
   - 规范化 inbound message、mention/reply 元数据和 runner-side trigger resolver 已落地
   - QQ / WeChat 的 reply / mention 回发链路已整理
 - [x] 历史消息基础版
@@ -194,6 +192,9 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - `deploy_stack.sh` / `stop_stack.sh` 跑通并补齐脚本级回归检查
   - `QQ/Wechat` 登录流程支持二维码刷新、阻塞等待、超时退出和回发链路修复
   - 移除 `astrbot` 依赖及相关历史运行链路
+- [x] 平台入口统一收敛到 `agent-runner`
+  - 删除 `qq_adapter/`、`wechatpadpro_adapter/` 与对应启动脚本
+  - 部署脚本与默认配置已切到 direct ingress
 - [x] `claude-runner` 内置 `Bifrost`
   - 运行链路已经切到 `Claude Code -> 同容器 Bifrost -> agent-runner 内置上游代理 -> 真实模型源`
   - 真实上游 token 与 base URL 继续只保留在宿主机，不进入 `claude-runner` 容器
@@ -209,14 +210,6 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - 支持长时间运行的任务，例如周期性汇报、长耗时整理，不应被当前严格超时机制直接 kill 掉
   - 会话模型应统一为“一个私聊/一个群聊对应一个 `session_id`”，不再按群成员拆分子 session
   - 同一会话在长任务进行时再次发消息，需要会话级队列、状态查询、取消和重试机制，避免 turn 串扰或冲突
-- [ ] 统一结构化平台接入与回复协议
-  - QQ/NapCat、WeChatPadPro 和后续第三方平台接入应先归一化为同一套结构化 inbound event，而不是尽早压扁成纯文本
-  - 出站回复也应统一为结构化 `reply / mention / text / image` 能力，再由各平台 adapter 做降级和发送
-  - 这项工作应合并当前零散的 trigger、reply、mention、图片发送适配逻辑
-- [ ] 删除 Python adapter，统一改为 Rust 适配层
-  - 当前 `qq_adapter/` 和 `wechatpadpro_adapter/` 存在大量重复的 trigger、reply、mention、结构化消息映射和回发逻辑，维护成本偏高
-  - 后续如果继续补齐结构化消息与媒体能力，Python 侧和 Rust 侧会出现重复实现，增加演进成本和行为漂移风险
-  - 目标是把平台适配主逻辑统一收敛到 Rust，只保留必要的平台协议差异层，避免双份实现
 - [ ] 图片链路做到与 `codex-bridge` 同等程度
   - 重点是图片发送和结构化回复中的图片 segment，而不是完整视觉链路
   - 支持读取当前消息或最近一小段会话窗口里的图片附件，并在同会话内继续发送

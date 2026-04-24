@@ -28,7 +28,6 @@ Claude prompt 内容当前也已经接入部署流程：
 ```text
 QQ
 -> NapCat
--> qq-adapter
 -> agent-runner
 -> claude-runner
 -> agent-runner 内置上游代理
@@ -36,7 +35,6 @@ QQ
 
 微信
 -> WeChatPadPro
--> wechatpadpro-adapter
 -> agent-runner
 -> claude-runner
 -> agent-runner 内置上游代理
@@ -132,10 +130,10 @@ newgrp docker
   - `wechatpadpro` / MySQL / Redis 容器定义
 - `scripts/start_agent_runner.sh`
   - 启动宿主机 `agent-runner`
-- `scripts/start_qq_adapter.sh`
-  - 启动宿主机 QQ 适配器
-- `scripts/start_wechatpadpro_adapter.sh`
-  - 启动宿主机微信适配器
+- `scripts/configure_napcat_ws.sh`
+  - 配置 NapCat 直连 `agent-runner`
+- `scripts/configure_wechatpadpro_webhook.sh`
+  - 配置 WeChatPadPro 直连 `agent-runner`
 
 ## 4. 快速开始
 
@@ -153,13 +151,13 @@ cp deploy/dogbot.env.example deploy/dogbot.env
 - `AGENT_RUNNER_BIND_ADDR`
 - 上游配置
 - 上游 key
-- `QQ_ADAPTER_QQ_BOT_ID`
-- `QQ_PLATFORM_ACCOUNT_ID`
+- `PLATFORM_QQ_BOT_ID`
+- `PLATFORM_QQ_ACCOUNT_ID`
 - `WECHATPADPRO_ADMIN_KEY`
 - `WECHATPADPRO_MYSQL_ROOT_PASSWORD`
 - `WECHATPADPRO_MYSQL_PASSWORD`
-- `WECHATPADPRO_PLATFORM_ACCOUNT_ID`
-- 如果保留群聊 mention 门禁，需要把 `WECHATPADPRO_BOT_MENTION_NAMES` 改成你的机器人群昵称
+- `PLATFORM_WECHATPADPRO_ACCOUNT_ID`
+- 如果保留群聊 mention 门禁，需要把 `PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES` 改成你的机器人群昵称
 - QQ / 微信相关目录和端口
 
 ### 4.3 启动
@@ -185,9 +183,13 @@ cp deploy/dogbot.env.example deploy/dogbot.env
 
 说明：
 
+- 当前不再启动 `qq_adapter/` 或 `wechatpadpro_adapter/`
+- `agent-runner` 直接提供：
+  - `ws://<bind>/v1/platforms/qq/napcat/ws`
+  - `http://<bind>/v1/platforms/wechatpadpro/events`
 - 示例配置默认启用了 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1`
 - 如果你手动改成 `0`，部署脚本不会替你注册 webhook
-- 这时必须自行配置 `WECHATPADPRO_ADAPTER_WEBHOOK_URL`
+- 这时必须自行配置 `WECHATPADPRO_WEBHOOK_URL`
 - 部署前会自动把仓库内 `claude-prompt/` 同步到 `DOGBOT_CLAUDE_PROMPT_ROOT`
 
 如果 Docker 权限不够：
@@ -269,8 +271,8 @@ DOGBOT_CLAUDE_PROMPT_ROOT=/srv/dogbot/runtime/agent-state/claude-prompt
 建议显式设置：
 
 ```env
-QQ_PLATFORM_ACCOUNT_ID=qq:bot_uin:123456
-WECHATPADPRO_PLATFORM_ACCOUNT_ID=wechatpadpro:account:wxid_bot_1
+PLATFORM_QQ_ACCOUNT_ID=qq:bot_uin:123456
+PLATFORM_WECHATPADPRO_ACCOUNT_ID=wechatpadpro:account:wxid_bot_1
 ```
 
 作用：
@@ -357,12 +359,12 @@ http://127.0.0.1:6099
 
 ### 6.3 反向 WebSocket
 
-当前工程要求 `NapCat` 把 OneBot 事件推给宿主机上的 `qq-adapter`。
+当前工程要求 `NapCat` 直接把 OneBot 事件推给宿主机上的 `agent-runner`。
 
 目标地址：
 
 ```text
-ws://host.docker.internal:19000/napcat/ws
+ws://host.docker.internal:8787/v1/platforms/qq/napcat/ws
 ```
 
 这部分现在由脚本自动写入：
@@ -371,25 +373,19 @@ ws://host.docker.internal:19000/napcat/ws
 
 正常情况下不需要你手动改容器内配置。
 
-## 7. QQ adapter 配置
+## 7. QQ 平台入口配置
 
 QQ 链路为：
 
 ```text
-NapCat -> qq-adapter -> agent-runner
+NapCat -> agent-runner
 ```
-
-适配器启动脚本：
-
-- `scripts/start_qq_adapter.sh`
 
 关键配置：
 
 ```env
-QQ_ADAPTER_BIND_ADDR=0.0.0.0:19000
-QQ_ADAPTER_QQ_BOT_ID=你的QQ号
-QQ_PLATFORM_ACCOUNT_ID=qq:bot_uin:你的机器人QQ号
-QQ_ADAPTER_STATUS_COMMAND_NAME=agent-status
+PLATFORM_QQ_BOT_ID=你的QQ号
+PLATFORM_QQ_ACCOUNT_ID=qq:bot_uin:你的机器人QQ号
 ```
 
 ## 8. 触发规则
@@ -404,7 +400,7 @@ QQ_ADAPTER_STATUS_COMMAND_NAME=agent-status
 
 补充说明：
 
-- `agent-runner` 与两个 adapter 当前已经按上面的规则对齐
+- `agent-runner` 当前直接执行平台侧 trigger gate
 - 群聊仍保留显式 mention gate，reply 本身不会单独触发执行
 - 部署和联调请按上面的现态规则验收
 
@@ -436,35 +432,30 @@ ENABLE_WECHATPADPRO=1
   - `WECHATPADPRO_LOGIN_OUTPUT_DIR`
 - 阻塞等待扫码；若 100 秒内未完成扫码会退出
 
-### 9.4 微信适配器
+### 9.4 微信平台入口
 
-微信不经过任何额外编排层，而是：
+微信链路为：
 
 ```text
-WeChatPadPro -> wechatpadpro-adapter -> agent-runner
+WeChatPadPro -> agent-runner
 ```
-
-适配器启动脚本：
-
-- `scripts/start_wechatpadpro_adapter.sh`
 
 关键配置：
 
 ```env
-WECHATPADPRO_AGENT_RUNNER_BASE_URL=http://127.0.0.1:8787
+PLATFORM_WECHATPADPRO_ACCOUNT_ID=wechatpadpro:account:你的机器人账号
+PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES=DogDu
 WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1
-WECHATPADPRO_ADAPTER_WEBHOOK_URL=http://host.docker.internal:18999/wechatpadpro/events
+WECHATPADPRO_WEBHOOK_URL=http://host.docker.internal:8787/v1/platforms/wechatpadpro/events
 WECHATPADPRO_REQUIRE_MENTION_IN_GROUP=1
-WECHATPADPRO_BOT_MENTION_NAMES=DogDu
-WECHATPADPRO_PLATFORM_ACCOUNT_ID=wechatpadpro:account:你的机器人账号
 ```
 
 说明：
 
 - 示例配置默认会自动向 WeChatPadPro 注册 webhook
-- 如果关闭 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK`，必须手动配置 webhook，否则 adapter 不会收到消息
+- 如果关闭 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK`，必须手动配置 webhook，否则 `agent-runner` 不会收到消息
 - 示例配置默认启用 `WECHATPADPRO_REQUIRE_MENTION_IN_GROUP=1`
-- 启用群聊 mention 门禁时，`WECHATPADPRO_BOT_MENTION_NAMES` 不能为空
+- 启用群聊 mention 门禁时，`PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES` 不能为空
 
 ## 10. Docker 资源限制
 
