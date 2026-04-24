@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use agent_runner::config::Settings;
 use agent_runner::history::store::HistoryStore;
 use agent_runner::models::{ErrorResponse, RunRequest, RunResponse, ValidatedRunRequest};
+use agent_runner::protocol::{CanonicalEvent, CanonicalMessage, EventKind, MessagePart};
 use agent_runner::server::{Runner, build_test_app, build_test_app_with_settings};
 use async_trait::async_trait;
 use axum::{
@@ -99,6 +100,31 @@ fn test_settings() -> Settings {
     }
 }
 
+fn seed_history_message(store: &HistoryStore, message_id: &str, text: &str) {
+    store
+        .insert_canonical_event(&CanonicalEvent {
+            platform: "qq".into(),
+            platform_account: "qq:bot_uin:123".into(),
+            conversation: "qq:private:1".into(),
+            actor: "qq:user:1".into(),
+            event_id: format!("event::{message_id}"),
+            timestamp_epoch_secs: 1,
+            kind: EventKind::Message {
+                message: CanonicalMessage {
+                    message_id: message_id.into(),
+                    reply_to: None,
+                    parts: vec![MessagePart::Text { text: text.into() }],
+                    mentions: vec![],
+                    native_metadata: serde_json::json!({}),
+                },
+            },
+            raw_native_payload: serde_json::json!({
+                "source": "context-run-test",
+            }),
+        })
+        .expect("seed canonical history");
+}
+
 #[tokio::test]
 async fn run_endpoint_keeps_plain_prompt_without_context_pack() {
     let runner = Arc::new(CapturingRunner::default());
@@ -184,15 +210,7 @@ async fn run_endpoint_normalizes_context_identifiers_before_dispatch() {
 async fn run_endpoint_does_not_inject_history_evidence_when_history_exists() {
     let settings = test_settings();
     let store = HistoryStore::open(&settings.history_db_path).expect("history store");
-    store
-        .insert_message(
-            "hist-1",
-            "qq:private:1",
-            "qq:user:1",
-            "之前讨论过的上下文",
-            1,
-        )
-        .expect("seed history");
+    seed_history_message(&store, "hist-1", "之前讨论过的上下文");
 
     let runner = Arc::new(CapturingRunner::default());
     let app = build_test_app_with_settings(runner.clone(), settings);
@@ -252,15 +270,7 @@ async fn run_endpoint_rejects_control_characters_in_context_identifiers() {
 async fn run_endpoint_keeps_runtime_context_without_pack_items() {
     let settings = test_settings();
     let store = HistoryStore::open(&settings.history_db_path).expect("history store");
-    store
-        .insert_message(
-            "hist-1",
-            "qq:private:1",
-            "qq:user:1",
-            "之前讨论过的上下文",
-            1,
-        )
-        .expect("seed history");
+    seed_history_message(&store, "hist-1", "之前讨论过的上下文");
 
     let runner = Arc::new(CapturingRunner::default());
     let app = build_test_app_with_settings(runner.clone(), settings);

@@ -8,10 +8,10 @@ fn session_store_persists_existing_mapping() {
     let store = SessionStore::open(&db_path).unwrap();
 
     let first = store
-        .get_or_create_session("qq-user-1", "qq", "private:1", "1")
+        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "private:1")
         .unwrap();
     let second = store
-        .get_or_create_session("qq-user-1", "qq", "private:1", "1")
+        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "private:1")
         .unwrap();
 
     assert_eq!(first.external_session_id, "qq-user-1");
@@ -27,29 +27,29 @@ fn session_store_uses_distinct_claude_ids_for_distinct_external_sessions() {
     let store = SessionStore::open(&db_path).unwrap();
 
     let first = store
-        .get_or_create_session("qq-user-1", "qq", "private:1", "1")
+        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "private:1")
         .unwrap();
     let second = store
-        .get_or_create_session("qq-user-2", "qq", "private:2", "2")
+        .get_or_create_bound_session("qq-user-2", "qq", "qq:bot_uin:123", "private:2")
         .unwrap();
 
     assert_ne!(first.claude_session_id, second.claude_session_id);
 }
 
 #[test]
-fn legacy_session_api_uses_conversation_scoped_storage() {
+fn bound_session_api_uses_conversation_scoped_storage() {
     let temp = tempfile::tempdir().unwrap();
     let db_path = temp.path().join("runner.db");
     let store = SessionStore::open(&db_path).unwrap();
 
     let first = store
-        .get_or_create_session("qq-user-1", "qq", "qq:group:5566", "qq:user:1")
+        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:group:5566")
         .unwrap();
     let second = store
-        .get_or_create_session("qq-user-2", "qq", "qq:group:5566", "qq:user:2")
+        .get_or_create_bound_session("qq-user-2", "qq", "qq:bot_uin:123", "qq:group:5566")
         .unwrap();
     let third = store
-        .get_or_create_session("qq-user-3", "qq", "qq:group:7788", "qq:user:3")
+        .get_or_create_bound_session("qq-user-3", "qq", "qq:bot_uin:123", "qq:group:7788")
         .unwrap();
 
     assert_eq!(first.claude_session_id, second.claude_session_id);
@@ -57,16 +57,16 @@ fn legacy_session_api_uses_conversation_scoped_storage() {
 }
 
 #[test]
-fn legacy_external_session_id_does_not_override_conversation_scoping() {
+fn external_session_alias_does_not_override_conversation_scoping() {
     let temp = tempfile::tempdir().unwrap();
     let db_path = temp.path().join("runner.db");
     let store = SessionStore::open(&db_path).unwrap();
 
     let first = store
-        .get_or_create_session("qq-user-1", "qq", "qq:private:1", "qq:user:1")
+        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:private:1")
         .unwrap();
     let second = store
-        .get_or_create_session("qq-user-1", "qq", "qq:private:2", "qq:user:1")
+        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:private:2")
         .unwrap();
 
     assert_ne!(first.claude_session_id, second.claude_session_id);
@@ -79,10 +79,10 @@ fn session_store_reset_session_rotates_claude_session_id() {
     let store = SessionStore::open(&db_path).unwrap();
 
     let first = store
-        .get_or_create_session("qq-user-1", "qq", "private:1", "1")
+        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "private:1")
         .unwrap();
     let reset = store
-        .reset_session("qq-user-1", "qq", "private:1", "1")
+        .reset_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "private:1")
         .unwrap();
     let fetched = store.get_session("qq-user-1").unwrap().unwrap();
 
@@ -110,6 +110,26 @@ fn group_sessions_are_keyed_by_conversation_not_actor() {
 
     assert_eq!(first.claude_session_id, second.claude_session_id);
     assert_ne!(first.claude_session_id, third.claude_session_id);
+}
+
+#[test]
+fn conversation_and_bound_session_apis_share_the_same_underlying_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = SessionStore::open(temp.path().join("runner.db")).unwrap();
+
+    let canonical = store
+        .get_or_create_conversation_session("qq", "qq:bot_uin:123", "qq:group:5566")
+        .unwrap();
+    let bound = store
+        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:group:5566")
+        .unwrap();
+
+    assert_eq!(canonical.claude_session_id, bound.claude_session_id);
+    assert_eq!(bound.platform_account, "qq:bot_uin:123");
+    assert_eq!(
+        store.get_session("qq-user-1").unwrap().unwrap().session_key,
+        canonical.session_key
+    );
 }
 
 #[test]

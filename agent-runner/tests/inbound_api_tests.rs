@@ -194,7 +194,7 @@ async fn inbound_api_persists_enabled_conversation_messages() {
     let history_store =
         agent_runner::history::store::HistoryStore::open(&settings.history_db_path).unwrap();
     history_store
-        .upsert_ingest_state("qq:group:100", true, 180)
+        .upsert_ingest_state("qq:bot_uin:123", "qq:group:100", true, 180)
         .unwrap();
 
     let app = agent_runner::server::build_test_app_with_message_support(
@@ -234,7 +234,12 @@ async fn inbound_api_persists_enabled_conversation_messages() {
 
     let verifier =
         agent_runner::history::store::HistoryStore::open(&settings.history_db_path).unwrap();
-    assert_eq!(verifier.message_count("qq:group:100").unwrap(), 1);
+    assert_eq!(
+        verifier
+            .message_count("qq:bot_uin:123", "qq:group:100")
+            .unwrap(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -277,8 +282,17 @@ async fn inbound_api_enables_history_on_first_valid_trigger() {
 
     let verifier =
         agent_runner::history::store::HistoryStore::open(&settings.history_db_path).unwrap();
-    assert!(verifier.ingest_enabled("qq:group:200").unwrap());
-    assert_eq!(verifier.message_count("qq:group:200").unwrap(), 1);
+    assert!(
+        verifier
+            .ingest_enabled("qq:bot_uin:123", "qq:group:200")
+            .unwrap()
+    );
+    assert_eq!(
+        verifier
+            .message_count("qq:bot_uin:123", "qq:group:200")
+            .unwrap(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -287,7 +301,7 @@ async fn inbound_api_persists_canonical_history_for_mentions_and_reply() {
     let history_store =
         agent_runner::history::store::HistoryStore::open(&settings.history_db_path).unwrap();
     history_store
-        .upsert_ingest_state("qq:group:300", true, 180)
+        .upsert_ingest_state("qq:bot_uin:123", "qq:group:300", true, 180)
         .unwrap();
 
     let app = agent_runner::server::build_test_app_with_message_support(

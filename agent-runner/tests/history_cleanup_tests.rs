@@ -76,7 +76,10 @@ fn cleanup_removes_expired_messages_but_keeps_live_assets() {
 
     purge_expired_history(&store).unwrap();
 
-    assert_eq!(store.message_count("qq:group:100").unwrap(), 0);
+    assert_eq!(
+        store.message_count("test:history", "qq:group:100").unwrap(),
+        0
+    );
     assert_eq!(store.asset_count().unwrap(), 1);
 }
 
@@ -125,5 +128,10 @@ async fn inbound_request_triggers_runtime_history_cleanup() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let verifier = HistoryStore::open(&settings.history_db_path).unwrap();
-    assert_eq!(verifier.message_count("qq:group:cleanup").unwrap(), 0);
+    assert_eq!(
+        verifier
+            .message_count("test:history", "qq:group:cleanup")
+            .unwrap(),
+        0
+    );
 }

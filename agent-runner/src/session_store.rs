@@ -6,7 +6,6 @@ use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 use uuid::Uuid;
 
-const LEGACY_PLATFORM_ACCOUNT: &str = "compat:legacy-platform-account";
 const EXPECTED_SESSION_COLUMNS: &[&str] = &[
     "session_key",
     "claude_session_id",
@@ -80,26 +79,64 @@ impl SessionStore {
         )
     }
 
-    pub fn get_or_create_session(
+    pub fn reset_conversation_session(
+        &self,
+        platform: &str,
+        platform_account: &str,
+        conversation_id: &str,
+    ) -> Result<SessionRecord, SessionStoreError> {
+        let conn = self.open_connection()?;
+        let session_key = conversation_session_key(platform, platform_account, conversation_id);
+        self.reset_by_key(
+            &conn,
+            &session_key,
+            platform,
+            platform_account,
+            conversation_id,
+            &session_key,
+        )
+    }
+
+    pub fn get_or_create_bound_session(
         &self,
         external_session_id: &str,
         platform: &str,
+        platform_account: &str,
         conversation_id: &str,
-        _user_id: &str,
     ) -> Result<SessionRecord, SessionStoreError> {
         let conn = self.open_connection()?;
-        let session_key =
-            conversation_session_key(platform, LEGACY_PLATFORM_ACCOUNT, conversation_id);
+        let session_key = conversation_session_key(platform, platform_account, conversation_id);
         let record = self.get_or_create_by_key(
             &conn,
             &session_key,
             platform,
-            LEGACY_PLATFORM_ACCOUNT,
+            platform_account,
             conversation_id,
             external_session_id,
         )?;
         upsert_session_alias(&conn, external_session_id, &session_key)?;
         Ok(record)
+    }
+
+    pub fn bind_external_session_id(
+        &self,
+        external_session_id: &str,
+        platform: &str,
+        platform_account: &str,
+        conversation_id: &str,
+    ) -> Result<(), SessionStoreError> {
+        let conn = self.open_connection()?;
+        let session_key = conversation_session_key(platform, platform_account, conversation_id);
+        let record = self
+            .fetch_session(&conn, &session_key, external_session_id)?
+            .ok_or_else(|| SessionStoreError::SessionConflict {
+                external_session_id: external_session_id.to_string(),
+                platform: platform.to_string(),
+                conversation_id: conversation_id.to_string(),
+                user_id: String::new(),
+            })?;
+        ensure_session_identity(&record, platform, platform_account, conversation_id)?;
+        upsert_session_alias(&conn, external_session_id, &session_key)
     }
 
     pub fn get_session(
@@ -114,21 +151,20 @@ impl SessionStore {
         self.fetch_session(&conn, external_session_id, external_session_id)
     }
 
-    pub fn reset_session(
+    pub fn reset_bound_session(
         &self,
         external_session_id: &str,
         platform: &str,
+        platform_account: &str,
         conversation_id: &str,
-        _user_id: &str,
     ) -> Result<SessionRecord, SessionStoreError> {
         let conn = self.open_connection()?;
-        let session_key =
-            conversation_session_key(platform, LEGACY_PLATFORM_ACCOUNT, conversation_id);
+        let session_key = conversation_session_key(platform, platform_account, conversation_id);
         let record = self.reset_by_key(
             &conn,
             &session_key,
             platform,
-            LEGACY_PLATFORM_ACCOUNT,
+            platform_account,
             conversation_id,
             external_session_id,
         )?;
@@ -224,7 +260,7 @@ impl SessionStore {
                 external_session_id: external_session_id.to_string(),
                 platform: platform.to_string(),
                 conversation_id: conversation_id.to_string(),
-                user_id: platform_account.to_string(),
+                user_id: String::new(),
             })?;
 
         ensure_session_identity(&existing, platform, platform_account, conversation_id)?;
@@ -334,7 +370,7 @@ fn build_session_record(
         platform,
         platform_account: platform_account.clone(),
         conversation_id,
-        user_id: platform_account,
+        user_id: String::new(),
         created_at_epoch_secs,
         last_used_at_epoch_secs,
         is_new,
@@ -406,9 +442,7 @@ fn lookup_session_alias(
 }
 
 fn session_schema_requires_reset(conn: &Connection) -> Result<bool, SessionStoreError> {
-    if table_columns(conn, "sessions")?
-        .is_some_and(|columns| columns != EXPECTED_SESSION_COLUMNS)
-    {
+    if table_columns(conn, "sessions")?.is_some_and(|columns| columns != EXPECTED_SESSION_COLUMNS) {
         return Ok(true);
     }
 
@@ -429,7 +463,10 @@ fn drop_session_schema(conn: &Connection) -> Result<(), SessionStoreError> {
     Ok(())
 }
 
-fn table_columns(conn: &Connection, table_name: &str) -> Result<Option<Vec<String>>, SessionStoreError> {
+fn table_columns(
+    conn: &Connection,
+    table_name: &str,
+) -> Result<Option<Vec<String>>, SessionStoreError> {
     let pragma = format!("PRAGMA table_info({table_name})");
     let mut stmt = conn.prepare(&pragma)?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;

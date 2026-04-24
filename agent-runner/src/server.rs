@@ -553,11 +553,12 @@ fn ensure_history_ingest_state_for_trigger(
         .history_store
         .lock()
         .expect("history store mutex poisoned");
-    if store.ingest_enabled(&message.conversation_id)? {
+    if store.ingest_enabled(&message.platform_account, &message.conversation_id)? {
         return Ok(());
     }
 
     store.upsert_ingest_state(
+        &message.platform_account,
         &message.conversation_id,
         true,
         DEFAULT_HISTORY_RETENTION_DAYS,
@@ -594,7 +595,7 @@ fn mirror_history_message_if_enabled(
         .history_store
         .lock()
         .expect("history store mutex poisoned");
-    if !store.ingest_enabled(&message.conversation_id)? {
+    if !store.ingest_enabled(&message.platform_account, &message.conversation_id)? {
         return Ok(());
     }
     store.insert_inbound_message(message)

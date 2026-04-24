@@ -161,23 +161,44 @@ fn load_runtime_session(
     session_store: &SessionStore,
     request: &RunRequest,
 ) -> Result<crate::session_store::SessionRecord, SessionStoreError> {
-    session_store.get_or_create_conversation_session(
+    let session = session_store.get_or_create_conversation_session(
         &request.platform,
         &request.platform_account_id,
         &request.conversation_id,
-    )
+    )?;
+
+    if !request.session_id.trim().is_empty() {
+        session_store.bind_external_session_id(
+            &request.session_id,
+            &request.platform,
+            &request.platform_account_id,
+            &request.conversation_id,
+        )?;
+    }
+
+    Ok(session)
 }
 
 fn reset_runtime_session(
     session_store: &SessionStore,
     request: &RunRequest,
 ) -> Result<crate::session_store::SessionRecord, SessionStoreError> {
-    session_store.reset_bound_session(
-        &request.session_id,
+    let session = session_store.reset_conversation_session(
         &request.platform,
         &request.platform_account_id,
         &request.conversation_id,
-    )
+    )?;
+
+    if !request.session_id.trim().is_empty() {
+        session_store.bind_external_session_id(
+            &request.session_id,
+            &request.platform,
+            &request.platform_account_id,
+            &request.conversation_id,
+        )?;
+    }
+
+    Ok(session)
 }
 
 fn should_retry_with_fresh_session(response: &RunResponse, is_new_session: bool) -> bool {
@@ -351,6 +372,19 @@ mod tests {
     }
 
     #[test]
+    fn runtime_session_path_binds_external_session_alias() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionStore::open(temp.path().join("runner.db")).unwrap();
+        let request = base_request();
+
+        let session = load_runtime_session(&store, &request).unwrap();
+        let fetched = store.get_session(&request.session_id).unwrap().unwrap();
+
+        assert_eq!(fetched.session_key, session.session_key);
+        assert_eq!(fetched.claude_session_id, session.claude_session_id);
+    }
+
+    #[test]
     fn runtime_session_reset_keeps_canonical_identity() {
         let temp = tempfile::tempdir().unwrap();
         let store = SessionStore::open(temp.path().join("runner.db")).unwrap();
@@ -358,7 +392,7 @@ mod tests {
 
         let first = load_runtime_session(&store, &request).unwrap();
         let reset = reset_runtime_session(&store, &request).unwrap();
-        let fetched = load_runtime_session(&store, &request).unwrap();
+        let fetched = store.get_session(&request.session_id).unwrap().unwrap();
 
         assert_ne!(first.claude_session_id, reset.claude_session_id);
         assert_eq!(reset.claude_session_id, fetched.claude_session_id);

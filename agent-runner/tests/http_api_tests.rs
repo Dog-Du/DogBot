@@ -430,7 +430,7 @@ async fn message_endpoint_sends_to_existing_session() {
     let db_path = temp.path().join("runner.db");
     let store = SessionStore::open(&db_path).unwrap();
     store
-        .get_or_create_session("qq-user-1", "qq", "qq:private:1", "1")
+        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:private:1")
         .unwrap();
 
     let messenger = Arc::new(MockMessenger::success());
@@ -472,7 +472,7 @@ async fn message_endpoint_trims_session_id_before_lookup() {
     let db_path = temp.path().join("runner.db");
     let store = SessionStore::open(&db_path).unwrap();
     store
-        .get_or_create_session("qq-user-1", "qq", "qq:private:1", "1")
+        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:private:1")
         .unwrap();
 
     let messenger = Arc::new(MockMessenger::success());
@@ -534,7 +534,7 @@ async fn message_endpoint_passes_reply_and_mention_metadata() {
     let db_path = temp.path().join("runner.db");
     let store = SessionStore::open(&db_path).unwrap();
     store
-        .get_or_create_session("qq-user-1", "qq", "qq:group:100", "1")
+        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:group:100")
         .unwrap();
 
     let messenger = Arc::new(MockMessenger::success());
@@ -567,12 +567,12 @@ async fn message_endpoint_passes_reply_and_mention_metadata() {
 }
 
 #[tokio::test]
-async fn message_endpoint_defaults_group_mention_to_session_user() {
+async fn message_endpoint_does_not_infer_group_mention_from_conversation_session() {
     let temp = tempfile::tempdir().unwrap();
     let db_path = temp.path().join("runner.db");
     let store = SessionStore::open(&db_path).unwrap();
     store
-        .get_or_create_session("qq-group-user-1", "qq", "qq:group:100", "88")
+        .get_or_create_bound_session("qq-group-user-1", "qq", "qq:bot_uin:123", "qq:group:100")
         .unwrap();
 
     let messenger = Arc::new(MockMessenger::success());
@@ -603,7 +603,7 @@ async fn message_endpoint_defaults_group_mention_to_session_user() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let sent = messenger.last_request().unwrap();
-    assert_eq!(sent.mention_user_id.as_deref(), Some("88"));
+    assert_eq!(sent.mention_user_id, None);
 }
 
 struct MockRunner {
