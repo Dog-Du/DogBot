@@ -23,14 +23,17 @@ pub struct TurnPromptContext {
 
 impl TurnPromptContext {
     pub fn render(&self) -> String {
-        let reply_excerpt = self.reply_excerpt.as_deref().unwrap_or("");
-        format!(
-            "Conversation: {}\nActor: {}\nTrigger message: {}\nReply excerpt: {}",
-            self.conversation, self.actor, self.trigger_summary, reply_excerpt
-        )
+        let context = json!({
+            "conversation": self.conversation,
+            "actor": self.actor,
+            "trigger_summary": self.trigger_summary,
+            "reply_excerpt": self.reply_excerpt,
+        });
+        format!("Turn context (JSON):\n{context}")
     }
 
     pub fn render_with_user_prompt(&self, user_prompt: &str) -> String {
-        format!("{}\n\nUser prompt: {}", self.render(), user_prompt.trim())
+        format!("{}\n\nUser prompt:\n{}", self.render(), user_prompt.trim())
     }
 }
+use serde_json::json;
