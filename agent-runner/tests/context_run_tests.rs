@@ -16,17 +16,17 @@ use tower::ServiceExt;
 
 #[derive(Default)]
 struct CapturingRunner {
-    prompt: Arc<Mutex<Option<String>>>,
     request: Arc<Mutex<Option<RunRequest>>>,
+    validated: Arc<Mutex<Option<ValidatedRunRequest>>>,
 }
 
 impl CapturingRunner {
-    fn captured_prompt(&self) -> Option<String> {
-        self.prompt.lock().expect("lock prompt").clone()
-    }
-
     fn captured_request(&self) -> Option<RunRequest> {
         self.request.lock().expect("lock request").clone()
+    }
+
+    fn captured_validated(&self) -> Option<ValidatedRunRequest> {
+        self.validated.lock().expect("lock validated").clone()
     }
 }
 
@@ -35,10 +35,10 @@ impl Runner for CapturingRunner {
     async fn run(
         &self,
         request: RunRequest,
-        _validated: ValidatedRunRequest,
+        validated: ValidatedRunRequest,
     ) -> Result<RunResponse, ErrorResponse> {
-        *self.prompt.lock().expect("lock prompt") = Some(request.prompt.clone());
         *self.request.lock().expect("lock request") = Some(request);
+        *self.validated.lock().expect("lock validated") = Some(validated);
         Ok(RunResponse {
             status: "ok".into(),
             stdout: "ok".into(),
@@ -60,6 +60,8 @@ fn base_request() -> RunRequest {
         chat_type: "private".into(),
         cwd: "/workspace".into(),
         prompt: "hello".into(),
+        trigger_summary: Some("hello".into()),
+        reply_excerpt: None,
         timeout_secs: None,
     }
 }
@@ -126,7 +128,7 @@ fn seed_history_message(store: &HistoryStore, message_id: &str, text: &str) {
 }
 
 #[tokio::test]
-async fn run_endpoint_keeps_plain_prompt_without_context_pack() {
+async fn run_endpoint_builds_prompt_envelope_for_runner() {
     let runner = Arc::new(CapturingRunner::default());
     let app = build_test_app(runner.clone());
     let payload = serde_json::to_vec(&base_request()).expect("serialize request");
@@ -144,8 +146,18 @@ async fn run_endpoint_keeps_plain_prompt_without_context_pack() {
         .expect("run request");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let captured = runner.captured_prompt().expect("captured prompt");
-    assert_eq!(captured, "hello");
+    let captured_request = runner.captured_request().expect("captured request");
+    let validated = runner
+        .captured_validated()
+        .expect("captured validated request");
+
+    assert_eq!(captured_request.prompt, "hello");
+    assert!(validated.system_prompt.contains("qq"));
+    assert!(validated.system_prompt.contains("qq:bot_uin:123"));
+    assert!(!validated.system_prompt.contains("qq:user:1"));
+    assert!(validated.prompt.contains("qq:private:1"));
+    assert!(validated.prompt.contains("qq:user:1"));
+    assert!(validated.prompt.contains("hello"));
 }
 
 #[tokio::test]
@@ -229,9 +241,11 @@ async fn run_endpoint_does_not_inject_history_evidence_when_history_exists() {
         .expect("run request");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let captured = runner.captured_prompt().expect("captured prompt");
-    assert!(!captured.contains("Readable scopes:\n"));
-    assert_eq!(captured, "hello");
+    let validated = runner
+        .captured_validated()
+        .expect("captured validated request");
+    assert!(!validated.prompt.contains("Readable scopes:\n"));
+    assert!(!validated.system_prompt.contains("Readable scopes:\n"));
 }
 
 #[tokio::test]
@@ -289,7 +303,9 @@ async fn run_endpoint_keeps_runtime_context_without_pack_items() {
         .expect("run request");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let captured = runner.captured_prompt().expect("captured prompt");
-    assert!(!captured.contains("Readable scopes:\n"));
-    assert_eq!(captured, "hello");
+    let validated = runner
+        .captured_validated()
+        .expect("captured validated request");
+    assert!(!validated.prompt.contains("Readable scopes:\n"));
+    assert!(!validated.system_prompt.contains("Readable scopes:\n"));
 }

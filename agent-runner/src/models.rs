@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+
+use crate::pipeline::{SystemPromptContext, TurnPromptContext};
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RunRequest {
     pub platform: String,
@@ -9,6 +12,10 @@ pub struct RunRequest {
     pub chat_type: String,
     pub cwd: String,
     pub prompt: String,
+    #[serde(default)]
+    pub trigger_summary: Option<String>,
+    #[serde(default)]
+    pub reply_excerpt: Option<String>,
     pub timeout_secs: Option<u64>,
 }
 
@@ -30,7 +37,26 @@ impl RunRequest {
     ) -> Result<ValidatedRunRequest, String> {
         let timeout_secs = self.effective_timeout(default_timeout, max_timeout)?;
         let cwd = Self::validate_cwd(&self.cwd)?;
-        Ok(ValidatedRunRequest { timeout_secs, cwd })
+        let system_prompt = SystemPromptContext {
+            platform: self.platform.clone(),
+            platform_account: self.platform_account_id.clone(),
+        }
+        .render();
+        let prompt = TurnPromptContext {
+            conversation: self.conversation_id.clone(),
+            actor: self.user_id.clone(),
+            trigger_summary: normalized_optional_text(&self.trigger_summary)
+                .unwrap_or_else(|| self.prompt.trim().to_string()),
+            reply_excerpt: normalized_optional_text(&self.reply_excerpt),
+        }
+        .render_with_user_prompt(&self.prompt);
+
+        Ok(ValidatedRunRequest {
+            timeout_secs,
+            cwd,
+            prompt,
+            system_prompt,
+        })
     }
 
     fn validate_cwd(cwd: &str) -> Result<String, String> {
@@ -59,6 +85,18 @@ impl RunRequest {
 pub struct ValidatedRunRequest {
     pub timeout_secs: u64,
     pub cwd: String,
+    pub prompt: String,
+    pub system_prompt: String,
+}
+
+fn normalized_optional_text(value: &Option<String>) -> Option<String> {
+    value.as_ref().map(|text| text.trim()).and_then(|text| {
+        if text.is_empty() {
+            None
+        } else {
+            Some(text.to_string())
+        }
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]

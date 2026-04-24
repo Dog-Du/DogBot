@@ -64,17 +64,13 @@ impl ExecutionBackend for DockerRunner {
             })?;
 
         let started = Instant::now();
-        let first = self
-            .execute_once(&request.prompt, &validated, &session)
-            .await?;
+        let first = self.execute_once(&validated, &session).await?;
 
         if should_retry_with_fresh_session(&first, session.is_new) {
             let reset_session = reset_runtime_session(&self.session_store, &request)
                 .map_err(map_session_store_error)?;
 
-            let retried = self
-                .execute_once(&request.prompt, &validated, &reset_session)
-                .await?;
+            let retried = self.execute_once(&validated, &reset_session).await?;
             return Ok(with_duration(retried, started.elapsed().as_millis()));
         }
 
@@ -85,7 +81,6 @@ impl ExecutionBackend for DockerRunner {
 impl DockerRunner {
     async fn execute_once(
         &self,
-        prompt: &str,
         validated: &ValidatedRunRequest,
         session: &crate::session_store::SessionRecord,
     ) -> Result<RunResponse, ErrorResponse> {
@@ -94,7 +89,12 @@ impl DockerRunner {
             .create_claude_exec(
                 &self.container_spec.container_name,
                 &validated.cwd,
-                build_claude_command(prompt, &session.claude_session_id, session.is_new),
+                build_claude_command(
+                    &validated.prompt,
+                    &validated.system_prompt,
+                    &session.claude_session_id,
+                    session.is_new,
+                ),
             )
             .await
             .map_err(|err| ErrorResponse {
@@ -235,6 +235,7 @@ fn looks_like_missing_session(text: &str) -> bool {
 
 fn build_claude_command(
     prompt: &str,
+    system_prompt: &str,
     claude_session_id: &str,
     is_new_session: bool,
 ) -> Vec<String> {
@@ -242,6 +243,8 @@ fn build_claude_command(
         "claude".to_string(),
         "--print".to_string(),
         "--dangerously-skip-permissions".to_string(),
+        "--append-system-prompt".to_string(),
+        system_prompt.to_string(),
         "--add-dir".to_string(),
         "/workspace".to_string(),
         "/state".to_string(),
@@ -292,19 +295,23 @@ mod tests {
             chat_type: "group".into(),
             cwd: "/workspace".into(),
             prompt: "hello".into(),
+            trigger_summary: Some("hello".into()),
+            reply_excerpt: None,
             timeout_secs: None,
         }
     }
 
     #[test]
     fn build_claude_command_uses_session_id_for_new_sessions() {
-        let command = build_claude_command("hello", "uuid-1", true);
+        let command = build_claude_command("hello", "system", "uuid-1", true);
         assert_eq!(
             command,
             vec![
                 "claude".to_string(),
                 "--print".to_string(),
                 "--dangerously-skip-permissions".to_string(),
+                "--append-system-prompt".to_string(),
+                "system".to_string(),
                 "--add-dir".to_string(),
                 "/workspace".to_string(),
                 "/state".to_string(),
@@ -318,13 +325,15 @@ mod tests {
 
     #[test]
     fn build_claude_command_uses_resume_for_existing_sessions() {
-        let command = build_claude_command("hello", "uuid-1", false);
+        let command = build_claude_command("hello", "system", "uuid-1", false);
         assert_eq!(
             command,
             vec![
                 "claude".to_string(),
                 "--print".to_string(),
                 "--dangerously-skip-permissions".to_string(),
+                "--append-system-prompt".to_string(),
+                "system".to_string(),
                 "--add-dir".to_string(),
                 "/workspace".to_string(),
                 "/state".to_string(),

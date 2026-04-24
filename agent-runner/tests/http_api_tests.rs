@@ -23,6 +23,8 @@ fn base_request() -> RunRequest {
         chat_type: "private".into(),
         cwd: "/workspace".into(),
         prompt: "hello".into(),
+        trigger_summary: Some("hello".into()),
+        reply_excerpt: None,
         timeout_secs: None,
     }
 }
