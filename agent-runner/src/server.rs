@@ -21,9 +21,7 @@ use crate::{
     config::Settings,
     docker_client::DockerRuntime,
     exec::{DockerRunner, ExecutionBackend},
-    history::{
-        cleanup::purge_expired_history, store::HistoryStore,
-    },
+    history::{cleanup::purge_expired_history, store::HistoryStore},
     inbound_models::InboundMessage,
     messenger::{MessageDelivery, NapCatMessenger},
     models::{
@@ -486,7 +484,11 @@ async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
         }
     };
 
-    if request.mention_user_id.is_none() && is_group_conversation(&session.conversation_id) {
+    if request.mention_user_id.is_none()
+        && is_group_conversation(&session.conversation_id)
+        && !session.user_id.trim().is_empty()
+        && session.user_id != session.platform_account
+    {
         request.mention_user_id = Some(session.user_id.clone());
     }
 
@@ -595,13 +597,7 @@ fn mirror_history_message_if_enabled(
     if !store.ingest_enabled(&message.conversation_id)? {
         return Ok(());
     }
-    store.insert_message(
-        &message.message_id,
-        &message.conversation_id,
-        &message.actor_id,
-        &message.normalized_text,
-        message.timestamp_epoch_secs,
-    )
+    store.insert_inbound_message(message)
 }
 
 fn is_limit_exhausted(limit: usize, current_len: usize) -> bool {

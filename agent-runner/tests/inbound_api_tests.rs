@@ -9,6 +9,8 @@ use axum::{
     body::to_bytes,
     http::{Request, StatusCode},
 };
+use rusqlite::Connection;
+use serde_json::json;
 use tower::ServiceExt;
 
 struct MockRunner;
@@ -277,4 +279,122 @@ async fn inbound_api_enables_history_on_first_valid_trigger() {
         agent_runner::history::store::HistoryStore::open(&settings.history_db_path).unwrap();
     assert!(verifier.ingest_enabled("qq:group:200").unwrap());
     assert_eq!(verifier.message_count("qq:group:200").unwrap(), 1);
+}
+
+#[tokio::test]
+async fn inbound_api_persists_canonical_history_for_mentions_and_reply() {
+    let settings = test_settings();
+    let history_store =
+        agent_runner::history::store::HistoryStore::open(&settings.history_db_path).unwrap();
+    history_store
+        .upsert_ingest_state("qq:group:300", true, 180)
+        .unwrap();
+
+    let app = agent_runner::server::build_test_app_with_message_support(
+        Arc::new(MockRunner),
+        Arc::new(NoopMessenger),
+        settings.clone(),
+    );
+    let payload = serde_json::to_vec(&InboundMessage {
+        platform: "qq".into(),
+        platform_account: "qq:bot_uin:123".into(),
+        conversation_id: "qq:group:300".into(),
+        actor_id: "qq:user:9".into(),
+        message_id: "m-canonical-1".into(),
+        reply_to_message_id: Some("parent-42".into()),
+        raw_segments_json: json!([
+            {"type": "reply", "data": {"id": "parent-42"}},
+            {"type": "at", "data": {"qq": "123"}},
+            {"type": "text", "data": {"text": " summarize this"}}
+        ])
+        .to_string(),
+        normalized_text: "summarize this".into(),
+        mentions: vec!["qq:bot_uin:123".into()],
+        is_group: true,
+        is_private: false,
+        timestamp_epoch_secs: 1234,
+    })
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/inbound-messages")
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let conn = Connection::open(&settings.history_db_path).unwrap();
+    let (platform_account, raw_payload_json): (String, String) = conn
+        .query_row(
+            "SELECT platform_account, raw_native_payload_json
+             FROM event_store
+             WHERE event_id = 'event::m-canonical-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    let raw_payload: serde_json::Value = serde_json::from_str(&raw_payload_json).unwrap();
+    assert_eq!(platform_account, "qq:bot_uin:123");
+    assert_eq!(raw_payload["raw_segments"][1]["type"], "at");
+    assert_eq!(raw_payload["platform_account"], "qq:bot_uin:123");
+
+    let (reply_to_message_id, plain_text): (Option<String>, String) = conn
+        .query_row(
+            "SELECT reply_to_message_id, plain_text
+             FROM message_store
+             WHERE message_id = 'm-canonical-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(reply_to_message_id.as_deref(), Some("parent-42"));
+    assert_eq!(plain_text, "summarize this");
+
+    let parts: Vec<(String, Option<String>, Option<String>)> = conn
+        .prepare(
+            "SELECT part_kind, text_value, target_actor_id
+             FROM message_part_store
+             WHERE message_id = 'm-canonical-1'
+             ORDER BY ordinal",
+        )
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(parts.iter().any(|(kind, _, actor)| {
+        kind == "mention" && actor.as_deref() == Some("qq:bot_uin:123")
+    }));
+    assert!(parts.iter().any(|(kind, text, _)| {
+        kind == "text"
+            && text
+                .as_deref()
+                .is_some_and(|value| value.contains("summarize"))
+    }));
+
+    let relations: Vec<(String, Option<String>, Option<String>)> = conn
+        .prepare(
+            "SELECT relation_kind, target_message_id, target_actor_id
+             FROM message_relation_store
+             WHERE source_message_id = 'm-canonical-1'
+             ORDER BY relation_kind, COALESCE(target_message_id, target_actor_id)",
+        )
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(relations.iter().any(|(kind, target_message, _)| {
+        kind == "reply_to" && target_message.as_deref() == Some("parent-42")
+    }));
+    assert!(relations.iter().any(|(kind, _, target_actor)| {
+        kind == "mention" && target_actor.as_deref() == Some("qq:bot_uin:123")
+    }));
 }

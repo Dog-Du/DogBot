@@ -50,15 +50,8 @@ impl ExecutionBackend for DockerRunner {
         request: RunRequest,
         validated: ValidatedRunRequest,
     ) -> Result<RunResponse, ErrorResponse> {
-        let session = self
-            .session_store
-            .get_or_create_session(
-                &request.session_id,
-                &request.platform,
-                &request.conversation_id,
-                &request.user_id,
-            )
-            .map_err(map_session_store_error)?;
+        let session =
+            load_runtime_session(&self.session_store, &request).map_err(map_session_store_error)?;
 
         self.runtime
             .ensure_container_running(&self.container_spec)
@@ -76,14 +69,7 @@ impl ExecutionBackend for DockerRunner {
             .await?;
 
         if should_retry_with_fresh_session(&first, session.is_new) {
-            let reset_session = self
-                .session_store
-                .reset_session(
-                    &request.session_id,
-                    &request.platform,
-                    &request.conversation_id,
-                    &request.user_id,
-                )
+            let reset_session = reset_runtime_session(&self.session_store, &request)
                 .map_err(map_session_store_error)?;
 
             let retried = self
@@ -125,16 +111,14 @@ impl DockerRunner {
         .await;
 
         match result {
-            Ok(Ok((stdout, stderr, exit_code))) => {
-                Ok(RunResponse {
-                    status: "ok".into(),
-                    stdout,
-                    stderr,
-                    exit_code,
-                    timed_out: false,
-                    duration_ms: 0,
-                })
-            }
+            Ok(Ok((stdout, stderr, exit_code))) => Ok(RunResponse {
+                status: "ok".into(),
+                stdout,
+                stderr,
+                exit_code,
+                timed_out: false,
+                duration_ms: 0,
+            }),
             Ok(Err(err)) => Err(ErrorResponse {
                 status: "error".into(),
                 error_code: "exec_failed".into(),
@@ -171,6 +155,29 @@ impl DockerRunner {
 fn with_duration(mut response: RunResponse, duration_ms: u128) -> RunResponse {
     response.duration_ms = duration_ms;
     response
+}
+
+fn load_runtime_session(
+    session_store: &SessionStore,
+    request: &RunRequest,
+) -> Result<crate::session_store::SessionRecord, SessionStoreError> {
+    session_store.get_or_create_conversation_session(
+        &request.platform,
+        &request.platform_account_id,
+        &request.conversation_id,
+    )
+}
+
+fn reset_runtime_session(
+    session_store: &SessionStore,
+    request: &RunRequest,
+) -> Result<crate::session_store::SessionRecord, SessionStoreError> {
+    session_store.reset_bound_session(
+        &request.session_id,
+        &request.platform,
+        &request.platform_account_id,
+        &request.conversation_id,
+    )
 }
 
 fn should_retry_with_fresh_session(response: &RunResponse, is_new_session: bool) -> bool {
@@ -229,8 +236,26 @@ fn map_session_store_error(err: SessionStoreError) -> ErrorResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_claude_command, should_retry_with_fresh_session};
-    use crate::models::RunResponse;
+    use super::{
+        build_claude_command, load_runtime_session, reset_runtime_session,
+        should_retry_with_fresh_session,
+    };
+    use crate::models::{RunRequest, RunResponse};
+    use crate::session_store::SessionStore;
+
+    fn base_request() -> RunRequest {
+        RunRequest {
+            platform: "qq".into(),
+            platform_account_id: "qq:bot_uin:123".into(),
+            conversation_id: "qq:group:5566".into(),
+            session_id: "legacy-session-1".into(),
+            user_id: "qq:user:1".into(),
+            chat_type: "group".into(),
+            cwd: "/workspace".into(),
+            prompt: "hello".into(),
+            timeout_secs: None,
+        }
+    }
 
     #[test]
     fn build_claude_command_uses_session_id_for_new_sessions() {
@@ -298,5 +323,44 @@ mod tests {
         };
 
         assert!(!should_retry_with_fresh_session(&response, true));
+    }
+
+    #[test]
+    fn runtime_session_path_uses_platform_account_and_conversation_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionStore::open(temp.path().join("runner.db")).unwrap();
+
+        let first = load_runtime_session(&store, &base_request()).unwrap();
+
+        let mut same_conversation_different_legacy = base_request();
+        same_conversation_different_legacy.session_id = "legacy-session-2".into();
+        same_conversation_different_legacy.user_id = "qq:user:2".into();
+        let second = load_runtime_session(&store, &same_conversation_different_legacy).unwrap();
+
+        let mut different_platform_account = base_request();
+        different_platform_account.platform_account_id = "qq:bot_uin:999".into();
+        let third = load_runtime_session(&store, &different_platform_account).unwrap();
+
+        let mut different_conversation = base_request();
+        different_conversation.conversation_id = "qq:group:7788".into();
+        let fourth = load_runtime_session(&store, &different_conversation).unwrap();
+
+        assert_eq!(first.claude_session_id, second.claude_session_id);
+        assert_ne!(first.claude_session_id, third.claude_session_id);
+        assert_ne!(first.claude_session_id, fourth.claude_session_id);
+    }
+
+    #[test]
+    fn runtime_session_reset_keeps_canonical_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionStore::open(temp.path().join("runner.db")).unwrap();
+        let request = base_request();
+
+        let first = load_runtime_session(&store, &request).unwrap();
+        let reset = reset_runtime_session(&store, &request).unwrap();
+        let fetched = load_runtime_session(&store, &request).unwrap();
+
+        assert_ne!(first.claude_session_id, reset.claude_session_id);
+        assert_eq!(reset.claude_session_id, fetched.claude_session_id);
     }
 }
