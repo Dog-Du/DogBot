@@ -65,11 +65,17 @@ fn external_session_alias_does_not_override_conversation_scoping() {
     let first = store
         .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:private:1")
         .unwrap();
-    let second = store
+    let err = store
         .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:private:2")
-        .unwrap();
+        .unwrap_err();
 
-    assert_ne!(first.claude_session_id, second.claude_session_id);
+    assert!(matches!(
+        err,
+        agent_runner::session_store::SessionStoreError::SessionConflict { .. }
+    ));
+    let fetched = store.get_session("qq-user-1").unwrap().unwrap();
+    assert_eq!(fetched.claude_session_id, first.claude_session_id);
+    assert_eq!(fetched.conversation_id, "qq:private:1");
 }
 
 #[test]

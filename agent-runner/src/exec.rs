@@ -161,6 +161,15 @@ fn load_runtime_session(
     session_store: &SessionStore,
     request: &RunRequest,
 ) -> Result<crate::session_store::SessionRecord, SessionStoreError> {
+    if !request.session_id.trim().is_empty() {
+        session_store.validate_external_session_binding(
+            &request.session_id,
+            &request.platform,
+            &request.platform_account_id,
+            &request.conversation_id,
+        )?;
+    }
+
     let session = session_store.get_or_create_conversation_session(
         &request.platform,
         &request.platform_account_id,
@@ -183,6 +192,15 @@ fn reset_runtime_session(
     session_store: &SessionStore,
     request: &RunRequest,
 ) -> Result<crate::session_store::SessionRecord, SessionStoreError> {
+    if !request.session_id.trim().is_empty() {
+        session_store.validate_external_session_binding(
+            &request.session_id,
+            &request.platform,
+            &request.platform_account_id,
+            &request.conversation_id,
+        )?;
+    }
+
     let session = session_store.reset_conversation_session(
         &request.platform,
         &request.platform_account_id,
@@ -360,10 +378,12 @@ mod tests {
 
         let mut different_platform_account = base_request();
         different_platform_account.platform_account_id = "qq:bot_uin:999".into();
+        different_platform_account.session_id = "legacy-session-3".into();
         let third = load_runtime_session(&store, &different_platform_account).unwrap();
 
         let mut different_conversation = base_request();
         different_conversation.conversation_id = "qq:group:7788".into();
+        different_conversation.session_id = "legacy-session-4".into();
         let fourth = load_runtime_session(&store, &different_conversation).unwrap();
 
         assert_eq!(first.claude_session_id, second.claude_session_id);
@@ -396,5 +416,46 @@ mod tests {
 
         assert_ne!(first.claude_session_id, reset.claude_session_id);
         assert_eq!(reset.claude_session_id, fetched.claude_session_id);
+    }
+
+    #[test]
+    fn runtime_session_reset_rejects_conflicting_alias_without_rotating_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionStore::open(temp.path().join("runner.db")).unwrap();
+
+        let mut conflicting_request = base_request();
+        conflicting_request.conversation_id = "qq:group:7788".into();
+        store
+            .get_or_create_bound_session(
+                &conflicting_request.session_id,
+                &conflicting_request.platform,
+                &conflicting_request.platform_account_id,
+                &conflicting_request.conversation_id,
+            )
+            .unwrap();
+
+        let request = base_request();
+        let original = store
+            .get_or_create_conversation_session(
+                &request.platform,
+                &request.platform_account_id,
+                &request.conversation_id,
+            )
+            .unwrap();
+
+        let err = reset_runtime_session(&store, &request).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::session_store::SessionStoreError::SessionConflict { .. }
+        ));
+
+        let current = store
+            .get_or_create_conversation_session(
+                &request.platform,
+                &request.platform_account_id,
+                &request.conversation_id,
+            )
+            .unwrap();
+        assert_eq!(current.claude_session_id, original.claude_session_id);
     }
 }

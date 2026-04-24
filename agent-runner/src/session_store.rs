@@ -106,6 +106,13 @@ impl SessionStore {
     ) -> Result<SessionRecord, SessionStoreError> {
         let conn = self.open_connection()?;
         let session_key = conversation_session_key(platform, platform_account, conversation_id);
+        self.validate_external_session_binding_with_connection(
+            &conn,
+            external_session_id,
+            platform,
+            platform_account,
+            conversation_id,
+        )?;
         let record = self.get_or_create_by_key(
             &conn,
             &session_key,
@@ -127,6 +134,13 @@ impl SessionStore {
     ) -> Result<(), SessionStoreError> {
         let conn = self.open_connection()?;
         let session_key = conversation_session_key(platform, platform_account, conversation_id);
+        self.validate_external_session_binding_with_connection(
+            &conn,
+            external_session_id,
+            platform,
+            platform_account,
+            conversation_id,
+        )?;
         let record = self
             .fetch_session(&conn, &session_key, external_session_id)?
             .ok_or_else(|| SessionStoreError::SessionConflict {
@@ -137,6 +151,23 @@ impl SessionStore {
             })?;
         ensure_session_identity(&record, platform, platform_account, conversation_id)?;
         upsert_session_alias(&conn, external_session_id, &session_key)
+    }
+
+    pub fn validate_external_session_binding(
+        &self,
+        external_session_id: &str,
+        platform: &str,
+        platform_account: &str,
+        conversation_id: &str,
+    ) -> Result<(), SessionStoreError> {
+        let conn = self.open_connection()?;
+        self.validate_external_session_binding_with_connection(
+            &conn,
+            external_session_id,
+            platform,
+            platform_account,
+            conversation_id,
+        )
     }
 
     pub fn get_session(
@@ -349,6 +380,41 @@ impl SessionStore {
                 },
             )
             .optional()?)
+    }
+
+    fn validate_external_session_binding_with_connection(
+        &self,
+        conn: &Connection,
+        external_session_id: &str,
+        platform: &str,
+        platform_account: &str,
+        conversation_id: &str,
+    ) -> Result<(), SessionStoreError> {
+        let desired_session_key =
+            conversation_session_key(platform, platform_account, conversation_id);
+        let Some(existing_session_key) = lookup_session_alias(conn, external_session_id)? else {
+            return Ok(());
+        };
+
+        if existing_session_key == desired_session_key {
+            return Ok(());
+        }
+
+        let existing = self
+            .fetch_session(conn, &existing_session_key, external_session_id)?
+            .ok_or_else(|| SessionStoreError::SessionConflict {
+                external_session_id: external_session_id.to_string(),
+                platform: platform.to_string(),
+                conversation_id: conversation_id.to_string(),
+                user_id: String::new(),
+            })?;
+
+        Err(SessionStoreError::SessionConflict {
+            external_session_id: external_session_id.to_string(),
+            platform: existing.platform,
+            conversation_id: existing.conversation_id,
+            user_id: existing.user_id,
+        })
     }
 }
 
