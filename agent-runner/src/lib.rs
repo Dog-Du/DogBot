@@ -9,6 +9,7 @@ pub mod history;
 pub mod inbound_models;
 pub mod messenger;
 pub mod models;
+pub mod protocol;
 pub mod provenance_store;
 pub mod rendering;
 pub mod server;
