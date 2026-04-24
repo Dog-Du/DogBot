@@ -15,18 +15,18 @@ NAPCAT_CONTAINER_NAME="${NAPCAT_CONTAINER_NAME:-napcat}"
 NAPCAT_CONFIG_DIR="${NAPCAT_CONFIG_DIR:-$dogbot_repo_root/agent-state/napcat-config}"
 NAPCAT_ONEBOT_PORT="${NAPCAT_ONEBOT_PORT:-3001}"
 NAPCAT_HTTP_TOKEN="${NAPCAT_ACCESS_TOKEN:-}"
-NAPCAT_WS_CLIENT_URL="${NAPCAT_WS_CLIENT_URL:-ws://host.docker.internal:19000/napcat/ws}"
+NAPCAT_WS_CLIENT_URL="${NAPCAT_WS_CLIENT_URL:-ws://host.docker.internal:8787/v1/platforms/qq/napcat/ws}"
 NAPCAT_WS_CLIENT_TOKEN="${NAPCAT_WS_CLIENT_TOKEN:-}"
 NAPCAT_WS_CLIENT_RECONNECT_MS="${NAPCAT_WS_CLIENT_RECONNECT_MS:-1000}"
 NAPCAT_WS_CLIENT_HEART_MS="${NAPCAT_WS_CLIENT_HEART_MS:-1000}"
-QQ_ADAPTER_QQ_BOT_ID="${QQ_ADAPTER_QQ_BOT_ID:-}"
+PLATFORM_QQ_BOT_ID="${PLATFORM_QQ_BOT_ID:-}"
 
-if [[ -z "$QQ_ADAPTER_QQ_BOT_ID" ]]; then
-  echo "QQ_ADAPTER_QQ_BOT_ID is required to configure NapCat websocket client" >&2
+if [[ -z "$PLATFORM_QQ_BOT_ID" ]]; then
+  echo "PLATFORM_QQ_BOT_ID is required to configure NapCat websocket client" >&2
   exit 1
 fi
 
-CONFIG_FILE="$NAPCAT_CONFIG_DIR/onebot11_${QQ_ADAPTER_QQ_BOT_ID}.json"
+CONFIG_FILE="$NAPCAT_CONFIG_DIR/onebot11_${PLATFORM_QQ_BOT_ID}.json"
 mkdir -p "$NAPCAT_CONFIG_DIR"
 
 "$uv_bin" run python - <<PY
@@ -56,7 +56,7 @@ network["httpServers"] = [{
 }]
 
 network["websocketClients"] = [{
-    "name": "qq-adapter",
+    "name": "agent-runner-platform-ingress",
     "enable": True,
     "url": ${NAPCAT_WS_CLIENT_URL@Q},
     "reportSelfMessage": False,

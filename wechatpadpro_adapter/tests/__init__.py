@@ -1,1 +1,0 @@
-"""WeChatPadPro adapter tests."""

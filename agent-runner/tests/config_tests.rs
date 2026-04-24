@@ -19,10 +19,7 @@ fn settings_use_expected_defaults() {
     assert_eq!(settings.bifrost_port, 8080);
     assert_eq!(settings.bifrost_provider_name, "primary");
     assert_eq!(settings.bifrost_model, "primary/model-id");
-    assert_eq!(
-        settings.bifrost_upstream_base_url,
-        "https://example.com"
-    );
+    assert_eq!(settings.bifrost_upstream_base_url, "https://example.com");
     assert_eq!(settings.bifrost_upstream_api_key, "replace-me");
     assert_eq!(settings.bifrost_upstream_provider_type, "openai");
     assert_eq!(settings.napcat_api_base_url, "http://127.0.0.1:3001");
@@ -58,18 +55,9 @@ fn settings_parse_prompt_and_history_fields() {
 #[test]
 fn settings_parse_bifrost_fields() {
     let env = std::collections::HashMap::from([
-        (
-            "BIFROST_PORT".to_string(),
-            "18080".to_string(),
-        ),
-        (
-            "BIFROST_PROVIDER_NAME".to_string(),
-            "gateway".to_string(),
-        ),
-        (
-            "BIFROST_MODEL".to_string(),
-            "gateway/gpt-5".to_string(),
-        ),
+        ("BIFROST_PORT".to_string(), "18080".to_string()),
+        ("BIFROST_PROVIDER_NAME".to_string(), "gateway".to_string()),
+        ("BIFROST_MODEL".to_string(), "gateway/gpt-5".to_string()),
         (
             "BIFROST_UPSTREAM_BASE_URL".to_string(),
             "https://llm-gateway.example".to_string(),
@@ -82,10 +70,7 @@ fn settings_parse_bifrost_fields() {
             "BIFROST_UPSTREAM_PROVIDER_TYPE".to_string(),
             "anthropic".to_string(),
         ),
-        (
-            "ANTHROPIC_API_KEY".to_string(),
-            "dummy-2".to_string(),
-        ),
+        ("ANTHROPIC_API_KEY".to_string(), "dummy-2".to_string()),
     ]);
 
     let settings = Settings::from_env_map(env).unwrap();
@@ -159,10 +144,7 @@ fn settings_allow_runner_limit_overrides() {
         ),
         ("AGENT_WORKSPACE_DIR".to_string(), "/tmp/work".to_string()),
         ("AGENT_STATE_DIR".to_string(), "/tmp/state".to_string()),
-        (
-            "ANTHROPIC_API_KEY".to_string(),
-            "dummy-2".to_string(),
-        ),
+        ("ANTHROPIC_API_KEY".to_string(), "dummy-2".to_string()),
         ("BIFROST_MODEL".to_string(), "primary/gpt-5".to_string()),
         (
             "BIFROST_UPSTREAM_BASE_URL".to_string(),
@@ -202,7 +184,10 @@ fn settings_allow_runner_limit_overrides() {
     assert_eq!(settings.image_name, "custom/claude:1");
     assert_eq!(settings.workspace_dir, "/tmp/work");
     assert_eq!(settings.state_dir, "/tmp/state");
-    assert_eq!(settings.anthropic_base_url, "http://127.0.0.1:8080/anthropic");
+    assert_eq!(
+        settings.anthropic_base_url,
+        "http://127.0.0.1:8080/anthropic"
+    );
     assert_eq!(settings.anthropic_api_key, "dummy-2");
     assert_eq!(settings.bifrost_model, "primary/gpt-5");
     assert_eq!(settings.bifrost_upstream_base_url, "https://models.example");
@@ -219,4 +204,38 @@ fn settings_allow_runner_limit_overrides() {
     assert_eq!(settings.user_rate_limit_per_minute, 6);
     assert_eq!(settings.conversation_rate_limit_per_minute, 7);
     assert_eq!(settings.session_db_path, "/tmp/state/runner.db");
+}
+
+#[test]
+fn settings_read_grouped_platform_env_keys() {
+    let settings = Settings::from_env_map(std::collections::HashMap::from([
+        (
+            "PLATFORM_QQ_ACCOUNT_ID".to_string(),
+            "qq:bot_uin:123".to_string(),
+        ),
+        ("PLATFORM_QQ_BOT_ID".to_string(), "123".to_string()),
+        (
+            "PLATFORM_WECHATPADPRO_ACCOUNT_ID".to_string(),
+            "wechatpadpro:account:bot".to_string(),
+        ),
+        (
+            "PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES".to_string(),
+            "DogDu".to_string(),
+        ),
+    ]))
+    .unwrap();
+
+    assert_eq!(
+        settings.platform_qq_account_id.as_deref(),
+        Some("qq:bot_uin:123")
+    );
+    assert_eq!(settings.platform_qq_bot_id.as_deref(), Some("123"));
+    assert_eq!(
+        settings.platform_wechatpadpro_account_id.as_deref(),
+        Some("wechatpadpro:account:bot")
+    );
+    assert_eq!(
+        settings.platform_wechatpadpro_bot_mention_names,
+        vec!["DogDu"]
+    );
 }

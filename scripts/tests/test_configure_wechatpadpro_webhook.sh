@@ -10,7 +10,7 @@ env_file="$tmpdir/dogbot.env"
 cat >"$env_file" <<'EOF'
 ENABLE_WECHATPADPRO=1
 WECHATPADPRO_ACCOUNT_KEY=test-account-key
-WECHATPADPRO_ADAPTER_WEBHOOK_URL=http://127.0.0.1:18999/wechatpadpro/events
+WECHATPADPRO_WEBHOOK_URL=http://127.0.0.1:8787/v1/platforms/wechatpadpro/events
 WECHATPADPRO_BASE_URL=http://127.0.0.1:38849
 WECHATPADPRO_MYSQL_ROOT_PASSWORD=test-root-password
 WECHATPADPRO_MYSQL_CONTAINER_NAME=wechatpadpro_mysql

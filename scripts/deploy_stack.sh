@@ -168,8 +168,7 @@ dogbot_save_runtime_state "$runtime_state_file"
 run_compose_up "$repo_root/compose/docker-compose.yml" claude-runner
 
 if [[ "${ENABLE_QQ}" == "1" ]]; then
-  dogbot_require_env QQ_ADAPTER_QQ_BOT_ID
-  "$repo_root/scripts/start_qq_adapter.sh" "$env_file"
+  dogbot_require_env PLATFORM_QQ_BOT_ID
   run_compose_up "$repo_root/compose/platform-stack.yml" napcat
   "$repo_root/scripts/configure_napcat_ws.sh" "$env_file"
   echo "Waiting up to ${DOGBOT_LOGIN_TIMEOUT_SECS:-100}s for NapCat login..."
@@ -183,7 +182,6 @@ if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
   dogbot_require_env WECHATPADPRO_MYSQL_PASSWORD
 
   run_compose_up "$repo_root/compose/wechatpadpro-stack.yml"
-  "$repo_root/scripts/start_wechatpadpro_adapter.sh" "$env_file"
   echo "Waiting up to ${DOGBOT_LOGIN_TIMEOUT_SECS:-100}s for WeChatPadPro login..."
   "$repo_root/scripts/prepare_wechatpadpro_login.sh" "$env_file"
   if [[ "${WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK:-0}" == "1" ]]; then
@@ -211,9 +209,9 @@ fi
 echo "Deployment finished."
 if [[ "${ENABLE_QQ}" == "1" ]]; then
   echo "NapCat WebUI: http://127.0.0.1:${NAPCAT_WEBUI_PORT:-6099}"
-  echo "QQ adapter: http://${QQ_ADAPTER_BIND_ADDR:-127.0.0.1:19000}"
+  echo "QQ platform ingress: ws://${AGENT_RUNNER_BIND_ADDR:-127.0.0.1:8787}/v1/platforms/qq/napcat/ws"
 fi
 if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
   echo "WeChatPadPro API: http://127.0.0.1:${WECHATPADPRO_HOST_PORT:-38849}"
-  echo "WeChatPadPro adapter: http://${WECHATPADPRO_ADAPTER_BIND_ADDR:-127.0.0.1:18999}"
+  echo "WeChatPadPro webhook ingress: http://${AGENT_RUNNER_BIND_ADDR:-127.0.0.1:8787}/v1/platforms/wechatpadpro/events"
 fi

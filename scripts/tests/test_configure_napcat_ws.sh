@@ -17,7 +17,7 @@ NAPCAT_CONTAINER_NAME=napcat
 NAPCAT_CONFIG_DIR=$config_dir
 NAPCAT_ONEBOT_PORT=3456
 NAPCAT_ACCESS_TOKEN=test-access-token
-QQ_ADAPTER_QQ_BOT_ID=3472283357
+PLATFORM_QQ_BOT_ID=3472283357
 EOF
 
 cat >"$tmpdir/bin/uv" <<'EOF'
@@ -71,7 +71,7 @@ assert server["enableWebsocket"] is False, server
 
 ws_clients = data["network"]["websocketClients"]
 assert len(ws_clients) == 1, ws_clients
-assert ws_clients[0]["url"] == "ws://host.docker.internal:19000/napcat/ws", ws_clients[0]
+assert ws_clients[0]["url"] == "ws://host.docker.internal:8787/v1/platforms/qq/napcat/ws", ws_clients[0]
 PY
 
 if [[ "$output" != *"configured NapCat websocket client in $config_file"* ]]; then

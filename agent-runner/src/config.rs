@@ -25,6 +25,10 @@ pub struct Settings {
     pub bifrost_upstream_provider_type: String,
     pub napcat_api_base_url: String,
     pub napcat_access_token: Option<String>,
+    pub platform_qq_account_id: Option<String>,
+    pub platform_qq_bot_id: Option<String>,
+    pub platform_wechatpadpro_account_id: Option<String>,
+    pub platform_wechatpadpro_bot_mention_names: Vec<String>,
     pub max_concurrent_runs: usize,
     pub max_queue_depth: usize,
     pub global_rate_limit_per_minute: usize,
@@ -65,10 +69,8 @@ impl Settings {
         let claude_prompt_root =
             string_or_default(&env_map, "DOGBOT_CLAUDE_PROMPT_ROOT", "./claude-prompt");
         let bifrost_port = parse_or_default(&env_map, "BIFROST_PORT", 8080)?;
-        let bifrost_provider_name =
-            string_or_default(&env_map, "BIFROST_PROVIDER_NAME", "primary");
-        let bifrost_model =
-            string_or_default(&env_map, "BIFROST_MODEL", "primary/model-id");
+        let bifrost_provider_name = string_or_default(&env_map, "BIFROST_PROVIDER_NAME", "primary");
+        let bifrost_model = string_or_default(&env_map, "BIFROST_MODEL", "primary/model-id");
         let bifrost_upstream_base_url = optional_trimmed(&env_map, "BIFROST_UPSTREAM_BASE_URL")
             .unwrap_or_else(|| "https://example.com".to_string());
         let bifrost_upstream_api_key = optional_trimmed(&env_map, "BIFROST_UPSTREAM_API_KEY")
@@ -77,12 +79,27 @@ impl Settings {
             string_or_default(&env_map, "BIFROST_UPSTREAM_PROVIDER_TYPE", "openai");
         let anthropic_base_url = optional_trimmed(&env_map, "ANTHROPIC_BASE_URL")
             .unwrap_or_else(|| format!("http://127.0.0.1:{bifrost_port}/anthropic"));
-        let anthropic_api_key = optional_trimmed(&env_map, "ANTHROPIC_API_KEY")
-            .unwrap_or_else(|| "dummy".to_string());
+        let anthropic_api_key =
+            optional_trimmed(&env_map, "ANTHROPIC_API_KEY").unwrap_or_else(|| "dummy".to_string());
         let max_concurrent_runs = parse_or_default(&env_map, "MAX_CONCURRENT_RUNS", 10)?;
         let napcat_api_base_url =
             string_or_default(&env_map, "NAPCAT_API_BASE_URL", "http://127.0.0.1:3001");
         let napcat_access_token = optional_trimmed(&env_map, "NAPCAT_ACCESS_TOKEN");
+        let platform_qq_account_id = optional_trimmed(&env_map, "PLATFORM_QQ_ACCOUNT_ID");
+        let platform_qq_bot_id = optional_trimmed(&env_map, "PLATFORM_QQ_BOT_ID");
+        let platform_wechatpadpro_account_id =
+            optional_trimmed(&env_map, "PLATFORM_WECHATPADPRO_ACCOUNT_ID");
+        let platform_wechatpadpro_bot_mention_names =
+            optional_trimmed(&env_map, "PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES")
+                .map(|value| {
+                    value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|item| !item.is_empty())
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
         let max_queue_depth = parse_or_default(&env_map, "MAX_QUEUE_DEPTH", 20)?;
         let global_rate_limit_per_minute =
             parse_or_default(&env_map, "GLOBAL_RATE_LIMIT_PER_MINUTE", 10)?;
@@ -122,6 +139,10 @@ impl Settings {
             bifrost_upstream_provider_type,
             napcat_api_base_url,
             napcat_access_token,
+            platform_qq_account_id,
+            platform_qq_bot_id,
+            platform_wechatpadpro_account_id,
+            platform_wechatpadpro_bot_mention_names,
             max_concurrent_runs,
             max_queue_depth,
             global_rate_limit_per_minute,

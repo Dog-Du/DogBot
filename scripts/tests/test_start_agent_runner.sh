@@ -9,6 +9,10 @@ patterns=(
   'DOGBOT_CLAUDE_PROMPT_ROOT="${DOGBOT_CLAUDE_PROMPT_ROOT:-'
   'HISTORY_DB_PATH="${HISTORY_DB_PATH:-'
   'DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR="${DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR:-'
+  'PLATFORM_QQ_ACCOUNT_ID="${PLATFORM_QQ_ACCOUNT_ID:-'
+  'PLATFORM_QQ_BOT_ID="${PLATFORM_QQ_BOT_ID:-'
+  'PLATFORM_WECHATPADPRO_ACCOUNT_ID="${PLATFORM_WECHATPADPRO_ACCOUNT_ID:-'
+  'PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES="${PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES:-'
 )
 
 for pattern in "${patterns[@]}"; do
@@ -55,6 +59,26 @@ fi
 
 if ! grep -q '^API_PROXY_UPSTREAM_TOKEN=replace-me$' "$env_example"; then
   echo "FAIL: dogbot.env.example must keep the real upstream token on the host api-proxy side" >&2
+  exit 1
+fi
+
+if ! grep -q '^PLATFORM_QQ_ACCOUNT_ID=qq:bot_uin:unknown$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must define PLATFORM_QQ_ACCOUNT_ID with the direct-ingress default" >&2
+  exit 1
+fi
+
+if ! grep -q '^PLATFORM_QQ_BOT_ID=$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must define PLATFORM_QQ_BOT_ID for NapCat websocket config" >&2
+  exit 1
+fi
+
+if ! grep -q '^PLATFORM_WECHATPADPRO_ACCOUNT_ID=wechatpadpro:account:unknown$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must define PLATFORM_WECHATPADPRO_ACCOUNT_ID with the direct-ingress default" >&2
+  exit 1
+fi
+
+if ! grep -q '^PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES=DogDu$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must define PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES for mention matching" >&2
   exit 1
 fi
 

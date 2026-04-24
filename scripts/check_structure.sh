@@ -7,18 +7,11 @@ files=(
   "docker/claude-runner/entrypoint.sh"
   "claude-prompt/CLAUDE.md"
   "claude-prompt/persona.md"
-  "qq_adapter/app.py"
-  "qq_adapter/config.py"
-  "qq_adapter/mapper.py"
-  "qq_adapter/napcat_client.py"
-  "qq_adapter/runner_client.py"
   "compose/platform-stack.yml"
   "deploy/dogbot.env.example"
   "scripts/deploy_stack.sh"
   "scripts/stop_stack.sh"
   "scripts/start_agent_runner.sh"
-  "scripts/start_qq_adapter.sh"
-  "scripts/start_wechatpadpro_adapter.sh"
   "scripts/configure_napcat_ws.sh"
   "scripts/prepare_napcat_login.sh"
   "scripts/prepare_wechatpadpro_login.sh"
@@ -32,14 +25,13 @@ files=(
   "scripts/tests/test_prepare_wechatpadpro_login.sh"
   "scripts/tests/test_wechatpadpro_defaults.sh"
   "scripts/tests/test_start_agent_runner.sh"
+  "scripts/tests/test_deploy_stack_platform_ingress.sh"
 )
 
 executable_scripts=(
   "scripts/deploy_stack.sh"
   "scripts/stop_stack.sh"
   "scripts/start_agent_runner.sh"
-  "scripts/start_qq_adapter.sh"
-  "scripts/start_wechatpadpro_adapter.sh"
   "scripts/configure_napcat_ws.sh"
   "scripts/prepare_napcat_login.sh"
   "scripts/configure_wechatpadpro_webhook.sh"
@@ -109,16 +101,15 @@ ensure_pattern "scripts/lib/common.sh" "dogbot_write_claude_runner_runtime" || p
 ensure_pattern "scripts/lib/common.sh" "bifrost -host 127.0.0.1 -port" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/docker-compose.yml" "mem_limit" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/docker-compose.yml" "CLAUDE_CONFIG_DIR" || pattern_errors=$((pattern_errors+1))
-ensure_pattern "qq_adapter/app.py" "/napcat/ws" || pattern_errors=$((pattern_errors+1))
-ensure_pattern "qq_adapter/napcat_client.py" "/send_group_msg" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/platform-stack.yml" "mlikiowa/napcat-docker:latest" || pattern_errors=$((pattern_errors+1))
-ensure_pattern "scripts/configure_napcat_ws.sh" "host.docker.internal:19000/napcat/ws" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/configure_napcat_ws.sh" "host.docker.internal:8787/v1/platforms/qq/napcat/ws" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/configure_napcat_ws.sh" "dogbot_resolve_uv_bin" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "deploy/dogbot.env.example" "AGENT_RUNNER_BIND_ADDR" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "deploy/dogbot.env.example" "PLATFORM_QQ_ACCOUNT_ID" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "deploy/dogbot.env.example" "PLATFORM_WECHATPADPRO_ACCOUNT_ID" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/deploy_stack.sh" "docker compose --env-file" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/deploy_stack.sh" "dogbot_write_claude_runner_runtime" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/start_agent_runner.sh" "build --release --manifest-path" || pattern_errors=$((pattern_errors+1))
-ensure_pattern "scripts/start_qq_adapter.sh" "qq_adapter.app:create_app" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/apply_runner_network_policy.sh" "INPUT" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/tests/smoke_test_claude_runner.sh" "resolve_uv_bin" || pattern_errors=$((pattern_errors+1))
 
@@ -132,8 +123,6 @@ bash -n "$repo_root/scripts/remove_runner_network_policy.sh"
 bash -n "$repo_root/scripts/deploy_stack.sh"
 bash -n "$repo_root/scripts/stop_stack.sh"
 bash -n "$repo_root/scripts/start_agent_runner.sh"
-bash -n "$repo_root/scripts/start_qq_adapter.sh"
-bash -n "$repo_root/scripts/start_wechatpadpro_adapter.sh"
 bash -n "$repo_root/scripts/configure_napcat_ws.sh"
 bash -n "$repo_root/scripts/prepare_napcat_login.sh"
 bash -n "$repo_root/scripts/prepare_wechatpadpro_login.sh"
@@ -141,10 +130,9 @@ bash -n "$repo_root/scripts/configure_wechatpadpro_webhook.sh"
 bash -n "$repo_root/scripts/tests/smoke_test_claude_runner.sh"
 bash "$repo_root/scripts/tests/test_common.sh"
 bash "$repo_root/scripts/tests/test_configure_napcat_ws.sh"
+bash "$repo_root/scripts/tests/test_deploy_stack_platform_ingress.sh"
 bash "$repo_root/scripts/tests/test_prepare_napcat_login.sh"
 bash "$repo_root/scripts/tests/test_prepare_wechatpadpro_login.sh"
-bash "$repo_root/scripts/tests/test_wechatpadpro_defaults.sh"
 bash "$repo_root/scripts/tests/test_start_agent_runner.sh"
-uv run python -m py_compile "$repo_root/qq_adapter/app.py"
 
 echo "Structure check passed. All required files are present."

@@ -18,7 +18,7 @@ if [[ -z "${WECHATPADPRO_ACCOUNT_KEY:-}" ]]; then
   exit 0
 fi
 
-callback_url="${WECHATPADPRO_ADAPTER_WEBHOOK_URL:-http://host.docker.internal:${WECHATPADPRO_ADAPTER_PORT:-18999}/wechatpadpro/events}"
+callback_url="${WECHATPADPRO_WEBHOOK_URL:-http://host.docker.internal:8787/v1/platforms/wechatpadpro/events}"
 base_url="${WECHATPADPRO_BASE_URL:-http://127.0.0.1:${WECHATPADPRO_HOST_PORT:-38849}}"
 include_self_message="${WECHATPADPRO_WEBHOOK_INCLUDE_SELF_MESSAGE:-false}"
 secret="${WECHATPADPRO_WEBHOOK_SECRET:-}"
