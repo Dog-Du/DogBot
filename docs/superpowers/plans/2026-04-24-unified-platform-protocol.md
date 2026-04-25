@@ -17,14 +17,17 @@ This plan was written before the platform degrade policy stabilized. The followi
 - `CapabilityProfile` is obsolete and must not be reintroduced
 - `agent-runner/src/dispatch.rs` is now only a shared validation layer
 - Platform adapters own media degradation and reaction fallback behavior
-- Unsupported `ReactionAdd` degrades to a prepended reply/quote emoji message
-- Unsupported `ReactionRemove` degrades to no-op
 - WeChatPadPro currently degrades:
   - `voice -> file`
   - `sticker -> image`
+  - `reply/quote -> unsupported`
+  - `ReactionAdd -> no-op`
+  - `ReactionRemove -> no-op`
 - QQ currently degrades:
   - `sticker -> image`
-  - unsupported `ReactionAdd -> prepended reply emoji message`
+  - `reply/quote -> native CQ reply`
+  - `ReactionAdd -> native set_msg_emoji_like`
+  - `ReactionRemove -> no-op`
 
 ---
 

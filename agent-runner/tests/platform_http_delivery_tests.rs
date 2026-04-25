@@ -187,6 +187,28 @@ async fn spawn_mock_server(capture: Capture, response: Value) -> String {
             }
         }),
     );
+    let app = app.route(
+        "/set_msg_emoji_like",
+        post({
+            let capture = capture.clone();
+            let response = response.clone();
+            move |request: Request<Body>| {
+                let capture = capture.clone();
+                let response = response.clone();
+                async move {
+                    let path = request
+                        .uri()
+                        .path_and_query()
+                        .map(|value| value.as_str().to_string())
+                        .unwrap_or_else(|| "/".to_string());
+                    let body = to_bytes(request.into_body(), usize::MAX).await.unwrap();
+                    let json: Value = serde_json::from_slice(&body).unwrap();
+                    capture.push(path, json);
+                    axum::Json(response)
+                }
+            }
+        }),
+    );
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -539,7 +561,7 @@ async fn wechat_ingress_sticker_action_degrades_to_image_delivery() {
 }
 
 #[tokio::test]
-async fn qq_ingress_reaction_add_degrades_to_prepended_reply_message() {
+async fn qq_ingress_reaction_add_uses_native_napcat_endpoint() {
     let capture = Capture::default();
     let base_url = spawn_mock_server(
         capture.clone(),
@@ -587,11 +609,15 @@ async fn qq_ingress_reaction_add_degrades_to_prepended_reply_message() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let requests = capture.all();
-    assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].0, "/send_group_msg");
-    assert_eq!(requests[0].1["message"], "[CQ:reply,id=99]👍 😂");
-    assert_eq!(requests[1].0, "/send_group_msg");
-    assert_eq!(requests[1].1["message"], "[CQ:reply,id=99][CQ:at,qq=42] 收到");
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0].0, "/set_msg_emoji_like");
+    assert_eq!(requests[0].1["message_id"], 99);
+    assert_eq!(requests[0].1["emoji_id"], "👍");
+    assert_eq!(requests[1].0, "/set_msg_emoji_like");
+    assert_eq!(requests[1].1["message_id"], 99);
+    assert_eq!(requests[1].1["emoji_id"], "😂");
+    assert_eq!(requests[2].0, "/send_group_msg");
+    assert_eq!(requests[2].1["message"], "[CQ:reply,id=99][CQ:at,qq=42] 收到");
 }
 
 #[tokio::test]
@@ -635,4 +661,52 @@ async fn wechat_ingress_reaction_remove_is_noop_when_platform_lacks_reaction_sup
 
     assert_eq!(response.status(), StatusCode::OK);
     assert!(capture.all().is_empty());
+}
+
+#[tokio::test]
+async fn wechat_ingress_reaction_add_is_noop_when_platform_lacks_reaction_support() {
+    let capture = Capture::default();
+    let base_url = spawn_mock_server(
+        capture.clone(),
+        json!({"Code": 200, "Data": {"MsgId": "wx-out-8"}}),
+    )
+    .await;
+    let mut settings = test_settings();
+    settings.wechatpadpro_base_url = base_url;
+    settings.wechatpadpro_account_key = Some("test-key".into());
+
+    let runner = FixedOutputRunner {
+        stdout: r#"收到
+```dogbot-action
+{"type":"reaction_add","target_message_id":"wx-15","emoji":"👍"}
+```"#,
+    };
+    let app = build_test_app_with_settings(Arc::new(runner), settings);
+    let payload = json!({
+        "message": {
+            "msgId": "wx-16",
+            "senderWxid": "wxid_user_6",
+            "content": "点个赞",
+            "msgType": 1
+        }
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/platforms/wechatpadpro/events")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = capture.all();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0, "/message/SendTextMessage?key=test-key");
+    assert_eq!(requests[0].1["MsgItem"][0]["ToUserName"], "wxid_user_6");
+    assert_eq!(requests[0].1["MsgItem"][0]["TextContent"], "收到");
 }

@@ -16,7 +16,7 @@ use crate::{
     },
     protocol::{
         AssetRef, AssetSource, CanonicalEvent, CanonicalMessage, EventKind, MessagePart,
-        OutboundAction, OutboundMessage, OutboundPlan,
+        OutboundPlan,
     },
 };
 
@@ -153,13 +153,6 @@ impl PlatformAdapter for WeChatPadProPlatform {
             timed_out: false,
         })?;
 
-        let prepended_messages = degrade_reaction_actions(&plan.actions);
-        let prepended_count = prepended_messages.len();
-        let delivery_messages = prepended_messages
-            .into_iter()
-            .chain(plan.messages.iter().cloned())
-            .collect::<Vec<_>>();
-
         let account_key = self.account_key.as_deref().ok_or_else(|| ErrorResponse {
             status: "error".into(),
             error_code: "delivery_unavailable".into(),
@@ -172,8 +165,8 @@ impl PlatformAdapter for WeChatPadProPlatform {
             message_id: None,
         };
 
-        for (index, message) in delivery_messages.iter().enumerate() {
-            let requests = compile_outbound_requests(message, context, index == prepended_count)
+        for (index, message) in plan.messages.iter().enumerate() {
+            let requests = compile_outbound_requests(message, context, index == 0)
                 .map_err(|err| ErrorResponse {
                     status: "error".into(),
                     error_code: "delivery_invalid_plan".into(),
@@ -495,36 +488,6 @@ fn workspace_asset_path(asset: &AssetRef) -> Result<String, String> {
             "unsupported outbound WeChatPadPro asset source: {unsupported:?}"
         )),
     }
-}
-
-fn degrade_reaction_actions(actions: &[OutboundAction]) -> Vec<OutboundMessage> {
-    let mut grouped = Vec::<(String, Vec<String>)>::new();
-
-    for action in actions {
-        match action {
-            OutboundAction::ReactionAdd(action) => {
-                if let Some((target_message_id, emojis)) = grouped.last_mut()
-                    && target_message_id == &action.target_message_id
-                {
-                    emojis.push(action.emoji.clone());
-                } else {
-                    grouped.push((action.target_message_id.clone(), vec![action.emoji.clone()]));
-                }
-            }
-            OutboundAction::ReactionRemove(_) => {}
-        }
-    }
-
-    grouped
-        .into_iter()
-        .map(|(target_message_id, emojis)| OutboundMessage {
-            parts: vec![MessagePart::Text {
-                text: emojis.join(" "),
-            }],
-            reply_to: Some(target_message_id),
-            delivery_policy: None,
-        })
-        .collect()
 }
 
 fn mention_targets_for_reply(target: Option<MentionTarget>) -> Vec<MentionTarget> {

@@ -27,17 +27,20 @@ DogBot 现在的 QQ 和 WeChatPadPro 接入存在两个根本问题：
 - 不再使用全局 `CapabilityProfile` 作为平台能力矩阵和裁决中心
 - `dispatch` 当前只承担通用 plan 校验，主要负责 `/workspace` 资源边界检查
 - 平台能力差异、媒体降级、reaction 降级都由各平台编译器自己处理
-- `reaction_add` 在平台不支持原生 reaction 时，降级为一条额外消息，并插到本次发送的最前面
-- `reaction_remove` 在平台不支持原生 reaction 时，降级为 no-op，不报错
 - WeChatPadPro 当前已落地：
   - `image -> sendFile(image)`
   - `video -> sendFile(video)`
   - `file -> sendFile(file)`
   - `voice -> sendFile(file)`
   - `sticker -> sendFile(image)`
+  - `reply/quote -> unsupported`
+  - `reaction_add -> no-op`
+  - `reaction_remove -> no-op`
 - QQ 当前已落地：
   - `sticker -> image`
-  - `reaction_add -> 首条 reply emoji 消息`
+  - `reply/quote -> native CQ reply`
+  - `reaction_add -> native set_msg_emoji_like`
+  - `reaction_remove -> no-op`
 
 ## Goals
 
@@ -402,19 +405,20 @@ session 模型改为：
 
 降级策略已经收口为“平台内编译降级”，不是全局矩阵裁决：
 
-- `reaction_add`
-  - 平台支持原生 reaction：原生发送
-  - 平台不支持：降级为一条额外的 `reply/quote + emoji` 消息，并插到本次发送最前面
-- `reaction_remove`
-  - 平台支持原生 reaction：原生发送
-  - 平台不支持：no-op，不报错
 - `voice`
   - WeChatPadPro 不支持原生语音消息时，降级为 `file`
 - `sticker`
   - WeChatPadPro 不支持原生 sticker 时，降级为 `image`
   - QQ 不支持原生 sticker 时，降级为 `image`
+- `reaction_add`
+  - QQ：原生 `set_msg_emoji_like`
+  - WeChatPadPro：no-op，不报错
+- `reaction_remove`
+  - QQ：当前无已确认公开 API，先按 no-op 处理
+  - WeChatPadPro：no-op，不报错
 - `reply`
-  - 平台可尽量保留 native reply；做不到时允许退化成普通消息，不作为全局 dispatch 失败条件
+  - QQ：保留 native reply
+  - WeChatPadPro：当前不支持 native reply/quote，不做伪降级
 
 ## Error Model
 
@@ -457,7 +461,7 @@ WeChatPadPro 模块负责：
 
 - webhook ingress
 - 微信消息 decode 为 canonical inbound
-- WeChatPadPro API send / upload / reaction compiler
+- WeChatPadPro API send / upload compiler
 - 微信 realtime mirror 策略
 
 WeChatPadPro 模块同样不负责业务判断，只负责 native 协议差异。

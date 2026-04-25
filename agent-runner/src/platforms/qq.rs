@@ -136,6 +136,57 @@ impl QqPlatform {
                 .and_then(string_value),
         })
     }
+
+    async fn send_reaction_add(
+        &self,
+        action: &crate::protocol::ReactionAction,
+    ) -> Result<(), ErrorResponse> {
+        let message_id = normalize_qq_target_id(&action.target_message_id)
+            .map_err(|message| ErrorResponse {
+                status: "error".into(),
+                error_code: "delivery_invalid_plan".into(),
+                message,
+                timed_out: false,
+            })?
+            .parse::<i64>()
+            .map_err(|_| internal_error("invalid QQ reaction target id"))?;
+        let payload = json!({
+            "message_id": message_id,
+            "emoji_id": action.emoji,
+        });
+
+        let response = self
+            .client
+            .post(format!("{}/set_msg_emoji_like", self.base_url))
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| ErrorResponse {
+                status: "error".into(),
+                error_code: "delivery_unavailable".into(),
+                message: format!("failed to reach NapCat API: {err}"),
+                timed_out: false,
+            })?;
+
+        let status = response.status();
+        let body: Value = response.json().await.map_err(|err| ErrorResponse {
+            status: "error".into(),
+            error_code: "delivery_invalid_response".into(),
+            message: format!("NapCat API returned invalid JSON: {err}"),
+            timed_out: false,
+        })?;
+
+        if !status.is_success() {
+            return Err(ErrorResponse {
+                status: "error".into(),
+                error_code: "delivery_failed".into(),
+                message: format!("NapCat API returned {status}: {body}"),
+                timed_out: false,
+            });
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -164,25 +215,25 @@ impl PlatformAdapter for QqPlatform {
             timed_out: false,
         })?;
 
-        let prepended_messages = degrade_reaction_actions(&plan.actions);
-        let prepended_count = prepended_messages.len();
-        let delivery_messages = prepended_messages
-            .into_iter()
-            .chain(plan.messages.iter().cloned())
-            .collect::<Vec<_>>();
-
         let mut last_response = MessageResponse {
             status: "ok".into(),
             message_id: None,
         };
 
-        for (index, message) in delivery_messages.iter().enumerate() {
-            let mention_user_id = if index == prepended_count {
+        for action in &plan.actions {
+            match action {
+                OutboundAction::ReactionAdd(action) => self.send_reaction_add(action).await?,
+                OutboundAction::ReactionRemove(_) => {}
+            }
+        }
+
+        for (index, message) in plan.messages.iter().enumerate() {
+            let mention_user_id = if index == 0 {
                 context.target_actor_id.as_deref()
             } else {
                 None
             };
-            let message = if index == prepended_count && message.reply_to.is_none() {
+            let message = if index == 0 && message.reply_to.is_none() {
                 let mut message = message.clone();
                 message.reply_to = context.reply_to_message_id.clone();
                 message
@@ -331,36 +382,6 @@ fn qq_asset_reference(asset: &AssetRef) -> String {
         | crate::protocol::AssetSource::PlatformNativeHandle(value)
         | crate::protocol::AssetSource::BridgeHandle(value) => value.clone(),
     }
-}
-
-fn degrade_reaction_actions(actions: &[OutboundAction]) -> Vec<OutboundMessage> {
-    let mut grouped = Vec::<(String, Vec<String>)>::new();
-
-    for action in actions {
-        match action {
-            OutboundAction::ReactionAdd(action) => {
-                if let Some((target_message_id, emojis)) = grouped.last_mut()
-                    && target_message_id == &action.target_message_id
-                {
-                    emojis.push(action.emoji.clone());
-                } else {
-                    grouped.push((action.target_message_id.clone(), vec![action.emoji.clone()]));
-                }
-            }
-            OutboundAction::ReactionRemove(_) => {}
-        }
-    }
-
-    grouped
-        .into_iter()
-        .map(|(target_message_id, emojis)| OutboundMessage {
-            parts: vec![MessagePart::Text {
-                text: emojis.join(" "),
-            }],
-            reply_to: Some(target_message_id),
-            delivery_policy: None,
-        })
-        .collect()
 }
 
 fn parse_message_parts(
