@@ -3,7 +3,6 @@ use std::{collections::HashMap, sync::Arc};
 use agent_runner::{
     config::Settings,
     history::{cleanup::purge_expired_history, store::HistoryStore},
-    inbound_models::InboundMessage,
     models::{
         ErrorResponse, MessageRequest, MessageResponse, RunRequest, RunResponse,
         ValidatedRunRequest,
@@ -97,27 +96,26 @@ async fn inbound_request_triggers_runtime_history_cleanup() {
         Arc::new(NoopMessenger),
         settings.clone(),
     );
-    let payload = serde_json::to_vec(&InboundMessage {
-        platform: "qq".into(),
-        platform_account: "qq:bot_uin:123".into(),
-        conversation_id: "qq:group:123".into(),
-        actor_id: "qq:user:9".into(),
-        message_id: "trigger-1".into(),
-        reply_to_message_id: None,
-        raw_segments_json: "[]".into(),
-        normalized_text: "/agent summarize".into(),
-        mentions: vec!["qq:bot_uin:123".into()],
-        is_group: true,
-        is_private: false,
-        timestamp_epoch_secs: 2,
-    })
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "time": 2,
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 123,
+        "user_id": 9,
+        "message_id": "trigger-1",
+        "raw_message": "[CQ:at,qq=123] summarize",
+        "message": [
+            {"type":"at","data":{"qq":"123"}},
+            {"type":"text","data":{"text":" summarize"}}
+        ]
+    }))
     .unwrap();
 
     let response = app
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/v1/inbound-messages")
+                .uri("/v1/platforms/qq/napcat/ws")
                 .header("content-type", "application/json")
                 .body(Body::from(payload))
                 .unwrap(),

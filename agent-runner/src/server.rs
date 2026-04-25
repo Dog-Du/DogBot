@@ -22,13 +22,13 @@ use crate::{
     docker_client::DockerRuntime,
     exec::{DockerRunner, ExecutionBackend},
     history::{cleanup::purge_expired_history, store::HistoryStore},
-    messenger::{MessageDelivery, NapCatMessenger},
     models::{
         ErrorResponse, MessageRequest, MessageResponse, RunRequest, RunResponse,
         ValidatedRunRequest,
     },
-    platforms::{qq, wechatpadpro},
-    protocol::CanonicalEvent,
+    normalizer::normalize_agent_output,
+    platforms::{PlatformRegistry, delivery_context_from_event, run_response_output},
+    protocol::{CanonicalEvent, MessagePart, OutboundMessage, OutboundPlan},
     session_store::SessionStore,
     trigger_resolver::{TriggerDecision, TriggerResolver},
 };
@@ -62,17 +62,6 @@ impl Runner for DockerRunner {
     }
 }
 
-#[async_trait]
-impl Messenger for NapCatMessenger {
-    async fn send(
-        &self,
-        request: MessageRequest,
-        session: crate::session_store::SessionRecord,
-    ) -> Result<MessageResponse, ErrorResponse> {
-        MessageDelivery::send(self, request, session).await
-    }
-}
-
 #[derive(Clone)]
 struct AppState {
     settings: Settings,
@@ -80,7 +69,8 @@ struct AppState {
     session_store: SessionStore,
     history_store: Arc<StdMutex<HistoryStore>>,
     history_cleanup_state: Arc<StdMutex<HistoryCleanupState>>,
-    messenger: Arc<dyn Messenger>,
+    platform_registry: PlatformRegistry,
+    message_override: Option<Arc<dyn Messenger>>,
 }
 
 struct QueuedRun {
@@ -206,6 +196,7 @@ pub fn build_test_app(runner: Arc<dyn Runner>) -> Router {
     settings.platform_qq_account_id = Some(DEFAULT_QQ_ACCOUNT_ID.into());
     settings.platform_qq_bot_id = Some(DEFAULT_QQ_BOT_ID.into());
     settings.platform_wechatpadpro_account_id = Some(DEFAULT_WECHATPADPRO_ACCOUNT_ID.into());
+    settings.wechatpadpro_base_url = "http://127.0.0.1:38849".into();
     build_test_app_with_settings(runner, settings)
 }
 
@@ -215,15 +206,16 @@ pub fn build_test_app_with_settings(runner: Arc<dyn Runner>, settings: Settings)
         HistoryStore::open(&settings.history_db_path).expect("history store"),
     ));
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
-    let messenger =
-        Arc::new(NapCatMessenger::from_settings(&settings).expect("default NapCat messenger"));
+    let platform_registry =
+        PlatformRegistry::from_settings(&settings).expect("default platform registry");
     router(AppState {
         settings,
         queue_tx,
         session_store,
         history_store,
         history_cleanup_state: Arc::new(StdMutex::new(HistoryCleanupState::default())),
-        messenger,
+        platform_registry,
+        message_override: None,
     })
 }
 
@@ -237,13 +229,16 @@ pub fn build_test_app_with_message_support(
         HistoryStore::open(&settings.history_db_path).expect("history store"),
     ));
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
+    let platform_registry =
+        PlatformRegistry::from_settings(&settings).expect("default platform registry");
     router(AppState {
         settings,
         queue_tx,
         session_store,
         history_store,
         history_cleanup_state: Arc::new(StdMutex::new(HistoryCleanupState::default())),
-        messenger,
+        platform_registry,
+        message_override: Some(messenger),
     })
 }
 
@@ -259,9 +254,8 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
         HistoryStore::open(&settings.history_db_path)
             .map_err(|err| io::Error::other(err.to_string()))?,
     ));
-    let messenger = Arc::new(
-        NapCatMessenger::from_settings(&settings).map_err(|err| io::Error::other(err.message))?,
-    );
+    let platform_registry =
+        PlatformRegistry::from_settings(&settings).map_err(|err| io::Error::other(err.message))?;
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
     Ok(router(AppState {
         settings,
@@ -269,26 +263,41 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
         session_store,
         history_store,
         history_cleanup_state: Arc::new(StdMutex::new(HistoryCleanupState::default())),
-        messenger,
+        platform_registry,
+        message_override: None,
     }))
 }
 
 fn router(state: AppState) -> Router {
-    Router::new()
+    let mut router = Router::new()
         .route("/healthz", get(healthz))
         .route("/v1/runs", post(run))
-        .route("/v1/messages", post(send_message))
-        .route(
-            "/v1/platforms/wechatpadpro/events",
-            get(wechat_probe)
-                .head(wechat_probe)
-                .post(handle_wechatpadpro_event),
-        )
-        .route(
-            "/v1/platforms/qq/napcat/ws",
-            get(qq_probe).post(handle_qq_napcat_event),
-        )
-        .with_state(state)
+        .route("/v1/messages", post(send_message));
+
+    for (platform_id, route) in state.platform_registry.ingress_routes().iter().cloned() {
+        let platform_id_get = platform_id.clone();
+        let mut method_router = get(move |State(state): State<AppState>| {
+            let platform_id = platform_id_get.clone();
+            async move { platform_probe(state, &platform_id).await }
+        });
+        if route.allow_head {
+            let platform_id_head = platform_id.clone();
+            method_router = method_router.head(move |State(state): State<AppState>| {
+                let platform_id = platform_id_head.clone();
+                async move { platform_probe(state, &platform_id).await }
+            });
+        }
+
+        let platform_id_post = platform_id.clone();
+        method_router = method_router.post(move |State(state): State<AppState>, body: Bytes| {
+            let platform_id = platform_id_post.clone();
+            async move { handle_platform_event(state, &platform_id, body).await }
+        });
+
+        router = router.route(route.path, method_router);
+    }
+
+    router.with_state(state)
 }
 
 fn spawn_dispatcher(settings: Settings, runner: Arc<dyn Runner>) -> mpsc::Sender<QueuedRun> {
@@ -330,12 +339,13 @@ async fn healthz() -> Json<Value> {
     Json(json!({ "status": "ok" }))
 }
 
-async fn wechat_probe() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
-}
-
-async fn qq_probe() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
+async fn platform_probe(state: AppState, platform_id: &str) -> Json<Value> {
+    let payload = state
+        .platform_registry
+        .get(platform_id)
+        .map(|adapter| adapter.probe_payload())
+        .unwrap_or_else(|| json!({ "status": "ok" }));
+    Json(payload)
 }
 
 async fn run(State(state): State<AppState>, body: Bytes) -> Response {
@@ -381,10 +391,7 @@ async fn run(State(state): State<AppState>, body: Bytes) -> Response {
             }
         };
 
-    match enqueue_run_request(&state, request).await {
-        Ok(response) => response,
-        Err(response) => response,
-    }
+    map_run_result_to_response(execute_run_request(&state, request).await)
 }
 
 async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
@@ -424,7 +431,7 @@ async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
         }
     };
 
-    match state.messenger.send(request, session).await {
+    match deliver_message_request(&state, request, session).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) if error.error_code == "unsupported_platform" => {
             (StatusCode::BAD_REQUEST, Json(error)).into_response()
@@ -436,7 +443,7 @@ async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
     }
 }
 
-async fn handle_wechatpadpro_event(State(state): State<AppState>, body: Bytes) -> Response {
+async fn handle_platform_event(state: AppState, platform_id: &str, body: Bytes) -> Response {
     maybe_purge_expired_history(&state);
 
     let payload: Value = match serde_json::from_slice(&body) {
@@ -447,52 +454,17 @@ async fn handle_wechatpadpro_event(State(state): State<AppState>, body: Bytes) -
         }
     };
 
-    let platform_account = state
-        .settings
-        .platform_wechatpadpro_account_id
-        .clone()
-        .unwrap_or_else(|| DEFAULT_WECHATPADPRO_ACCOUNT_ID.to_string());
-    let mention_names = state
-        .settings
-        .platform_wechatpadpro_bot_mention_names
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
+    let Some(adapter) = state.platform_registry.get(platform_id) else {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            "platform_not_found",
+            "platform is not registered",
+        )
+        .into_response();
+    };
 
-    let Some(event) =
-        wechatpadpro::decode_webhook_event(&payload, &platform_account, &mention_names)
+    let Some(event) = adapter.decode_event(&payload)
     else {
-        return accepted_response("ignored");
-    };
-
-    handle_canonical_event(&state, event).await
-}
-
-async fn handle_qq_napcat_event(State(state): State<AppState>, body: Bytes) -> Response {
-    maybe_purge_expired_history(&state);
-
-    let payload: Value = match serde_json::from_slice(&body) {
-        Ok(payload) => payload,
-        Err(err) => {
-            return error_response(StatusCode::BAD_REQUEST, "invalid_json", &err.to_string())
-                .into_response();
-        }
-    };
-
-    let platform_account = state
-        .settings
-        .platform_qq_account_id
-        .clone()
-        .or_else(|| {
-            state
-                .settings
-                .platform_qq_bot_id
-                .as_ref()
-                .map(|bot_id| format!("qq:bot_uin:{bot_id}"))
-        })
-        .unwrap_or_else(|| DEFAULT_QQ_ACCOUNT_ID.to_string());
-
-    let Some(event) = qq::decode_napcat_event(&payload, &platform_account) else {
         return accepted_response("ignored");
     };
 
@@ -524,9 +496,38 @@ async fn handle_canonical_event(state: &AppState, event: CanonicalEvent) -> Resp
             let Some(request) = build_run_request_from_event(&event) else {
                 return accepted_response("ignored");
             };
-            match enqueue_run_request(state, request).await {
+            let run_response = match execute_run_request(state, request).await {
                 Ok(response) => response,
-                Err(response) => response,
+                Err(error) => return map_run_result_to_response(Err(error)),
+            };
+
+            let output = run_response_output(&run_response);
+            if output.is_empty() {
+                return accepted_response("accepted");
+            }
+
+            let plan = match normalize_agent_output(output) {
+                Ok(plan) => plan,
+                Err(err) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(to_internal_error_message(&format!(
+                            "failed to normalize agent output: {err}"
+                        ))),
+                    )
+                        .into_response();
+                }
+            };
+
+            match deliver_plan_for_event(state, &event, &plan).await {
+                Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+                Err(error) if error.error_code == "unsupported_platform" => {
+                    (StatusCode::BAD_REQUEST, Json(error)).into_response()
+                }
+                Err(error) if error.error_code.starts_with("delivery_") => {
+                    (StatusCode::BAD_GATEWAY, Json(error)).into_response()
+                }
+                Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response(),
             }
         }
     }
@@ -556,17 +557,22 @@ fn build_run_request_from_event(event: &CanonicalEvent) -> Option<RunRequest> {
     })
 }
 
-async fn enqueue_run_request(state: &AppState, request: RunRequest) -> Result<Response, Response> {
+async fn execute_run_request(
+    state: &AppState,
+    request: RunRequest,
+) -> Result<RunResponse, ErrorResponse> {
     let validated = match request.validate(
         state.settings.default_timeout_secs,
         state.settings.max_timeout_secs,
     ) {
         Ok(validated) => validated,
         Err(message) => {
-            return Err(
-                error_response(StatusCode::BAD_REQUEST, "invalid_request", &message)
-                    .into_response(),
-            );
+            return Err(ErrorResponse {
+                status: "error".into(),
+                error_code: "invalid_request".into(),
+                message,
+                timed_out: false,
+            });
         }
     };
 
@@ -578,39 +584,21 @@ async fn enqueue_run_request(state: &AppState, request: RunRequest) -> Result<Re
     }) {
         Ok(()) => {}
         Err(mpsc::error::TrySendError::Full(_)) => {
-            return Err(error_response(
-                StatusCode::TOO_MANY_REQUESTS,
-                "queue_full",
-                "run queue is full",
-            )
-            .into_response());
+            return Err(ErrorResponse {
+                status: "error".into(),
+                error_code: "queue_full".into(),
+                message: "run queue is full".into(),
+                timed_out: false,
+            });
         }
         Err(mpsc::error::TrySendError::Closed(_)) => {
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(to_internal_error_message("run queue is closed")),
-            )
-                .into_response());
+            return Err(to_internal_error_message("run queue is closed"));
         }
     }
 
     match receiver.await {
-        Ok(Ok(response)) => Ok((StatusCode::OK, Json(response)).into_response()),
-        Ok(Err(error)) if error.timed_out => {
-            Ok((StatusCode::REQUEST_TIMEOUT, Json(error)).into_response())
-        }
-        Ok(Err(error)) if error.error_code == "rate_limited" => {
-            Ok((StatusCode::TOO_MANY_REQUESTS, Json(error)).into_response())
-        }
-        Ok(Err(error)) if error.error_code == "session_conflict" => {
-            Ok((StatusCode::CONFLICT, Json(error)).into_response())
-        }
-        Ok(Err(error)) => Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response()),
-        Err(_) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(to_internal_error_message("dispatcher dropped run result")),
-        )
-            .into_response()),
+        Ok(result) => result,
+        Err(_) => Err(to_internal_error_message("dispatcher dropped run result")),
     }
 }
 
@@ -674,6 +662,119 @@ fn maybe_purge_expired_history(state: &AppState) {
     if let Err(err) = purge_expired_history(&store) {
         warn!("failed to purge expired history: {err}");
     }
+}
+
+fn map_run_result_to_response(result: Result<RunResponse, ErrorResponse>) -> Response {
+    match result {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) if error.error_code == "invalid_request" => {
+            (StatusCode::BAD_REQUEST, Json(error)).into_response()
+        }
+        Err(error) if error.error_code == "queue_full" || error.error_code == "rate_limited" => {
+            (StatusCode::TOO_MANY_REQUESTS, Json(error)).into_response()
+        }
+        Err(error) if error.timed_out => (StatusCode::REQUEST_TIMEOUT, Json(error)).into_response(),
+        Err(error) if error.error_code == "session_conflict" => {
+            (StatusCode::CONFLICT, Json(error)).into_response()
+        }
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response(),
+    }
+}
+
+async fn deliver_message_request(
+    state: &AppState,
+    request: MessageRequest,
+    session: crate::session_store::SessionRecord,
+) -> Result<MessageResponse, ErrorResponse> {
+    if let Some(override_messenger) = &state.message_override {
+        return override_messenger.send(request, session).await;
+    }
+
+    let Some(adapter) = state.platform_registry.get(&session.platform) else {
+        return Err(ErrorResponse {
+            status: "error".into(),
+            error_code: "unsupported_platform".into(),
+            message: format!("platform is not registered: {}", session.platform),
+            timed_out: false,
+        });
+    };
+
+    let plan = OutboundPlan {
+        messages: vec![OutboundMessage {
+            parts: vec![MessagePart::Text {
+                text: request.text.clone(),
+            }],
+            reply_to: request.reply_to_message_id.clone(),
+            delivery_policy: None,
+        }],
+        actions: vec![],
+        delivery_report_policy: None,
+    };
+    let context = crate::platforms::DeliveryContext {
+        platform: session.platform.clone(),
+        platform_account: session.platform_account.clone(),
+        conversation_id: session.conversation_id.clone(),
+        target_actor_id: request.mention_user_id.clone(),
+        target_display_name: None,
+        reply_to_message_id: request.reply_to_message_id.clone(),
+        native_event: None,
+    };
+
+    adapter.send_plan(&context, &plan).await
+}
+
+async fn deliver_plan_for_event(
+    state: &AppState,
+    event: &CanonicalEvent,
+    plan: &OutboundPlan,
+) -> Result<MessageResponse, ErrorResponse> {
+    if let Some(override_messenger) = &state.message_override {
+        let text = plan
+            .messages
+            .iter()
+            .flat_map(|message| message.parts.iter())
+            .filter_map(|part| match part {
+                MessagePart::Text { text } => Some(text.as_str()),
+                MessagePart::Mention { display, .. } => Some(display.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("");
+
+        let request = MessageRequest {
+            session_id: event.conversation.clone(),
+            text,
+            reply_to_message_id: None,
+            mention_user_id: None,
+        };
+        let session = state
+            .session_store
+            .get_or_create_bound_session(
+                &event.conversation,
+                &event.platform,
+                &event.platform_account,
+                &event.conversation,
+            )
+            .map_err(|err| ErrorResponse {
+                status: "error".into(),
+                error_code: "session_store_failed".into(),
+                message: err.to_string(),
+                timed_out: false,
+            })?;
+        return override_messenger.send(request, session).await;
+    }
+
+    let Some(adapter) = state.platform_registry.get(&event.platform) else {
+        return Err(ErrorResponse {
+            status: "error".into(),
+            error_code: "unsupported_platform".into(),
+            message: format!("platform is not registered: {}", event.platform),
+            timed_out: false,
+        });
+    };
+
+    let context = delivery_context_from_event(event);
+    adapter.send_plan(&context, plan).await
 }
 
 fn accepted_response(status: &str) -> Response {

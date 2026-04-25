@@ -1,8 +1,159 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::{json, Map, Value};
+use async_trait::async_trait;
+use serde_json::{Map, Value, json};
 
-use crate::protocol::{CanonicalEvent, CanonicalMessage, EventKind, MessagePart};
+use crate::{
+    config::Settings,
+    dispatch::{CapabilityProfile, dispatch_plan},
+    models::{ErrorResponse, MessageResponse},
+    platforms::{
+        DeliveryContext, IngressRoute, PlatformAdapter,
+        common::{integer_value, string_value},
+    },
+    protocol::{CanonicalEvent, CanonicalMessage, EventKind, MessagePart, OutboundPlan},
+};
+
+const INGRESS_ROUTES: &[IngressRoute] = &[IngressRoute {
+    path: "/v1/platforms/wechatpadpro/events",
+    allow_head: true,
+}];
+
+pub struct WeChatPadProPlatform {
+    client: reqwest::Client,
+    base_url: String,
+    account_key: Option<String>,
+    platform_account: String,
+    mention_names: Vec<String>,
+}
+
+impl WeChatPadProPlatform {
+    pub fn from_settings(settings: &Settings) -> Result<Self, ErrorResponse> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(|err| internal_error(&format!("failed to build WeChatPadPro client: {err}")))?;
+
+        Ok(Self {
+            client,
+            base_url: settings.wechatpadpro_base_url.trim_end_matches('/').to_string(),
+            account_key: settings.wechatpadpro_account_key.clone(),
+            platform_account: settings
+                .platform_wechatpadpro_account_id
+                .clone()
+                .unwrap_or_else(|| "wechatpadpro:account:bot".to_string()),
+            mention_names: settings.platform_wechatpadpro_bot_mention_names.clone(),
+        })
+    }
+}
+
+#[async_trait]
+impl PlatformAdapter for WeChatPadProPlatform {
+    fn platform_id(&self) -> &'static str {
+        "wechatpadpro"
+    }
+
+    fn ingress_routes(&self) -> &'static [IngressRoute] {
+        INGRESS_ROUTES
+    }
+
+    fn decode_event(&self, payload: &Value) -> Option<CanonicalEvent> {
+        let mention_names = self.mention_names.iter().map(String::as_str).collect::<Vec<_>>();
+        decode_webhook_event(payload, &self.platform_account, &mention_names)
+    }
+
+    fn capabilities(&self) -> CapabilityProfile {
+        CapabilityProfile {
+            supports_reply: false,
+            supports_reaction: false,
+            supports_sticker: false,
+        }
+    }
+
+    async fn send_plan(
+        &self,
+        context: &DeliveryContext,
+        plan: &OutboundPlan,
+    ) -> Result<MessageResponse, ErrorResponse> {
+        dispatch_plan(self.platform_id(), &self.capabilities(), plan)
+            .await
+            .map_err(|message| ErrorResponse {
+                status: "error".into(),
+                error_code: "delivery_invalid_plan".into(),
+                message,
+                timed_out: false,
+            })?;
+
+        let account_key = self.account_key.as_deref().ok_or_else(|| ErrorResponse {
+            status: "error".into(),
+            error_code: "delivery_unavailable".into(),
+            message: "WECHATPADPRO_ACCOUNT_KEY is not configured".into(),
+            timed_out: false,
+        })?;
+
+        let mut last_response = MessageResponse {
+            status: "ok".into(),
+            message_id: None,
+        };
+
+        for message in &plan.messages {
+            let text = compile_message_text(message).map_err(|err| ErrorResponse {
+                status: "error".into(),
+                error_code: "delivery_invalid_plan".into(),
+                message: err,
+                timed_out: false,
+            })?;
+
+            let payload = if let Some(native_event) = context.native_event.as_ref() {
+                compile_text_reply(native_event, &text)
+            } else {
+                build_text_reply_from_context(context, &text)
+            };
+
+            let response = self
+                .client
+                .post(format!("{}/message/SendTextMessage", self.base_url))
+                .query(&[("key", account_key)])
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|err| ErrorResponse {
+                    status: "error".into(),
+                    error_code: "delivery_unavailable".into(),
+                    message: format!("failed to reach WeChatPadPro API: {err}"),
+                    timed_out: false,
+                })?;
+
+            let status = response.status();
+            let body: Value = response.json().await.map_err(|err| ErrorResponse {
+                status: "error".into(),
+                error_code: "delivery_invalid_response".into(),
+                message: format!("WeChatPadPro SendTextMessage returned non-JSON response: {err}"),
+                timed_out: false,
+            })?;
+
+            if !status.is_success() || body.get("Code").and_then(Value::as_i64) != Some(200) {
+                return Err(ErrorResponse {
+                    status: "error".into(),
+                    error_code: "delivery_failed".into(),
+                    message: format!("WeChatPadPro SendTextMessage failed: {body}"),
+                    timed_out: false,
+                });
+            }
+
+            last_response = MessageResponse {
+                status: "ok".into(),
+                message_id: body
+                    .get("Data")
+                    .and_then(|data| data.get("MsgId"))
+                    .and_then(string_value)
+                    .or_else(|| body.get("MsgId").and_then(string_value)),
+            };
+        }
+
+        Ok(last_response)
+    }
+}
 
 pub fn decode_webhook_event(
     payload: &Value,
@@ -61,6 +212,34 @@ pub fn compile_text_reply(payload: &Value, text: &str) -> Value {
     let sender_id = extract_sender(&event);
     let sender_name = extract_sender_name(&event);
 
+    build_text_reply_payload(&target, text, is_group, Some(&sender_id), Some(&sender_name))
+}
+
+fn build_text_reply_from_context(context: &DeliveryContext, text: &str) -> Value {
+    let is_group = context.conversation_id.split(':').nth(1) == Some("group");
+    let target = context
+        .conversation_id
+        .splitn(3, ':')
+        .nth(2)
+        .unwrap_or_default()
+        .to_string();
+
+    let sender_id = context
+        .target_actor_id
+        .as_deref()
+        .map(normalize_wechat_target_id);
+    let sender_name = context.target_display_name.as_deref();
+
+    build_text_reply_payload(&target, text, is_group, sender_id, sender_name)
+}
+
+fn build_text_reply_payload(
+    target: &str,
+    text: &str,
+    is_group: bool,
+    sender_id: Option<&str>,
+    sender_name: Option<&str>,
+) -> Value {
     let mut msg_item = json!({
         "MsgType": 1,
         "ToUserName": target,
@@ -68,17 +247,42 @@ pub fn compile_text_reply(payload: &Value, text: &str) -> Value {
     });
 
     if is_group {
-        if !sender_name.is_empty() {
-            msg_item["TextContent"] = Value::String(format!("@{} {}", sender_name, text));
+        if let Some(sender_name) = sender_name
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            msg_item["TextContent"] = Value::String(format!("@{sender_name} {text}"));
+        } else if let Some(sender_id) = sender_id.filter(|value| !value.is_empty()) {
+            msg_item["TextContent"] = Value::String(format!("@{sender_id} {text}"));
         }
-        if !sender_id.is_empty() {
-            msg_item["AtWxIDList"] = Value::Array(vec![Value::String(sender_id)]);
+        if let Some(sender_id) = sender_id.filter(|value| !value.is_empty()) {
+            msg_item["AtWxIDList"] = Value::Array(vec![Value::String(sender_id.to_string())]);
         }
     }
 
     json!({
         "MsgItem": [msg_item],
     })
+}
+
+fn compile_message_text(message: &crate::protocol::OutboundMessage) -> Result<String, String> {
+    let mut output = String::new();
+    for part in &message.parts {
+        match part {
+            MessagePart::Text { text } => output.push_str(text),
+            MessagePart::Mention { display, .. } => output.push_str(display),
+            unsupported => {
+                return Err(format!(
+                    "unsupported outbound WeChatPadPro part: {unsupported:?}"
+                ));
+            }
+        }
+    }
+    let text = output.trim().to_string();
+    if text.is_empty() {
+        return Err("empty outbound WeChatPadPro text message".to_string());
+    }
+    Ok(text)
 }
 
 fn unwrap_event(payload: &Value) -> Value {
@@ -317,18 +521,15 @@ fn strip_leading_mention(content: &str, mention_names: &[&str]) -> String {
     parts.next().unwrap_or_default().trim().to_string()
 }
 
-fn string_value(value: &Value) -> Option<String> {
-    match value {
-        Value::String(value) => Some(value.clone()),
-        Value::Number(value) => Some(value.to_string()),
-        _ => None,
-    }
+fn normalize_wechat_target_id(value: &str) -> &str {
+    value.strip_prefix("wechatpadpro:user:").unwrap_or(value)
 }
 
-fn integer_value(value: &Value) -> Option<i64> {
-    match value {
-        Value::Number(value) => value.as_i64(),
-        Value::String(value) => value.trim().parse().ok(),
-        _ => None,
+fn internal_error(message: &str) -> ErrorResponse {
+    ErrorResponse {
+        status: "error".into(),
+        error_code: "internal_error".into(),
+        message: message.into(),
+        timed_out: false,
     }
 }

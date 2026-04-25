@@ -25,6 +25,8 @@ pub struct Settings {
     pub bifrost_upstream_provider_type: String,
     pub napcat_api_base_url: String,
     pub napcat_access_token: Option<String>,
+    pub wechatpadpro_base_url: String,
+    pub wechatpadpro_account_key: Option<String>,
     pub platform_qq_account_id: Option<String>,
     pub platform_qq_bot_id: Option<String>,
     pub platform_wechatpadpro_account_id: Option<String>,
@@ -85,6 +87,9 @@ impl Settings {
         let napcat_api_base_url =
             string_or_default(&env_map, "NAPCAT_API_BASE_URL", "http://127.0.0.1:3001");
         let napcat_access_token = optional_trimmed(&env_map, "NAPCAT_ACCESS_TOKEN");
+        let wechatpadpro_base_url = optional_trimmed(&env_map, "WECHATPADPRO_BASE_URL")
+            .unwrap_or_else(|| "http://127.0.0.1:38849".to_string());
+        let wechatpadpro_account_key = optional_trimmed(&env_map, "WECHATPADPRO_ACCOUNT_KEY");
         let platform_qq_account_id = optional_trimmed(&env_map, "PLATFORM_QQ_ACCOUNT_ID");
         let platform_qq_bot_id = optional_trimmed(&env_map, "PLATFORM_QQ_BOT_ID");
         let platform_wechatpadpro_account_id =
@@ -139,6 +144,8 @@ impl Settings {
             bifrost_upstream_provider_type,
             napcat_api_base_url,
             napcat_access_token,
+            wechatpadpro_base_url,
+            wechatpadpro_account_key,
             platform_qq_account_id,
             platform_qq_bot_id,
             platform_wechatpadpro_account_id,

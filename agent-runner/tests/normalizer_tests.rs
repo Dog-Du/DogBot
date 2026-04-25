@@ -1,6 +1,6 @@
 use agent_runner::normalizer::normalize_agent_output;
 use agent_runner::pipeline::{SystemPromptContext, TurnPromptContext};
-use agent_runner::protocol::OutboundAction;
+use agent_runner::protocol::{AssetSource, MessagePart, OutboundAction};
 
 #[test]
 fn plain_text_agent_output_becomes_single_text_message() {
@@ -62,6 +62,25 @@ fn normalizer_ignores_invalid_action_blocks_and_accepts_single_object_blocks() {
         &plan.actions[0],
         OutboundAction::ReactionAdd(action)
             if action.target_message_id == "msg-11" && action.emoji == "🔥"
+    ));
+}
+
+#[test]
+fn media_action_block_becomes_structured_workspace_image_message() {
+    let output = r#"done
+```dogbot-action
+{"type":"send_image","source_type":"workspace_path","source_value":"/workspace/outbox/done.png","caption_text":"caption"}
+```"#;
+
+    let plan = normalize_agent_output(output).unwrap();
+    assert_eq!(plan.messages.len(), 2);
+    assert!(matches!(
+        &plan.messages[1].parts[..],
+        [
+            MessagePart::Image { asset },
+            MessagePart::Text { text }
+        ] if matches!(&asset.source, AssetSource::WorkspacePath(path) if path == "/workspace/outbox/done.png")
+            && text == "caption"
     ));
 }
 

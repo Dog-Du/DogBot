@@ -2,12 +2,9 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, params};
-use serde_json::{Value, json};
+use serde_json::json;
 
-use crate::{
-    inbound_models::InboundMessage,
-    protocol::{AssetRef, AssetSource, CanonicalEvent, CanonicalMessage, EventKind, MessagePart},
-};
+use crate::protocol::{AssetRef, AssetSource, CanonicalEvent, CanonicalMessage, EventKind, MessagePart};
 
 const EXPECTED_EVENT_STORE_COLUMNS: &[&str] = &[
     "event_id",
@@ -125,11 +122,6 @@ impl HistoryStore {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
             Err(err) => Err(err),
         }
-    }
-
-    pub fn insert_inbound_message(&self, inbound: &InboundMessage) -> rusqlite::Result<()> {
-        let event = canonical_event_from_inbound_message(inbound);
-        self.insert_canonical_event(&event)
     }
 
     pub fn insert_canonical_event(&self, event: &CanonicalEvent) -> rusqlite::Result<()> {
@@ -573,40 +565,6 @@ fn part_row_values(
     }
 }
 
-fn canonical_event_from_inbound_message(inbound: &InboundMessage) -> CanonicalEvent {
-    let raw_segments = parse_raw_segments_json(&inbound.raw_segments_json);
-    let parts = build_message_parts(inbound, &raw_segments);
-    let message = CanonicalMessage {
-        message_id: inbound.message_id.clone(),
-        reply_to: inbound.reply_to_message_id.clone(),
-        parts,
-        mentions: inbound.mentions.clone(),
-        native_metadata: json!({
-            "is_group": inbound.is_group,
-            "is_private": inbound.is_private,
-        }),
-    };
-
-    CanonicalEvent {
-        platform: inbound.platform.clone(),
-        platform_account: inbound.platform_account.clone(),
-        conversation: inbound.conversation_id.clone(),
-        actor: inbound.actor_id.clone(),
-        event_id: event_id_for_message(&inbound.message_id),
-        timestamp_epoch_secs: inbound.timestamp_epoch_secs,
-        kind: EventKind::Message { message },
-        raw_native_payload: json!({
-            "raw_segments": raw_segments,
-            "platform_account": inbound.platform_account.clone(),
-            "normalized_text": inbound.normalized_text.clone(),
-            "mentions": inbound.mentions.clone(),
-            "reply_to_message_id": inbound.reply_to_message_id.clone(),
-            "conversation_id": inbound.conversation_id.clone(),
-            "actor_id": inbound.actor_id.clone(),
-        }),
-    }
-}
-
 fn build_text_event_for_test(
     message_id: &str,
     conversation_id: &str,
@@ -651,152 +609,6 @@ fn storage_plain_text(message: &CanonicalMessage) -> String {
         .join("")
 }
 
-fn build_message_parts(inbound: &InboundMessage, raw_segments: &Value) -> Vec<MessagePart> {
-    let mut parts = Vec::new();
-    let mut mention_index = 0usize;
-
-    if let Some(segments) = raw_segments.as_array() {
-        for (ordinal, segment) in segments.iter().enumerate() {
-            if let Some(part) = message_part_from_segment(
-                &inbound.platform,
-                inbound,
-                segment,
-                ordinal,
-                &mut mention_index,
-            ) {
-                parts.push(part);
-            }
-        }
-    }
-
-    while let Some(actor_id) = inbound.mentions.get(mention_index) {
-        parts.push(MessagePart::Mention {
-            display: infer_mention_display_from_actor(actor_id),
-            actor_id: actor_id.clone(),
-        });
-        mention_index += 1;
-    }
-
-    if parts.is_empty() && !inbound.normalized_text.is_empty() {
-        parts.push(MessagePart::Text {
-            text: inbound.normalized_text.clone(),
-        });
-    }
-
-    parts
-}
-
-fn message_part_from_segment(
-    platform: &str,
-    inbound: &InboundMessage,
-    segment: &Value,
-    ordinal: usize,
-    mention_index: &mut usize,
-) -> Option<MessagePart> {
-    let segment_type = segment_type(segment)?;
-    match segment_type {
-        "text" => segment_text(segment).map(|text| MessagePart::Text {
-            text: text.to_string(),
-        }),
-        "at" | "mention" => {
-            let actor_id = inbound
-                .mentions
-                .get(*mention_index)
-                .cloned()
-                .or_else(|| infer_mention_actor_id(platform, segment))?;
-            *mention_index += 1;
-            Some(MessagePart::Mention {
-                display: infer_mention_display(segment, &actor_id),
-                actor_id,
-            })
-        }
-        "image" | "file" | "record" | "voice" | "video" | "sticker" | "face" => {
-            asset_from_segment(segment, &inbound.message_id, ordinal).map(
-                |asset| match segment_type {
-                    "image" => MessagePart::Image { asset },
-                    "file" => MessagePart::File { asset },
-                    "record" | "voice" => MessagePart::Voice { asset },
-                    "video" => MessagePart::Video { asset },
-                    _ => MessagePart::Sticker { asset },
-                },
-            )
-        }
-        "reply" => inbound
-            .reply_to_message_id
-            .as_deref()
-            .map(|target_message_id| MessagePart::Quote {
-                target_message_id: target_message_id.to_string(),
-                excerpt: String::new(),
-            }),
-        _ => None,
-    }
-}
-
-fn asset_from_segment(segment: &Value, message_id: &str, ordinal: usize) -> Option<AssetRef> {
-    let (source, source_value) =
-        if let Some(path) = segment_string(segment, &["path", "local_path"]) {
-            (
-                AssetSource::WorkspacePath(path.to_string()),
-                path.to_string(),
-            )
-        } else if let Some(url) = segment_string(segment, &["url"]) {
-            (AssetSource::ExternalUrl(url.to_string()), url.to_string())
-        } else if let Some(handle) = segment_string(segment, &["file", "file_id", "id"]) {
-            (
-                AssetSource::PlatformNativeHandle(handle.to_string()),
-                handle.to_string(),
-            )
-        } else {
-            return None;
-        };
-
-    let kind = segment_type(segment)?.to_string();
-    Some(AssetRef {
-        asset_id: format!("asset::{message_id}::{ordinal}"),
-        kind: normalize_asset_kind(&kind).to_string(),
-        mime: infer_mime_type(&kind, &source_value),
-        size_bytes: 0,
-        source,
-    })
-}
-
-fn normalize_asset_kind(kind: &str) -> &str {
-    match kind {
-        "record" => "voice",
-        "face" => "sticker",
-        other => other,
-    }
-}
-
-fn infer_mime_type(kind: &str, source_value: &str) -> String {
-    if let Some(ext) = source_value.rsplit('.').next() {
-        let lower = ext.to_ascii_lowercase();
-        let mapped = match lower.as_str() {
-            "png" => Some("image/png"),
-            "jpg" | "jpeg" => Some("image/jpeg"),
-            "gif" => Some("image/gif"),
-            "webp" => Some("image/webp"),
-            "mp4" => Some("video/mp4"),
-            "mp3" => Some("audio/mpeg"),
-            "wav" => Some("audio/wav"),
-            "ogg" => Some("audio/ogg"),
-            "pdf" => Some("application/pdf"),
-            _ => None,
-        };
-        if let Some(mime) = mapped {
-            return mime.to_string();
-        }
-    }
-
-    match normalize_asset_kind(kind) {
-        "image" => "image/*".to_string(),
-        "voice" => "audio/*".to_string(),
-        "video" => "video/*".to_string(),
-        "sticker" => "application/x-sticker".to_string(),
-        _ => "application/octet-stream".to_string(),
-    }
-}
-
 fn asset_source_columns(source: &AssetSource) -> (&'static str, &str) {
     match source {
         AssetSource::WorkspacePath(value) => ("workspace_path", value),
@@ -805,75 +617,6 @@ fn asset_source_columns(source: &AssetSource) -> (&'static str, &str) {
         AssetSource::PlatformNativeHandle(value) => ("platform_native_handle", value),
         AssetSource::BridgeHandle(value) => ("bridge_handle", value),
     }
-}
-
-fn parse_raw_segments_json(raw_segments_json: &str) -> Value {
-    serde_json::from_str(raw_segments_json)
-        .unwrap_or_else(|_| Value::String(raw_segments_json.to_string()))
-}
-
-fn segment_type(segment: &Value) -> Option<&str> {
-    segment
-        .get("type")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-}
-
-fn segment_text(segment: &Value) -> Option<&str> {
-    segment_string(segment, &["text"])
-}
-
-fn segment_string<'a>(segment: &'a Value, keys: &[&str]) -> Option<&'a str> {
-    for key in keys {
-        if let Some(value) = segment
-            .get("data")
-            .and_then(|data| data.get(*key))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            return Some(value);
-        }
-
-        if let Some(value) = segment
-            .get(*key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            return Some(value);
-        }
-    }
-
-    None
-}
-
-fn infer_mention_actor_id(platform: &str, segment: &Value) -> Option<String> {
-    let raw_id = segment_string(segment, &["qq", "wxid", "user_id", "actor_id"])?;
-    if raw_id.contains(':') {
-        return Some(raw_id.to_string());
-    }
-
-    match platform {
-        "qq" => Some(format!("qq:bot_uin:{raw_id}")),
-        "wechatpadpro" => Some(format!("wechatpadpro:user:{raw_id}")),
-        _ => Some(raw_id.to_string()),
-    }
-}
-
-fn infer_mention_display(segment: &Value, actor_id: &str) -> String {
-    if let Some(display) = segment_string(segment, &["display", "name"]) {
-        return display.to_string();
-    }
-
-    let suffix = actor_id.rsplit(':').next().unwrap_or(actor_id);
-    format!("@{suffix}")
-}
-
-fn infer_mention_display_from_actor(actor_id: &str) -> String {
-    let suffix = actor_id.rsplit(':').next().unwrap_or(actor_id);
-    format!("@{suffix}")
 }
 
 fn initialize_history_schema(conn: &Connection) -> rusqlite::Result<()> {

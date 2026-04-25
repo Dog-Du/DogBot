@@ -1,6 +1,211 @@
-use serde_json::Value;
+use async_trait::async_trait;
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use serde_json::{Value, json};
 
-use crate::protocol::{CanonicalEvent, CanonicalMessage, EventKind, MessagePart, OutboundMessage};
+use crate::{
+    config::Settings,
+    dispatch::{CapabilityProfile, dispatch_plan},
+    models::{ErrorResponse, MessageResponse},
+    platforms::{
+        DeliveryContext, IngressRoute, PlatformAdapter,
+        common::{normalize_actor_id, string_value},
+    },
+    protocol::{AssetRef, CanonicalEvent, CanonicalMessage, EventKind, MessagePart, OutboundMessage, OutboundPlan},
+};
+
+const INGRESS_ROUTES: &[IngressRoute] = &[IngressRoute {
+    path: "/v1/platforms/qq/napcat/ws",
+    allow_head: false,
+}];
+
+pub struct QqPlatform {
+    client: reqwest::Client,
+    base_url: String,
+    platform_account: String,
+}
+
+impl QqPlatform {
+    pub fn from_settings(settings: &Settings) -> Result<Self, ErrorResponse> {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        if let Some(token) = settings.napcat_access_token.as_deref() {
+            let value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| {
+                internal_error("invalid NAPCAT_ACCESS_TOKEN header value")
+            })?;
+            headers.insert(AUTHORIZATION, value);
+        }
+
+        let client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|err| internal_error(&format!("failed to build NapCat client: {err}")))?;
+
+        let platform_account = settings
+            .platform_qq_account_id
+            .clone()
+            .or_else(|| {
+                settings
+                    .platform_qq_bot_id
+                    .as_ref()
+                    .map(|bot_id| format!("qq:bot_uin:{bot_id}"))
+            })
+            .unwrap_or_else(|| "qq:bot_uin:123".to_string());
+
+        Ok(Self {
+            client,
+            base_url: settings.napcat_api_base_url.trim_end_matches('/').to_string(),
+            platform_account,
+        })
+    }
+
+    async fn send_encoded_message(
+        &self,
+        conversation_id: &str,
+        message: &str,
+    ) -> Result<MessageResponse, ErrorResponse> {
+        let Some((_, scope, target_id)) = parse_conversation_id(conversation_id) else {
+            return Err(internal_error("invalid conversation_id in session store"));
+        };
+        let numeric_target_id = target_id.parse::<i64>().ok();
+
+        let (path, payload) = match scope {
+            "private" | "FriendMessage" => (
+                "/send_private_msg",
+                json!({
+                    "user_id": numeric_target_id.unwrap_or_default(),
+                    "message": message,
+                    "auto_escape": false,
+                }),
+            ),
+            "group" | "GroupMessage" => (
+                "/send_group_msg",
+                json!({
+                    "group_id": numeric_target_id.unwrap_or_default(),
+                    "message": message,
+                    "auto_escape": false,
+                }),
+            ),
+            _ => {
+                return Err(ErrorResponse {
+                    status: "error".into(),
+                    error_code: "unsupported_platform".into(),
+                    message: format!("unsupported QQ conversation scope: {conversation_id}"),
+                    timed_out: false,
+                });
+            }
+        };
+
+        let response = self
+            .client
+            .post(format!("{}{}", self.base_url, path))
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| ErrorResponse {
+                status: "error".into(),
+                error_code: "delivery_unavailable".into(),
+                message: format!("failed to reach NapCat API: {err}"),
+                timed_out: false,
+            })?;
+
+        let status = response.status();
+        let body: Value = response.json().await.map_err(|err| ErrorResponse {
+            status: "error".into(),
+            error_code: "delivery_invalid_response".into(),
+            message: format!("NapCat API returned invalid JSON: {err}"),
+            timed_out: false,
+        })?;
+
+        if !status.is_success() {
+            return Err(ErrorResponse {
+                status: "error".into(),
+                error_code: "delivery_failed".into(),
+                message: format!("NapCat API returned {status}: {body}"),
+                timed_out: false,
+            });
+        }
+
+        Ok(MessageResponse {
+            status: "ok".into(),
+            message_id: body
+                .get("data")
+                .and_then(|data| data.get("message_id"))
+                .and_then(string_value),
+        })
+    }
+}
+
+#[async_trait]
+impl PlatformAdapter for QqPlatform {
+    fn platform_id(&self) -> &'static str {
+        "qq"
+    }
+
+    fn ingress_routes(&self) -> &'static [IngressRoute] {
+        INGRESS_ROUTES
+    }
+
+    fn decode_event(&self, payload: &Value) -> Option<CanonicalEvent> {
+        decode_napcat_event(payload, &self.platform_account)
+    }
+
+    fn capabilities(&self) -> CapabilityProfile {
+        CapabilityProfile {
+            supports_reply: true,
+            supports_reaction: false,
+            supports_sticker: false,
+        }
+    }
+
+    async fn send_plan(
+        &self,
+        context: &DeliveryContext,
+        plan: &OutboundPlan,
+    ) -> Result<MessageResponse, ErrorResponse> {
+        dispatch_plan(self.platform_id(), &self.capabilities(), plan)
+            .await
+            .map_err(|message| ErrorResponse {
+                status: "error".into(),
+                error_code: "delivery_invalid_plan".into(),
+                message,
+                timed_out: false,
+            })?;
+
+        let mut last_response = MessageResponse {
+            status: "ok".into(),
+            message_id: None,
+        };
+
+        for (index, message) in plan.messages.iter().enumerate() {
+            let mention_user_id = if index == 0 {
+                context.target_actor_id.as_deref()
+            } else {
+                None
+            };
+            let message = if index == 0 && message.reply_to.is_none() {
+                let mut message = message.clone();
+                message.reply_to = context.reply_to_message_id.clone();
+                message
+            } else {
+                message.clone()
+            };
+            let encoded = compile_outbound_message(&message, mention_user_id).map_err(|err| {
+                ErrorResponse {
+                    status: "error".into(),
+                    error_code: "delivery_invalid_plan".into(),
+                    message: err,
+                    timed_out: false,
+                }
+            })?;
+
+            last_response = self
+                .send_encoded_message(&context.conversation_id, &encoded)
+                .await?;
+        }
+
+        Ok(last_response)
+    }
+}
 
 pub fn decode_napcat_event(payload: &Value, platform_account: &str) -> Option<CanonicalEvent> {
     if payload.get("post_type").and_then(Value::as_str) != Some("message") {
@@ -8,8 +213,8 @@ pub fn decode_napcat_event(payload: &Value, platform_account: &str) -> Option<Ca
     }
 
     let message_type = payload.get("message_type").and_then(Value::as_str)?;
-    let user_id = value_as_string(payload.get("user_id")?)?;
-    let message_id = value_as_string(payload.get("message_id")?)?;
+    let user_id = string_value(payload.get("user_id")?)?;
+    let message_id = string_value(payload.get("message_id")?)?;
     let timestamp_epoch_secs = payload
         .get("time")
         .and_then(Value::as_i64)
@@ -43,7 +248,7 @@ pub fn decode_napcat_event(payload: &Value, platform_account: &str) -> Option<Ca
         .collect::<Vec<_>>();
 
     let conversation = match message_type {
-        "group" => format!("qq:group:{}", value_as_string(payload.get("group_id")?)?),
+        "group" => format!("qq:group:{}", string_value(payload.get("group_id")?)?),
         "private" => format!("qq:private:{user_id}"),
         _ => return None,
     };
@@ -87,6 +292,28 @@ pub fn compile_outbound_message(
     for part in &message.parts {
         match part {
             MessagePart::Text { text } => output.push_str(&escape_cq_text(text)),
+            MessagePart::Mention { actor_id, .. } => {
+                let mention_target = normalize_qq_target_id(actor_id)?;
+                output.push_str(&format!("[CQ:at,qq={mention_target}]"));
+            }
+            MessagePart::Image { asset } => {
+                output.push_str(&format!("[CQ:image,file={}]", qq_asset_reference(asset)));
+            }
+            MessagePart::File { asset } => {
+                output.push_str(&format!("[CQ:file,file={}]", qq_asset_reference(asset)));
+            }
+            MessagePart::Voice { asset } => {
+                output.push_str(&format!("[CQ:record,file={}]", qq_asset_reference(asset)));
+            }
+            MessagePart::Video { asset } => {
+                output.push_str(&format!("[CQ:video,file={}]", qq_asset_reference(asset)));
+            }
+            MessagePart::Quote {
+                target_message_id, ..
+            } => {
+                let target = normalize_qq_target_id(target_message_id)?;
+                output.push_str(&format!("[CQ:reply,id={target}]"));
+            }
             unsupported => {
                 return Err(format!("unsupported outbound QQ part: {unsupported:?}"));
             }
@@ -94,6 +321,16 @@ pub fn compile_outbound_message(
     }
 
     Ok(output)
+}
+
+fn qq_asset_reference(asset: &AssetRef) -> String {
+    match &asset.source {
+        crate::protocol::AssetSource::WorkspacePath(path) => format!("file://{path}"),
+        crate::protocol::AssetSource::ManagedStore(value)
+        | crate::protocol::AssetSource::ExternalUrl(value)
+        | crate::protocol::AssetSource::PlatformNativeHandle(value)
+        | crate::protocol::AssetSource::BridgeHandle(value) => value.clone(),
+    }
 }
 
 fn parse_message_parts(
@@ -121,13 +358,13 @@ fn parse_message_parts(
                 }
             }
             "at" => {
-                let Some(qq) = data.get("qq").and_then(value_as_string) else {
+                let Some(qq) = data.get("qq").and_then(string_value) else {
                     continue;
                 };
                 let actor_id = if qq == bot_uin {
                     platform_account.to_string()
                 } else {
-                    format!("qq:user:{qq}")
+                    normalize_actor_id(&qq, "qq:user:")
                 };
                 parts.push(MessagePart::Mention {
                     actor_id,
@@ -166,7 +403,7 @@ fn parse_raw_message_parts(
         let actor_id = if qq == bot_uin {
             platform_account.to_string()
         } else {
-            format!("qq:user:{qq}")
+            normalize_actor_id(qq, "qq:user:")
         };
         parts.push(MessagePart::Mention {
             actor_id,
@@ -195,13 +432,21 @@ fn parse_reply_to(message: Option<&Value>, raw_message: &str) -> Option<String> 
             let Some(data) = segment.get("data") else {
                 continue;
             };
-            if let Some(reply_id) = data.get("id").and_then(value_as_string) {
+            if let Some(reply_id) = data.get("id").and_then(string_value) {
                 return Some(reply_id);
             }
         }
     }
 
     extract_reply_from_raw_message(raw_message)
+}
+
+fn parse_conversation_id(value: &str) -> Option<(&str, &str, &str)> {
+    let mut parts = value.splitn(3, ':');
+    let platform = parts.next()?;
+    let scope = parts.next()?;
+    let target_id = parts.next()?;
+    Some((platform, scope, target_id))
 }
 
 fn normalize_qq_target_id(value: &str) -> Result<&str, String> {
@@ -246,10 +491,11 @@ fn extract_reply_from_raw_message(raw_message: &str) -> Option<String> {
     Some(after[..end].to_string())
 }
 
-fn value_as_string(value: &Value) -> Option<String> {
-    match value {
-        Value::String(value) => Some(value.clone()),
-        Value::Number(value) => Some(value.to_string()),
-        _ => None,
+fn internal_error(message: &str) -> ErrorResponse {
+    ErrorResponse {
+        status: "error".into(),
+        error_code: "internal_error".into(),
+        message: message.into(),
+        timed_out: false,
     }
 }

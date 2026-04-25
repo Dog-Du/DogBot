@@ -63,6 +63,8 @@ fn test_settings() -> agent_runner::config::Settings {
         bifrost_upstream_provider_type: "anthropic".into(),
         napcat_api_base_url: "http://127.0.0.1:3001".into(),
         napcat_access_token: None,
+        wechatpadpro_base_url: "http://127.0.0.1:38849".into(),
+        wechatpadpro_account_key: None,
         platform_qq_account_id: None,
         platform_qq_bot_id: None,
         platform_wechatpadpro_account_id: Some("wechatpadpro:account:bot".into()),
