@@ -1,4 +1,7 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
@@ -11,13 +14,29 @@ use crate::{
         DeliveryContext, IngressRoute, PlatformAdapter,
         common::{integer_value, string_value},
     },
-    protocol::{CanonicalEvent, CanonicalMessage, EventKind, MessagePart, OutboundPlan},
+    protocol::{
+        AssetRef, AssetSource, CanonicalEvent, CanonicalMessage, EventKind, MessagePart,
+        OutboundPlan,
+    },
 };
 
 const INGRESS_ROUTES: &[IngressRoute] = &[IngressRoute {
     path: "/v1/platforms/wechatpadpro/events",
     allow_head: true,
 }];
+const SEND_TEXT_ENDPOINT: &str = "/message/SendTextMessage";
+const SEND_FILE_ENDPOINT: &str = "/api/v1/message/sendFile";
+
+enum OutboundRequest {
+    Text(Value),
+    File(Value),
+}
+
+#[derive(Clone)]
+struct MentionTarget {
+    actor_id: String,
+    display: Option<String>,
+}
 
 pub struct WeChatPadProPlatform {
     client: reqwest::Client,
@@ -32,17 +51,73 @@ impl WeChatPadProPlatform {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
             .build()
-            .map_err(|err| internal_error(&format!("failed to build WeChatPadPro client: {err}")))?;
+            .map_err(|err| {
+                internal_error(&format!("failed to build WeChatPadPro client: {err}"))
+            })?;
 
         Ok(Self {
             client,
-            base_url: settings.wechatpadpro_base_url.trim_end_matches('/').to_string(),
+            base_url: settings
+                .wechatpadpro_base_url
+                .trim_end_matches('/')
+                .to_string(),
             account_key: settings.wechatpadpro_account_key.clone(),
             platform_account: settings
                 .platform_wechatpadpro_account_id
                 .clone()
                 .unwrap_or_else(|| "wechatpadpro:account:bot".to_string()),
             mention_names: settings.platform_wechatpadpro_bot_mention_names.clone(),
+        })
+    }
+
+    async fn send_request(
+        &self,
+        account_key: &str,
+        request: OutboundRequest,
+    ) -> Result<MessageResponse, ErrorResponse> {
+        let (endpoint, operation, payload) = match request {
+            OutboundRequest::Text(payload) => (SEND_TEXT_ENDPOINT, "SendTextMessage", payload),
+            OutboundRequest::File(payload) => (SEND_FILE_ENDPOINT, "sendFile", payload),
+        };
+
+        let response = self
+            .client
+            .post(format!("{}{}", self.base_url, endpoint))
+            .query(&[("key", account_key)])
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| ErrorResponse {
+                status: "error".into(),
+                error_code: "delivery_unavailable".into(),
+                message: format!("failed to reach WeChatPadPro API: {err}"),
+                timed_out: false,
+            })?;
+
+        let status = response.status();
+        let body: Value = response.json().await.map_err(|err| ErrorResponse {
+            status: "error".into(),
+            error_code: "delivery_invalid_response".into(),
+            message: format!("WeChatPadPro {operation} returned non-JSON response: {err}"),
+            timed_out: false,
+        })?;
+
+        if !status.is_success() || body.get("Code").and_then(Value::as_i64) != Some(200) {
+            return Err(ErrorResponse {
+                status: "error".into(),
+                error_code: "delivery_failed".into(),
+                message: format!("WeChatPadPro {operation} failed: {body}"),
+                timed_out: false,
+            });
+        }
+
+        Ok(MessageResponse {
+            status: "ok".into(),
+            message_id: body
+                .get("Data")
+                .and_then(|data| data.get("MsgId"))
+                .and_then(string_value)
+                .or_else(|| body.get("MsgId").and_then(string_value)),
         })
     }
 }
@@ -58,7 +133,11 @@ impl PlatformAdapter for WeChatPadProPlatform {
     }
 
     fn decode_event(&self, payload: &Value) -> Option<CanonicalEvent> {
-        let mention_names = self.mention_names.iter().map(String::as_str).collect::<Vec<_>>();
+        let mention_names = self
+            .mention_names
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
         decode_webhook_event(payload, &self.platform_account, &mention_names)
     }
 
@@ -97,58 +176,17 @@ impl PlatformAdapter for WeChatPadProPlatform {
         };
 
         for message in &plan.messages {
-            let text = compile_message_text(message).map_err(|err| ErrorResponse {
-                status: "error".into(),
-                error_code: "delivery_invalid_plan".into(),
-                message: err,
-                timed_out: false,
-            })?;
-
-            let payload = if let Some(native_event) = context.native_event.as_ref() {
-                compile_text_reply(native_event, &text)
-            } else {
-                build_text_reply_from_context(context, &text)
-            };
-
-            let response = self
-                .client
-                .post(format!("{}/message/SendTextMessage", self.base_url))
-                .query(&[("key", account_key)])
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|err| ErrorResponse {
+            let requests =
+                compile_outbound_requests(message, context).map_err(|err| ErrorResponse {
                     status: "error".into(),
-                    error_code: "delivery_unavailable".into(),
-                    message: format!("failed to reach WeChatPadPro API: {err}"),
+                    error_code: "delivery_invalid_plan".into(),
+                    message: err,
                     timed_out: false,
                 })?;
 
-            let status = response.status();
-            let body: Value = response.json().await.map_err(|err| ErrorResponse {
-                status: "error".into(),
-                error_code: "delivery_invalid_response".into(),
-                message: format!("WeChatPadPro SendTextMessage returned non-JSON response: {err}"),
-                timed_out: false,
-            })?;
-
-            if !status.is_success() || body.get("Code").and_then(Value::as_i64) != Some(200) {
-                return Err(ErrorResponse {
-                    status: "error".into(),
-                    error_code: "delivery_failed".into(),
-                    message: format!("WeChatPadPro SendTextMessage failed: {body}"),
-                    timed_out: false,
-                });
+            for request in requests {
+                last_response = self.send_request(account_key, request).await?;
             }
-
-            last_response = MessageResponse {
-                status: "ok".into(),
-                message_id: body
-                    .get("Data")
-                    .and_then(|data| data.get("MsgId"))
-                    .and_then(string_value)
-                    .or_else(|| body.get("MsgId").and_then(string_value)),
-            };
         }
 
         Ok(last_response)
@@ -212,10 +250,122 @@ pub fn compile_text_reply(payload: &Value, text: &str) -> Value {
     let sender_id = extract_sender(&event);
     let sender_name = extract_sender_name(&event);
 
-    build_text_reply_payload(&target, text, is_group, Some(&sender_id), Some(&sender_name))
+    build_text_payload(
+        &target,
+        text,
+        is_group,
+        mention_targets_for_reply(Some(MentionTarget {
+            actor_id: sender_id,
+            display: Some(sender_name).filter(|value| !value.is_empty()),
+        })),
+    )
 }
 
-fn build_text_reply_from_context(context: &DeliveryContext, text: &str) -> Value {
+fn build_text_payload(
+    target: &str,
+    text: &str,
+    is_group: bool,
+    mentions: Vec<MentionTarget>,
+) -> Value {
+    let mut msg_item = json!({
+        "MsgType": 1,
+        "ToUserName": target,
+        "TextContent": text,
+    });
+
+    if is_group && !mentions.is_empty() {
+        let prefix = mentions
+            .iter()
+            .map(render_mention_text)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let text = text.trim();
+        let text = if text.is_empty() {
+            prefix
+        } else {
+            format!("{prefix} {text}")
+        };
+        msg_item["TextContent"] = Value::String(text);
+        msg_item["AtWxIDList"] = Value::Array(
+            mentions
+                .iter()
+                .map(|mention| Value::String(mention.actor_id.clone()))
+                .collect(),
+        );
+    }
+
+    json!({
+        "MsgItem": [msg_item],
+    })
+}
+
+fn compile_outbound_requests(
+    message: &crate::protocol::OutboundMessage,
+    context: &DeliveryContext,
+) -> Result<Vec<OutboundRequest>, String> {
+    let mut requests = Vec::new();
+    let mut text_parts = Vec::new();
+
+    for part in &message.parts {
+        match part {
+            MessagePart::Text { .. } | MessagePart::Mention { .. } => text_parts.push(part),
+            MessagePart::Image { asset } => {
+                flush_text_request(&mut requests, &text_parts, context)?;
+                text_parts.clear();
+                requests.push(OutboundRequest::File(compile_file_payload(
+                    context, "image", asset,
+                )?));
+            }
+            MessagePart::Video { asset } => {
+                flush_text_request(&mut requests, &text_parts, context)?;
+                text_parts.clear();
+                requests.push(OutboundRequest::File(compile_file_payload(
+                    context, "video", asset,
+                )?));
+            }
+            MessagePart::File { asset } => {
+                flush_text_request(&mut requests, &text_parts, context)?;
+                text_parts.clear();
+                requests.push(OutboundRequest::File(compile_file_payload(
+                    context, "file", asset,
+                )?));
+            }
+            unsupported => {
+                return Err(format!(
+                    "unsupported outbound WeChatPadPro part: {unsupported:?}"
+                ));
+            }
+        }
+    }
+
+    flush_text_request(&mut requests, &text_parts, context)?;
+
+    if requests.is_empty() {
+        return Err("empty outbound WeChatPadPro message".to_string());
+    }
+
+    Ok(requests)
+}
+
+fn flush_text_request(
+    requests: &mut Vec<OutboundRequest>,
+    text_parts: &[&MessagePart],
+    context: &DeliveryContext,
+) -> Result<(), String> {
+    if let Some(payload) = compile_text_payload_from_parts(text_parts, context)? {
+        requests.push(OutboundRequest::Text(payload));
+    }
+    Ok(())
+}
+
+fn compile_text_payload_from_parts(
+    parts: &[&MessagePart],
+    context: &DeliveryContext,
+) -> Result<Option<Value>, String> {
+    if parts.is_empty() {
+        return Ok(None);
+    }
+
     let is_group = context.conversation_id.split(':').nth(1) == Some("group");
     let target = context
         .conversation_id
@@ -224,65 +374,128 @@ fn build_text_reply_from_context(context: &DeliveryContext, text: &str) -> Value
         .unwrap_or_default()
         .to_string();
 
-    let sender_id = context
-        .target_actor_id
-        .as_deref()
-        .map(normalize_wechat_target_id);
-    let sender_name = context.target_display_name.as_deref();
+    let mut text = String::new();
+    let mut mentions = Vec::new();
 
-    build_text_reply_payload(&target, text, is_group, sender_id, sender_name)
-}
-
-fn build_text_reply_payload(
-    target: &str,
-    text: &str,
-    is_group: bool,
-    sender_id: Option<&str>,
-    sender_name: Option<&str>,
-) -> Value {
-    let mut msg_item = json!({
-        "MsgType": 1,
-        "ToUserName": target,
-        "TextContent": text,
-    });
-
-    if is_group {
-        if let Some(sender_name) = sender_name
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            msg_item["TextContent"] = Value::String(format!("@{sender_name} {text}"));
-        } else if let Some(sender_id) = sender_id.filter(|value| !value.is_empty()) {
-            msg_item["TextContent"] = Value::String(format!("@{sender_id} {text}"));
-        }
-        if let Some(sender_id) = sender_id.filter(|value| !value.is_empty()) {
-            msg_item["AtWxIDList"] = Value::Array(vec![Value::String(sender_id.to_string())]);
-        }
-    }
-
-    json!({
-        "MsgItem": [msg_item],
-    })
-}
-
-fn compile_message_text(message: &crate::protocol::OutboundMessage) -> Result<String, String> {
-    let mut output = String::new();
-    for part in &message.parts {
+    for part in parts {
         match part {
-            MessagePart::Text { text } => output.push_str(text),
-            MessagePart::Mention { display, .. } => output.push_str(display),
+            MessagePart::Text { text: part_text } => text.push_str(part_text),
+            MessagePart::Mention { actor_id, display } => {
+                let normalized_actor = normalize_wechat_target_id(actor_id).trim().to_string();
+                if normalized_actor.is_empty() {
+                    continue;
+                }
+                if !text.is_empty() && !ends_with_whitespace(&text) {
+                    text.push(' ');
+                }
+                let mention = MentionTarget {
+                    actor_id: normalized_actor.clone(),
+                    display: Some(display.clone()),
+                };
+                text.push_str(&render_mention_text(&mention));
+                text.push(' ');
+                mentions.push(mention);
+            }
             unsupported => {
                 return Err(format!(
-                    "unsupported outbound WeChatPadPro part: {unsupported:?}"
+                    "unsupported outbound WeChatPadPro part in text message: {unsupported:?}"
                 ));
             }
         }
     }
-    let text = output.trim().to_string();
+
+    let text = text.trim().to_string();
     if text.is_empty() {
-        return Err("empty outbound WeChatPadPro text message".to_string());
+        return Ok(None);
     }
-    Ok(text)
+
+    let mentions = if is_group && mentions.is_empty() {
+        default_group_mention_from_context(context)
+            .into_iter()
+            .collect()
+    } else {
+        mentions
+    };
+
+    Ok(Some(build_text_payload(&target, &text, is_group, mentions)))
+}
+
+fn compile_file_payload(
+    context: &DeliveryContext,
+    file_type: &str,
+    asset: &AssetRef,
+) -> Result<Value, String> {
+    let target = context
+        .conversation_id
+        .splitn(3, ':')
+        .nth(2)
+        .unwrap_or_default()
+        .to_string();
+    let file_path = workspace_asset_path(asset)?;
+    let file_name = Path::new(&file_path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("asset path is missing a file name: {file_path}"))?;
+
+    Ok(json!({
+        "toUserName": target,
+        "filePath": file_path,
+        "fileName": file_name,
+        "fileType": file_type,
+    }))
+}
+
+fn workspace_asset_path(asset: &AssetRef) -> Result<String, String> {
+    match &asset.source {
+        AssetSource::WorkspacePath(path) => Ok(path.clone()),
+        unsupported => Err(format!(
+            "unsupported outbound WeChatPadPro asset source: {unsupported:?}"
+        )),
+    }
+}
+
+fn mention_targets_for_reply(target: Option<MentionTarget>) -> Vec<MentionTarget> {
+    target
+        .filter(|target| !target.actor_id.trim().is_empty())
+        .into_iter()
+        .collect()
+}
+
+fn default_group_mention_from_context(context: &DeliveryContext) -> Option<MentionTarget> {
+    let actor_id = context
+        .target_actor_id
+        .as_deref()
+        .map(normalize_wechat_target_id)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+
+    let display = context.target_display_name.clone().or_else(|| {
+        context
+            .native_event
+            .as_ref()
+            .map(unwrap_event)
+            .map(|event| extract_sender_name(&event))
+            .filter(|value| !value.is_empty())
+    });
+
+    Some(MentionTarget { actor_id, display })
+}
+
+fn render_mention_text(target: &MentionTarget) -> String {
+    let display = target
+        .display
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(target.actor_id.as_str())
+        .trim_start_matches('@');
+    format!("@{display}")
+}
+
+fn ends_with_whitespace(value: &str) -> bool {
+    value.chars().last().is_some_and(char::is_whitespace)
 }
 
 fn unwrap_event(payload: &Value) -> Value {
