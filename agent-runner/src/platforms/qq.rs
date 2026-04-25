@@ -4,13 +4,16 @@ use serde_json::{Value, json};
 
 use crate::{
     config::Settings,
-    dispatch::{CapabilityProfile, dispatch_plan},
+    dispatch::dispatch_plan,
     models::{ErrorResponse, MessageResponse},
     platforms::{
         DeliveryContext, IngressRoute, PlatformAdapter,
         common::{normalize_actor_id, string_value},
     },
-    protocol::{AssetRef, CanonicalEvent, CanonicalMessage, EventKind, MessagePart, OutboundMessage, OutboundPlan},
+    protocol::{
+        AssetRef, CanonicalEvent, CanonicalMessage, EventKind, MessagePart, OutboundAction,
+        OutboundMessage, OutboundPlan,
+    },
 };
 
 const INGRESS_ROUTES: &[IngressRoute] = &[IngressRoute {
@@ -149,40 +152,37 @@ impl PlatformAdapter for QqPlatform {
         decode_napcat_event(payload, &self.platform_account)
     }
 
-    fn capabilities(&self) -> CapabilityProfile {
-        CapabilityProfile {
-            supports_reply: true,
-            supports_reaction: false,
-            supports_sticker: false,
-        }
-    }
-
     async fn send_plan(
         &self,
         context: &DeliveryContext,
         plan: &OutboundPlan,
     ) -> Result<MessageResponse, ErrorResponse> {
-        dispatch_plan(self.platform_id(), &self.capabilities(), plan)
-            .await
-            .map_err(|message| ErrorResponse {
-                status: "error".into(),
-                error_code: "delivery_invalid_plan".into(),
-                message,
-                timed_out: false,
-            })?;
+        dispatch_plan(plan).map_err(|message| ErrorResponse {
+            status: "error".into(),
+            error_code: "delivery_invalid_plan".into(),
+            message,
+            timed_out: false,
+        })?;
+
+        let prepended_messages = degrade_reaction_actions(&plan.actions);
+        let prepended_count = prepended_messages.len();
+        let delivery_messages = prepended_messages
+            .into_iter()
+            .chain(plan.messages.iter().cloned())
+            .collect::<Vec<_>>();
 
         let mut last_response = MessageResponse {
             status: "ok".into(),
             message_id: None,
         };
 
-        for (index, message) in plan.messages.iter().enumerate() {
-            let mention_user_id = if index == 0 {
+        for (index, message) in delivery_messages.iter().enumerate() {
+            let mention_user_id = if index == prepended_count {
                 context.target_actor_id.as_deref()
             } else {
                 None
             };
-            let message = if index == 0 && message.reply_to.is_none() {
+            let message = if index == prepended_count && message.reply_to.is_none() {
                 let mut message = message.clone();
                 message.reply_to = context.reply_to_message_id.clone();
                 message
@@ -308,14 +308,14 @@ pub fn compile_outbound_message(
             MessagePart::Video { asset } => {
                 output.push_str(&format!("[CQ:video,file={}]", qq_asset_reference(asset)));
             }
+            MessagePart::Sticker { asset } => {
+                output.push_str(&format!("[CQ:image,file={}]", qq_asset_reference(asset)));
+            }
             MessagePart::Quote {
                 target_message_id, ..
             } => {
                 let target = normalize_qq_target_id(target_message_id)?;
                 output.push_str(&format!("[CQ:reply,id={target}]"));
-            }
-            unsupported => {
-                return Err(format!("unsupported outbound QQ part: {unsupported:?}"));
             }
         }
     }
@@ -331,6 +331,36 @@ fn qq_asset_reference(asset: &AssetRef) -> String {
         | crate::protocol::AssetSource::PlatformNativeHandle(value)
         | crate::protocol::AssetSource::BridgeHandle(value) => value.clone(),
     }
+}
+
+fn degrade_reaction_actions(actions: &[OutboundAction]) -> Vec<OutboundMessage> {
+    let mut grouped = Vec::<(String, Vec<String>)>::new();
+
+    for action in actions {
+        match action {
+            OutboundAction::ReactionAdd(action) => {
+                if let Some((target_message_id, emojis)) = grouped.last_mut()
+                    && target_message_id == &action.target_message_id
+                {
+                    emojis.push(action.emoji.clone());
+                } else {
+                    grouped.push((action.target_message_id.clone(), vec![action.emoji.clone()]));
+                }
+            }
+            OutboundAction::ReactionRemove(_) => {}
+        }
+    }
+
+    grouped
+        .into_iter()
+        .map(|(target_message_id, emojis)| OutboundMessage {
+            parts: vec![MessagePart::Text {
+                text: emojis.join(" "),
+            }],
+            reply_to: Some(target_message_id),
+            delivery_policy: None,
+        })
+        .collect()
 }
 
 fn parse_message_parts(

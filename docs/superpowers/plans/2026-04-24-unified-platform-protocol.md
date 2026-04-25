@@ -8,6 +8,24 @@
 
 **Tech Stack:** Rust, Axum, Tokio, `rusqlite`, `reqwest`, WebSocket ingress for NapCat, WeChatPadPro webhook ingress, existing DogBot shell scripts and docs
 
+## 2026-04-25 Plan Corrections
+
+This plan was written before the platform degrade policy stabilized. The following corrections override any older step text below:
+
+- `OutboundAction` remains in the model
+- `ReactionAdd` and `ReactionRemove` both remain
+- `CapabilityProfile` is obsolete and must not be reintroduced
+- `agent-runner/src/dispatch.rs` is now only a shared validation layer
+- Platform adapters own media degradation and reaction fallback behavior
+- Unsupported `ReactionAdd` degrades to a prepended reply/quote emoji message
+- Unsupported `ReactionRemove` degrades to no-op
+- WeChatPadPro currently degrades:
+  - `voice -> file`
+  - `sticker -> image`
+- QQ currently degrades:
+  - `sticker -> image`
+  - unsupported `ReactionAdd -> prepended reply emoji message`
+
 ---
 
 ## File Structure
@@ -1160,6 +1178,8 @@ git commit -m "feat: add wechat canonical platform module"
 
 ### Task 6: Wire trigger, dispatch, and HTTP routes through the canonical pipeline
 
+> 2026-04-25 correction: the original CapabilityProfile-based dispatch design in this task is obsolete. Keep this task as historical implementation context only. The real dispatch contract is `dispatch_plan(&OutboundPlan) -> Result<(), String>`, and all capability degrade logic lives inside platform adapters.
+
 **Files:**
 - Create: `agent-runner/src/dispatch.rs`
 - Create: `agent-runner/tests/dispatch_tests.rs`
@@ -1178,40 +1198,34 @@ git commit -m "feat: add wechat canonical platform module"
 Create `agent-runner/tests/dispatch_tests.rs`:
 
 ```rust
-use agent_runner::dispatch::{dispatch_plan, CapabilityProfile};
+use agent_runner::dispatch::dispatch_plan;
 use agent_runner::protocol::{
     AssetRef, AssetSource, MessagePart, OutboundAction, OutboundMessage, OutboundPlan,
     ReactionAction,
 };
 
-#[tokio::test]
-async fn dispatcher_drops_best_effort_reaction_when_platform_does_not_support_it() {
+#[test]
+fn dispatcher_accepts_reaction_actions_without_global_capability_matrix() {
     let plan = OutboundPlan {
         messages: vec![OutboundMessage::text("done")],
-        actions: vec![OutboundAction::ReactionAdd(ReactionAction {
-            target_message_id: "msg-1".into(),
-            emoji: "👍".into(),
-        })],
+        actions: vec![
+            OutboundAction::ReactionAdd(ReactionAction {
+                target_message_id: "msg-1".into(),
+                emoji: "👍".into(),
+            }),
+            OutboundAction::ReactionRemove(ReactionAction {
+                target_message_id: "msg-1".into(),
+                emoji: "👍".into(),
+            }),
+        ],
         delivery_report_policy: None,
     };
 
-    let result = dispatch_plan(
-        "wechatpadpro",
-        &CapabilityProfile {
-            supports_reply: true,
-            supports_reaction: false,
-            supports_sticker: false,
-        },
-        &plan,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(result.degraded_actions, vec!["reaction_add".to_string()]);
+    dispatch_plan(&plan).unwrap();
 }
 
-#[tokio::test]
-async fn dispatcher_rejects_workspace_escape_asset_paths() {
+#[test]
+fn dispatcher_rejects_workspace_escape_asset_paths() {
     let plan = OutboundPlan {
         messages: vec![OutboundMessage {
             parts: vec![MessagePart::Image {
@@ -1230,17 +1244,7 @@ async fn dispatcher_rejects_workspace_escape_asset_paths() {
         delivery_report_policy: None,
     };
 
-    let error = dispatch_plan(
-        "qq",
-        &CapabilityProfile {
-            supports_reply: true,
-            supports_reaction: true,
-            supports_sticker: true,
-        },
-        &plan,
-    )
-    .await
-    .unwrap_err();
+    let error = dispatch_plan(&plan).unwrap_err();
 
     assert!(error.contains("/workspace"));
 }
@@ -1310,49 +1314,29 @@ Expected: FAIL because the dispatch module and platform routes do not exist yet.
 Create `agent-runner/src/dispatch.rs`:
 
 ```rust
-use crate::protocol::OutboundPlan;
+use crate::protocol::{AssetSource, MessagePart, OutboundPlan};
 
-#[derive(Debug, Clone)]
-pub struct CapabilityProfile {
-    pub supports_reply: bool,
-    pub supports_reaction: bool,
-    pub supports_sticker: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DispatchResult {
-    pub degraded_actions: Vec<String>,
-}
-
-pub async fn dispatch_plan(
-    _platform: &str,
-    capabilities: &CapabilityProfile,
-    plan: &OutboundPlan,
-) -> Result<DispatchResult, String> {
+pub fn dispatch_plan(plan: &OutboundPlan) -> Result<(), String> {
     for message in &plan.messages {
         for part in &message.parts {
-            if let crate::protocol::MessagePart::Image { asset }
-            | crate::protocol::MessagePart::File { asset }
-            | crate::protocol::MessagePart::Voice { asset }
-            | crate::protocol::MessagePart::Video { asset }
-            | crate::protocol::MessagePart::Sticker { asset } = part
-            {
-                if let crate::protocol::AssetSource::WorkspacePath(path) = &asset.source {
-                    if !path.starts_with("/workspace/") {
-                        return Err(format!(
-                            "asset path must stay under /workspace: {path}"
-                        ));
-                    }
+            let asset = match part {
+                MessagePart::Image { asset }
+                | MessagePart::File { asset }
+                | MessagePart::Voice { asset }
+                | MessagePart::Video { asset }
+                | MessagePart::Sticker { asset } => asset,
+                _ => continue,
+            };
+
+            if let AssetSource::WorkspacePath(path) = &asset.source {
+                if !path.starts_with("/workspace/") {
+                    return Err(format!("asset path must stay under /workspace: {path}"));
                 }
             }
         }
     }
 
-    let mut degraded_actions = Vec::new();
-    if !capabilities.supports_reaction && !plan.actions.is_empty() {
-        degraded_actions.push("reaction_add".to_string());
-    }
-    Ok(DispatchResult { degraded_actions })
+    Ok(())
 }
 ```
 

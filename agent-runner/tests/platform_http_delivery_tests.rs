@@ -443,7 +443,7 @@ async fn wechat_ingress_video_and_file_actions_use_send_file_endpoint() {
 }
 
 #[tokio::test]
-async fn wechat_ingress_rejects_unsupported_voice_action() {
+async fn wechat_ingress_voice_action_degrades_to_file_delivery() {
     let capture = Capture::default();
     let base_url = spawn_mock_server(
         capture.clone(),
@@ -481,6 +481,158 @@ async fn wechat_ingress_rejects_unsupported_voice_action() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = capture.all();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0, "/api/v1/message/sendFile?key=test-key");
+    assert_eq!(requests[0].1["filePath"], "/workspace/outbox/note.mp3");
+    assert_eq!(requests[0].1["fileName"], "note.mp3");
+    assert_eq!(requests[0].1["fileType"], "file");
+}
+
+#[tokio::test]
+async fn wechat_ingress_sticker_action_degrades_to_image_delivery() {
+    let capture = Capture::default();
+    let base_url = spawn_mock_server(
+        capture.clone(),
+        json!({"Code": 200, "Data": {"MsgId": "wx-out-6"}}),
+    )
+    .await;
+    let mut settings = test_settings();
+    settings.wechatpadpro_base_url = base_url;
+    settings.wechatpadpro_account_key = Some("test-key".into());
+
+    let runner = FixedOutputRunner {
+        stdout: r#"```dogbot-action
+{"type":"send_sticker","source_type":"workspace_path","source_value":"/workspace/outbox/sticker.webp"}
+```"#,
+    };
+    let app = build_test_app_with_settings(Arc::new(runner), settings);
+    let payload = json!({
+        "message": {
+            "msgId": "wx-14",
+            "senderWxid": "wxid_user_4",
+            "content": "发表情",
+            "msgType": 1
+        }
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/platforms/wechatpadpro/events")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = capture.all();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0, "/api/v1/message/sendFile?key=test-key");
+    assert_eq!(requests[0].1["filePath"], "/workspace/outbox/sticker.webp");
+    assert_eq!(requests[0].1["fileName"], "sticker.webp");
+    assert_eq!(requests[0].1["fileType"], "image");
+}
+
+#[tokio::test]
+async fn qq_ingress_reaction_add_degrades_to_prepended_reply_message() {
+    let capture = Capture::default();
+    let base_url = spawn_mock_server(
+        capture.clone(),
+        json!({"status": "ok", "data": {"message_id": 92}}),
+    )
+    .await;
+    let mut settings = test_settings();
+    settings.napcat_api_base_url = base_url;
+
+    let runner = FixedOutputRunner {
+        stdout: r#"收到
+```dogbot-action
+{"actions":[
+  {"type":"reaction_add","target_message_id":"99","emoji":"👍"},
+  {"type":"reaction_add","target_message_id":"99","emoji":"😂"}
+]}
+```"#,
+    };
+    let app = build_test_app_with_settings(Arc::new(runner), settings);
+    let payload = json!({
+        "time": 1_710_000_000,
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 5566,
+        "user_id": 42,
+        "message_id": 99,
+        "raw_message": "[CQ:at,qq=123] hello",
+        "message": [
+            {"type":"at","data":{"qq":"123"}},
+            {"type":"text","data":{"text":" hello"}}
+        ]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/platforms/qq/napcat/ws")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = capture.all();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].0, "/send_group_msg");
+    assert_eq!(requests[0].1["message"], "[CQ:reply,id=99]👍 😂");
+    assert_eq!(requests[1].0, "/send_group_msg");
+    assert_eq!(requests[1].1["message"], "[CQ:reply,id=99][CQ:at,qq=42] 收到");
+}
+
+#[tokio::test]
+async fn wechat_ingress_reaction_remove_is_noop_when_platform_lacks_reaction_support() {
+    let capture = Capture::default();
+    let base_url = spawn_mock_server(
+        capture.clone(),
+        json!({"Code": 200, "Data": {"MsgId": "wx-out-7"}}),
+    )
+    .await;
+    let mut settings = test_settings();
+    settings.wechatpadpro_base_url = base_url;
+    settings.wechatpadpro_account_key = Some("test-key".into());
+
+    let runner = FixedOutputRunner {
+        stdout: r#"```dogbot-action
+{"type":"reaction_remove","target_message_id":"wx-13","emoji":"👍"}
+```"#,
+    };
+    let app = build_test_app_with_settings(Arc::new(runner), settings);
+    let payload = json!({
+        "message": {
+            "msgId": "wx-15",
+            "senderWxid": "wxid_user_5",
+            "content": "撤销表情",
+            "msgType": 1
+        }
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/platforms/wechatpadpro/events")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
     assert!(capture.all().is_empty());
 }

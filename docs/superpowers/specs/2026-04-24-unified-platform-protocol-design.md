@@ -19,6 +19,26 @@ DogBot 现在的 QQ 和 WeChatPadPro 接入存在两个根本问题：
 
 这是一次性重构，不保留对历史版本、旧 schema、旧目录结构或旧部署方式的兼容层。
 
+## 2026-04-25 Corrections
+
+以下内容覆盖本 spec 中较早版本的过时描述：
+
+- `OutboundAction` 保留，不删除；当前仍保留 `reaction_add` 与 `reaction_remove`
+- 不再使用全局 `CapabilityProfile` 作为平台能力矩阵和裁决中心
+- `dispatch` 当前只承担通用 plan 校验，主要负责 `/workspace` 资源边界检查
+- 平台能力差异、媒体降级、reaction 降级都由各平台编译器自己处理
+- `reaction_add` 在平台不支持原生 reaction 时，降级为一条额外消息，并插到本次发送的最前面
+- `reaction_remove` 在平台不支持原生 reaction 时，降级为 no-op，不报错
+- WeChatPadPro 当前已落地：
+  - `image -> sendFile(image)`
+  - `video -> sendFile(video)`
+  - `file -> sendFile(file)`
+  - `voice -> sendFile(file)`
+  - `sticker -> sendFile(image)`
+- QQ 当前已落地：
+  - `sticker -> image`
+  - `reaction_add -> 首条 reply emoji 消息`
+
 ## Goals
 
 - 让 `agent-runner` 直接承担 QQ 和 WeChatPadPro 的平台接入与回发
@@ -356,53 +376,45 @@ session 模型改为：
 
 本轮不实现历史读取或 asset 读取 skill，但该资源边界仍然先落入设计约束中。
 
-## Capability Dispatch And Degrade Policy
+## Platform Compilation And Degrade Policy
 
-统一出站发送入口应变为：
+统一出站发送现在分成两层：
 
-`dispatch(OutboundPlan, CapabilityProfile)`
+1. `dispatch(plan)`
+2. `platform.send_plan(context, plan)`
 
-每个平台模块声明自己的能力矩阵，例如：
+其中：
 
-- 是否支持原生 `reply/quote`
-- 是否支持 `reaction`
-- 是否支持 `sticker`
-- 各媒体类型是支持路径、句柄、URL 还是必须上传
-- mention 是结构化 at，还是只能退化成文本样式
-
-dispatcher 执行三步：
-
-1. 验证 `OutboundPlan`
-2. 按平台能力编译 canonical 动作
-3. 按降级策略执行发送
+- `dispatch(plan)` 不再理解平台能力矩阵
+- `dispatch` 只做通用 plan 校验，例如 `/workspace` 路径边界
+- 每个平台模块自己负责 canonical -> native 编译
+- 每个平台模块自己负责能力不匹配时的降级
+- 平台只在真正错误时返回 error，而不是因为“能力不支持”就直接失败
 
 ### Validation
 
 统一验证至少包括：
 
-- `reply_to` 是否属于当前 conversation
-- reaction target 是否存在
 - asset 引用是否合法且可访问
-- 一个 plan 中是否包含互相冲突的动作
+- `/workspace` 资源路径是否越界
 
 ### Degrade Policy
 
-采用分级策略：
+降级策略已经收口为“平台内编译降级”，不是全局矩阵裁决：
 
-- 核心能力失败，整个 turn 失败
-- 非核心能力失败，允许跳过并记录 degraded result
-
-明确分级：
-
-- `required`
-  - `text`
-  - 显式请求的 `image/file/voice/video`
-  - 显式请求的 `reply`
-- `best_effort`
-  - `reaction`
-  - `sticker`
-  - mention 呈现样式差异
-  - 平台排版和表现层差异
+- `reaction_add`
+  - 平台支持原生 reaction：原生发送
+  - 平台不支持：降级为一条额外的 `reply/quote + emoji` 消息，并插到本次发送最前面
+- `reaction_remove`
+  - 平台支持原生 reaction：原生发送
+  - 平台不支持：no-op，不报错
+- `voice`
+  - WeChatPadPro 不支持原生语音消息时，降级为 `file`
+- `sticker`
+  - WeChatPadPro 不支持原生 sticker 时，降级为 `image`
+  - QQ 不支持原生 sticker 时，降级为 `image`
+- `reply`
+  - 平台可尽量保留 native reply；做不到时允许退化成普通消息，不作为全局 dispatch 失败条件
 
 ## Error Model
 
@@ -418,8 +430,8 @@ dispatcher 执行三步：
   - 平台 API 失败、上传失败、超时
   - 按动作粒度记录
 - `platform_capability_mismatch`
-  - 当前平台不支持某能力
-  - 按 `required / best_effort` 决定失败还是降级
+  - 此类情况默认由平台编译器内部降级处理
+  - 不再作为全局 dispatch 错误类型
 
 ## Platform-Specific Boundaries
 

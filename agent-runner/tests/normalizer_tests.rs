@@ -28,6 +28,22 @@ fn action_block_adds_structured_reaction() {
 }
 
 #[test]
+fn action_block_supports_reaction_remove() {
+    let output = r#"```dogbot-action
+{"actions":[{"type":"reaction_remove","target_message_id":"msg-10","emoji":"👀"}]}
+```"#;
+
+    let plan = normalize_agent_output(output).unwrap();
+    assert!(plan.messages.is_empty());
+    assert_eq!(plan.actions.len(), 1);
+    assert!(matches!(
+        &plan.actions[0],
+        OutboundAction::ReactionRemove(action)
+            if action.target_message_id == "msg-10" && action.emoji == "👀"
+    ));
+}
+
+#[test]
 fn prompt_context_keeps_platform_in_system_prompt_and_actor_in_turn_prompt() {
     let system = SystemPromptContext {
         platform: "qq".into(),

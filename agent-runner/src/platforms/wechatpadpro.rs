@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     config::Settings,
-    dispatch::{CapabilityProfile, dispatch_plan},
+    dispatch::dispatch_plan,
     models::{ErrorResponse, MessageResponse},
     platforms::{
         DeliveryContext, IngressRoute, PlatformAdapter,
@@ -16,7 +16,7 @@ use crate::{
     },
     protocol::{
         AssetRef, AssetSource, CanonicalEvent, CanonicalMessage, EventKind, MessagePart,
-        OutboundPlan,
+        OutboundAction, OutboundMessage, OutboundPlan,
     },
 };
 
@@ -141,27 +141,24 @@ impl PlatformAdapter for WeChatPadProPlatform {
         decode_webhook_event(payload, &self.platform_account, &mention_names)
     }
 
-    fn capabilities(&self) -> CapabilityProfile {
-        CapabilityProfile {
-            supports_reply: false,
-            supports_reaction: false,
-            supports_sticker: false,
-        }
-    }
-
     async fn send_plan(
         &self,
         context: &DeliveryContext,
         plan: &OutboundPlan,
     ) -> Result<MessageResponse, ErrorResponse> {
-        dispatch_plan(self.platform_id(), &self.capabilities(), plan)
-            .await
-            .map_err(|message| ErrorResponse {
-                status: "error".into(),
-                error_code: "delivery_invalid_plan".into(),
-                message,
-                timed_out: false,
-            })?;
+        dispatch_plan(plan).map_err(|message| ErrorResponse {
+            status: "error".into(),
+            error_code: "delivery_invalid_plan".into(),
+            message,
+            timed_out: false,
+        })?;
+
+        let prepended_messages = degrade_reaction_actions(&plan.actions);
+        let prepended_count = prepended_messages.len();
+        let delivery_messages = prepended_messages
+            .into_iter()
+            .chain(plan.messages.iter().cloned())
+            .collect::<Vec<_>>();
 
         let account_key = self.account_key.as_deref().ok_or_else(|| ErrorResponse {
             status: "error".into(),
@@ -175,9 +172,9 @@ impl PlatformAdapter for WeChatPadProPlatform {
             message_id: None,
         };
 
-        for message in &plan.messages {
-            let requests =
-                compile_outbound_requests(message, context).map_err(|err| ErrorResponse {
+        for (index, message) in delivery_messages.iter().enumerate() {
+            let requests = compile_outbound_requests(message, context, index == prepended_count)
+                .map_err(|err| ErrorResponse {
                     status: "error".into(),
                     error_code: "delivery_invalid_plan".into(),
                     message: err,
@@ -302,6 +299,7 @@ fn build_text_payload(
 fn compile_outbound_requests(
     message: &crate::protocol::OutboundMessage,
     context: &DeliveryContext,
+    apply_default_group_mention: bool,
 ) -> Result<Vec<OutboundRequest>, String> {
     let mut requests = Vec::new();
     let mut text_parts = Vec::new();
@@ -310,35 +308,75 @@ fn compile_outbound_requests(
         match part {
             MessagePart::Text { .. } | MessagePart::Mention { .. } => text_parts.push(part),
             MessagePart::Image { asset } => {
-                flush_text_request(&mut requests, &text_parts, context)?;
+                flush_text_request(
+                    &mut requests,
+                    &text_parts,
+                    context,
+                    apply_default_group_mention,
+                )?;
                 text_parts.clear();
                 requests.push(OutboundRequest::File(compile_file_payload(
                     context, "image", asset,
                 )?));
             }
             MessagePart::Video { asset } => {
-                flush_text_request(&mut requests, &text_parts, context)?;
+                flush_text_request(
+                    &mut requests,
+                    &text_parts,
+                    context,
+                    apply_default_group_mention,
+                )?;
                 text_parts.clear();
                 requests.push(OutboundRequest::File(compile_file_payload(
                     context, "video", asset,
                 )?));
             }
             MessagePart::File { asset } => {
-                flush_text_request(&mut requests, &text_parts, context)?;
+                flush_text_request(
+                    &mut requests,
+                    &text_parts,
+                    context,
+                    apply_default_group_mention,
+                )?;
                 text_parts.clear();
                 requests.push(OutboundRequest::File(compile_file_payload(
                     context, "file", asset,
                 )?));
             }
-            unsupported => {
-                return Err(format!(
-                    "unsupported outbound WeChatPadPro part: {unsupported:?}"
-                ));
+            MessagePart::Voice { asset } => {
+                flush_text_request(
+                    &mut requests,
+                    &text_parts,
+                    context,
+                    apply_default_group_mention,
+                )?;
+                text_parts.clear();
+                requests.push(OutboundRequest::File(compile_file_payload(
+                    context, "file", asset,
+                )?));
             }
+            MessagePart::Sticker { asset } => {
+                flush_text_request(
+                    &mut requests,
+                    &text_parts,
+                    context,
+                    apply_default_group_mention,
+                )?;
+                text_parts.clear();
+                requests.push(OutboundRequest::File(compile_file_payload(
+                    context, "image", asset,
+                )?));
+            }
+            MessagePart::Quote { .. } => {}
         }
     }
 
-    flush_text_request(&mut requests, &text_parts, context)?;
+    flush_text_request(
+        &mut requests,
+        &text_parts,
+        context,
+        apply_default_group_mention,
+    )?;
 
     if requests.is_empty() {
         return Err("empty outbound WeChatPadPro message".to_string());
@@ -351,8 +389,11 @@ fn flush_text_request(
     requests: &mut Vec<OutboundRequest>,
     text_parts: &[&MessagePart],
     context: &DeliveryContext,
+    apply_default_group_mention: bool,
 ) -> Result<(), String> {
-    if let Some(payload) = compile_text_payload_from_parts(text_parts, context)? {
+    if let Some(payload) =
+        compile_text_payload_from_parts(text_parts, context, apply_default_group_mention)?
+    {
         requests.push(OutboundRequest::Text(payload));
     }
     Ok(())
@@ -361,6 +402,7 @@ fn flush_text_request(
 fn compile_text_payload_from_parts(
     parts: &[&MessagePart],
     context: &DeliveryContext,
+    apply_default_group_mention: bool,
 ) -> Result<Option<Value>, String> {
     if parts.is_empty() {
         return Ok(None);
@@ -409,7 +451,7 @@ fn compile_text_payload_from_parts(
         return Ok(None);
     }
 
-    let mentions = if is_group && mentions.is_empty() {
+    let mentions = if apply_default_group_mention && is_group && mentions.is_empty() {
         default_group_mention_from_context(context)
             .into_iter()
             .collect()
@@ -453,6 +495,36 @@ fn workspace_asset_path(asset: &AssetRef) -> Result<String, String> {
             "unsupported outbound WeChatPadPro asset source: {unsupported:?}"
         )),
     }
+}
+
+fn degrade_reaction_actions(actions: &[OutboundAction]) -> Vec<OutboundMessage> {
+    let mut grouped = Vec::<(String, Vec<String>)>::new();
+
+    for action in actions {
+        match action {
+            OutboundAction::ReactionAdd(action) => {
+                if let Some((target_message_id, emojis)) = grouped.last_mut()
+                    && target_message_id == &action.target_message_id
+                {
+                    emojis.push(action.emoji.clone());
+                } else {
+                    grouped.push((action.target_message_id.clone(), vec![action.emoji.clone()]));
+                }
+            }
+            OutboundAction::ReactionRemove(_) => {}
+        }
+    }
+
+    grouped
+        .into_iter()
+        .map(|(target_message_id, emojis)| OutboundMessage {
+            parts: vec![MessagePart::Text {
+                text: emojis.join(" "),
+            }],
+            reply_to: Some(target_message_id),
+            delivery_policy: None,
+        })
+        .collect()
 }
 
 fn mention_targets_for_reply(target: Option<MentionTarget>) -> Vec<MentionTarget> {

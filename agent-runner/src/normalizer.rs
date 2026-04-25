@@ -79,7 +79,7 @@ fn append_action_items(
     items: Vec<ActionItem>,
 ) {
     for item in items {
-        if item.action_type == "reaction_add" {
+        if item.action_type == "reaction_add" || item.action_type == "reaction_remove" {
             let Some(target_message_id) = item.target_message_id.filter(|value| !value.is_empty())
             else {
                 continue;
@@ -88,10 +88,15 @@ fn append_action_items(
                 continue;
             };
 
-            actions.push(OutboundAction::ReactionAdd(ReactionAction {
+            let action = ReactionAction {
                 target_message_id,
                 emoji,
-            }));
+            };
+            actions.push(if item.action_type == "reaction_add" {
+                OutboundAction::ReactionAdd(action)
+            } else {
+                OutboundAction::ReactionRemove(action)
+            });
             continue;
         }
 

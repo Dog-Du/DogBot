@@ -9,7 +9,6 @@ use serde_json::{Value, json};
 
 use crate::{
     config::Settings,
-    dispatch::CapabilityProfile,
     models::{ErrorResponse, MessageResponse, RunResponse},
     protocol::{CanonicalEvent, OutboundPlan},
 };
@@ -41,7 +40,6 @@ pub trait PlatformAdapter: Send + Sync {
     }
 
     fn decode_event(&self, payload: &Value) -> Option<CanonicalEvent>;
-    fn capabilities(&self) -> CapabilityProfile;
 
     async fn send_plan(
         &self,
