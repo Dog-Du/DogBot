@@ -253,7 +253,6 @@ bifrost_dir="/state/bifrost"
 config_path="$bifrost_dir/config.json"
 log_path="$bifrost_dir/bifrost.log"
 prompt_root="/state/claude-prompt"
-project_root="/workspace"
 port="${BIFROST_PORT:-8080}"
 provider_name="${BIFROST_PROVIDER_NAME:-primary}"
 default_model="${BIFROST_MODEL:-primary/model-id}"
@@ -263,29 +262,6 @@ upstream_provider_type="${BIFROST_UPSTREAM_PROVIDER_TYPE:-openai}"
 upstream_api_key="${BIFROST_UPSTREAM_API_KEY:-replace-me}"
 
 mkdir -p "$bifrost_dir"
-
-ensure_link() {
-  local source_path="$1"
-  local target_path="$2"
-  local target_dir
-  target_dir="$(dirname "$target_path")"
-
-  if [[ ! -e "$source_path" ]]; then
-    return 0
-  fi
-
-  mkdir -p "$target_dir"
-
-  if [[ -e "$target_path" && ! -L "$target_path" ]]; then
-    return 0
-  fi
-
-  ln -sfn "$source_path" "$target_path"
-}
-
-ensure_link "$prompt_root/CLAUDE.md" "$project_root/CLAUDE.md"
-ensure_link "$prompt_root/persona.md" "$project_root/persona.md"
-ensure_link "$prompt_root/.claude" "$project_root/.claude"
 
 if [[ -z "${BIFROST_ENCRYPTION_KEY:-}" ]]; then
   export BIFROST_ENCRYPTION_KEY

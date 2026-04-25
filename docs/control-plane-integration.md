@@ -56,7 +56,7 @@
   - `asset_store`
   - `conversation_ingest_state`
 - `claude-prompt/`
-  - 仓库管理的静态 `CLAUDE.md`、`persona.md` 与 `.claude/skills`
+  - 仓库管理的静态 `CLAUDE.md`、`persona.md` 与 `skills/`
 
 建议路径：
 
@@ -215,7 +215,7 @@ bash scripts/tests/test_configure_wechatpadpro_webhook.sh
 ```bash
 test -f claude-prompt/CLAUDE.md
 test -f claude-prompt/persona.md
-test -f claude-prompt/.claude/skills/emit-memory-candidate/SKILL.md
+test -f claude-prompt/skills/reply-format/SKILL.md
 ```
 
 部署后，建议再确认运行时目录已经同步完成：
@@ -223,7 +223,7 @@ test -f claude-prompt/.claude/skills/emit-memory-candidate/SKILL.md
 ```bash
 test -f /srv/dogbot/runtime/agent-state/claude-prompt/CLAUDE.md
 test -f /srv/dogbot/runtime/agent-state/claude-prompt/persona.md
-test -f /srv/dogbot/runtime/agent-state/claude-prompt/.claude/skills/emit-memory-candidate/SKILL.md
+test -f /srv/dogbot/runtime/agent-state/claude-prompt/skills/reply-format/SKILL.md
 ```
 
 这一步的目标是确认：

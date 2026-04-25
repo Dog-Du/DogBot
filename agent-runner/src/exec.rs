@@ -247,7 +247,6 @@ fn build_claude_command(
         system_prompt.to_string(),
         "--add-dir".to_string(),
         "/workspace".to_string(),
-        "/state".to_string(),
         "/state/claude-prompt".to_string(),
     ];
 
@@ -314,7 +313,6 @@ mod tests {
                 "system".to_string(),
                 "--add-dir".to_string(),
                 "/workspace".to_string(),
-                "/state".to_string(),
                 "/state/claude-prompt".to_string(),
                 "--session-id".to_string(),
                 "uuid-1".to_string(),
@@ -336,7 +334,6 @@ mod tests {
                 "system".to_string(),
                 "--add-dir".to_string(),
                 "/workspace".to_string(),
-                "/state".to_string(),
                 "/state/claude-prompt".to_string(),
                 "--resume".to_string(),
                 "uuid-1".to_string(),

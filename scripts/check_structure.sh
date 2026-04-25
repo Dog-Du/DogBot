@@ -7,6 +7,7 @@ files=(
   "docker/claude-runner/entrypoint.sh"
   "claude-prompt/CLAUDE.md"
   "claude-prompt/persona.md"
+  "claude-prompt/skills/reply-format/SKILL.md"
   "compose/platform-stack.yml"
   "deploy/dogbot.env.example"
   "scripts/deploy_stack.sh"

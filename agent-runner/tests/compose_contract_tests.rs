@@ -90,10 +90,6 @@ fn claude_runner_entrypoint_execs_runtime_launch_script() {
     let helper_required = [
         "dogbot_write_claude_runner_runtime",
         "prompt_root=\"/state/claude-prompt\"",
-        "project_root=\"/workspace\"",
-        "ensure_link \"$prompt_root/CLAUDE.md\" \"$project_root/CLAUDE.md\"",
-        "ensure_link \"$prompt_root/persona.md\" \"$project_root/persona.md\"",
-        "ensure_link \"$prompt_root/.claude\" \"$project_root/.claude\"",
         "bifrost -host 127.0.0.1 -port \"$port\" -app-dir \"$bifrost_dir\"",
         "config.json",
         "default_model=\"${BIFROST_MODEL:-primary/model-id}\"",
@@ -111,5 +107,17 @@ fn claude_runner_entrypoint_execs_runtime_launch_script() {
     assert!(
         !common.contains("\"*\""),
         "generated runtime launch should not rely on wildcard model matching"
+    );
+    assert!(
+        !common.contains("ensure_link \"$prompt_root/CLAUDE.md\""),
+        "generated runtime launch should not project CLAUDE.md into /workspace"
+    );
+    assert!(
+        !common.contains("ensure_link \"$prompt_root/persona.md\""),
+        "generated runtime launch should not project persona.md into /workspace"
+    );
+    assert!(
+        !common.contains("ensure_link \"$prompt_root/.claude\""),
+        "generated runtime launch should not project .claude into /workspace"
     );
 }

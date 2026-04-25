@@ -20,7 +20,7 @@
 Claude prompt 内容当前也已经接入部署流程：
 
 - 部署前会把仓库中的 `claude-prompt/` 同步到外部 `DOGBOT_CLAUDE_PROMPT_ROOT`
-- `agent-runner` 运行时从该目录为 Claude 提供静态 `CLAUDE.md` 和 `.claude/skills`
+- `agent-runner` 运行时从该目录为 Claude 提供静态 `CLAUDE.md`、`persona.md` 和 `skills/`
 - 动态 scope / history / session 约束仍由 `agent-runner` 在每次运行时注入
 
 当前支持两条主要链路：

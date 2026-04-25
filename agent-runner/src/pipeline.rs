@@ -7,7 +7,16 @@ pub struct SystemPromptContext {
 impl SystemPromptContext {
     pub fn render(&self) -> String {
         format!(
-            "Current platform: {}\nCurrent platform account: {}",
+            concat!(
+                "Current platform: {}\n",
+                "Current platform account: {}\n\n",
+                "Before replying, read and follow /state/claude-prompt/CLAUDE.md.\n",
+                "Before composing any DogBot reply body or dogbot-action block, MUST read and follow /state/claude-prompt/skills/reply-format/SKILL.md.\n",
+                "Reply using plain text plus optional ```dogbot-action``` JSON blocks only.\n",
+                "Do not use Markdown in outbound social-platform messages.\n",
+                "Do not emit QQ, WeChat, or other platform-private syntax directly.\n",
+                "When sending media, only reference files that already exist under /workspace."
+            ),
             self.platform, self.platform_account
         )
     }

@@ -57,6 +57,12 @@ fn prompt_context_keeps_platform_in_system_prompt_and_actor_in_turn_prompt() {
     };
 
     assert!(system.render().contains("qq:bot_uin:123"));
+    assert!(system.render().contains("/state/claude-prompt/CLAUDE.md"));
+    assert!(
+        system
+            .render()
+            .contains("/state/claude-prompt/skills/reply-format/SKILL.md")
+    );
     assert!(turn.render().contains("qq:user:42"));
     assert!(!system.render().contains("qq:user:42"));
 }

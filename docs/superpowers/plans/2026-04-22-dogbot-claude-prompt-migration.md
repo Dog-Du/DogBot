@@ -1,5 +1,17 @@
 # DogBot Claude Prompt Migration Plan
 
+## 2026-04-26 Plan Corrections
+
+This migration plan predates the current prompt exposure model. The following corrections override older step text below:
+
+- `claude-prompt/skills/**` is now the source-of-truth skill directory
+- `.claude` is obsolete and must not be reintroduced
+- `claude-runner` no longer projects prompt files into `/workspace`
+- `agent-runner` now relies on:
+  - `--add-dir /state/claude-prompt`
+  - system prompt instructions that require reading `/state/claude-prompt/CLAUDE.md`
+  - the reply protocol skill at `/state/claude-prompt/skills/reply-format/SKILL.md`
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove DogBot's repository-managed content bootstrap pipeline and replace it with a lightweight Claude-native `claude-prompt/` source directory that deploys into the Claude runtime.

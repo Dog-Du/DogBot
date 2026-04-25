@@ -2,6 +2,17 @@
 
 Date: 2026-04-22
 
+## 2026-04-26 Corrections
+
+以下内容覆盖本 spec 中较早版本的过时描述：
+
+- 静态 skill 源目录现在是 `claude-prompt/skills/**`，不再使用 `claude-prompt/.claude/skills/**`
+- `claude-runner` 启动时不再把 `CLAUDE.md`、`persona.md` 或 `.claude` 投影到 `/workspace`
+- 当前运行方式是：
+  - Claude 通过 `--add-dir /state/claude-prompt` 发现静态 prompt 目录
+  - `agent-runner` 的 system prompt 明确要求先读 `/state/claude-prompt/CLAUDE.md`
+  - 涉及回复协议时，必须再读 `/state/claude-prompt/skills/reply-format/SKILL.md`
+
 ## Summary
 
 DogBot 当前的 `content/` + pack manifest + upstream sync 方案已经证明过重：

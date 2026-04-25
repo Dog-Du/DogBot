@@ -49,23 +49,18 @@ if ! grep -q 'prompt_root="/state/claude-prompt"' "$runtime_launch_dir/launch.sh
   exit 1
 fi
 
-if ! grep -q 'project_root="/workspace"' "$runtime_launch_dir/launch.sh"; then
-  echo "FAIL: generated claude-runner launch.sh must define the Claude project root" >&2
+if grep -q 'ensure_link "$prompt_root/CLAUDE.md"' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must not project CLAUDE.md into /workspace" >&2
   exit 1
 fi
 
-if ! grep -q 'ensure_link "$prompt_root/CLAUDE.md" "$project_root/CLAUDE.md"' "$runtime_launch_dir/launch.sh"; then
-  echo "FAIL: generated claude-runner launch.sh must project CLAUDE.md into /workspace" >&2
+if grep -q 'ensure_link "$prompt_root/persona.md"' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must not project persona.md into /workspace" >&2
   exit 1
 fi
 
-if ! grep -q 'ensure_link "$prompt_root/persona.md" "$project_root/persona.md"' "$runtime_launch_dir/launch.sh"; then
-  echo "FAIL: generated claude-runner launch.sh must project persona.md into /workspace" >&2
-  exit 1
-fi
-
-if ! grep -q 'ensure_link "$prompt_root/.claude" "$project_root/.claude"' "$runtime_launch_dir/launch.sh"; then
-  echo "FAIL: generated claude-runner launch.sh must project .claude into /workspace" >&2
+if grep -q 'ensure_link "$prompt_root/.claude"' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must not project .claude into /workspace" >&2
   exit 1
 fi
 

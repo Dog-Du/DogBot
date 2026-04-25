@@ -160,6 +160,17 @@ async fn run_endpoint_builds_prompt_envelope_for_runner() {
     assert_eq!(captured_request.prompt, "hello");
     assert!(validated.system_prompt.contains("qq"));
     assert!(validated.system_prompt.contains("qq:bot_uin:123"));
+    assert!(
+        validated
+            .system_prompt
+            .contains("/state/claude-prompt/CLAUDE.md")
+    );
+    assert!(
+        validated
+            .system_prompt
+            .contains("/state/claude-prompt/skills/reply-format/SKILL.md")
+    );
+    assert!(validated.system_prompt.contains("Do not use Markdown"));
     assert!(!validated.system_prompt.contains("qq:user:1"));
     assert!(validated.prompt.contains("qq:private:1"));
     assert!(validated.prompt.contains("qq:user:1"));

@@ -47,11 +47,11 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - 只放运行边界与最小长期指令
 - `claude-prompt/persona.md`
   - 放人格/语气源文件，由 `CLAUDE.md` 用 `@persona.md` 导入
-- `claude-prompt/.claude/skills/**`
+- `claude-prompt/skills/**`
   - 放仓库自带的轻量 skills
 - `deploy_stack.sh`
   - 部署时把仓库里的 `claude-prompt/` 同步到运行时 `DOGBOT_CLAUDE_PROMPT_ROOT`
-  - `claude-runner` 启动时会把 `CLAUDE.md`、`persona.md` 和 `.claude/` 投影到 `/workspace` 标准路径，确保 Claude Code 自动发现项目级 prompt
+  - `agent-runner` 运行 `claude` 时会通过 `--add-dir /state/claude-prompt` 暴露静态 prompt 目录
 - `claude-runner`
   - 显式关闭 Claude Code auto memory，只保留 DogBot 自己的可审计 memory 流
   - 容器内置 `Bifrost`，Claude Code 默认通过本地 `Anthropic` 入口走 `Bifrost -> agent-runner 内置上游代理 -> 真实模型源`
@@ -173,7 +173,7 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - `runner.db` 保存 Claude session 映射
   - `history.db` 保存 history ingest / retrieval 基础数据
   - `claude-prompt/` 承载仓库管理的静态 `CLAUDE.md` 与轻量 skills
-  - `claude-runner` 运行时会把 `claude-prompt/` 投影为 `/workspace` 下的 Claude Code 标准项目文件
+  - `claude-runner` 运行时会把 `/state/claude-prompt` 暴露给 Claude 作为 additional directory
 - [x] 触发识别与基础回复链路
   - QQ / WeChat 统一先走 `agent-runner` 平台入口
   - QQ: `/v1/platforms/qq/napcat/ws`

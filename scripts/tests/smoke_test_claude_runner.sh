@@ -118,8 +118,9 @@ if ! docker run "${run_args[@]}" --storage-opt size=50G "$image_name" >"$docker_
 fi
 
 docker exec "$container_name" claude --version >"$claude_version_log"
-docker exec "$container_name" sh -lc 'test -L /workspace/CLAUDE.md && test "$(readlink /workspace/CLAUDE.md)" = "/state/claude-prompt/CLAUDE.md"'
-docker exec "$container_name" sh -lc 'test -L /workspace/persona.md && test "$(readlink /workspace/persona.md)" = "/state/claude-prompt/persona.md"'
+docker exec "$container_name" sh -lc 'test ! -e /workspace/CLAUDE.md'
+docker exec "$container_name" sh -lc 'test ! -e /workspace/persona.md'
+docker exec "$container_name" sh -lc 'test ! -e /workspace/.claude'
 docker exec "$container_name" sh -lc "curl -fsS http://host.docker.internal:$upstream_port >/dev/null"
 docker exec "$container_name" sh -lc "curl -fsS https://example.com >/dev/null"
 
