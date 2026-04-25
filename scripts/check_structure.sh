@@ -27,6 +27,7 @@ files=(
   "scripts/tests/test_wechatpadpro_defaults.sh"
   "scripts/tests/test_start_agent_runner.sh"
   "scripts/tests/test_deploy_stack_platform_ingress.sh"
+  "scripts/tests/test_agent_runner_docker_e2e.sh"
 )
 
 executable_scripts=(
@@ -37,6 +38,7 @@ executable_scripts=(
   "scripts/prepare_napcat_login.sh"
   "scripts/configure_wechatpadpro_webhook.sh"
   "scripts/prepare_wechatpadpro_login.sh"
+  "scripts/tests/test_agent_runner_docker_e2e.sh"
 )
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -108,6 +110,10 @@ ensure_pattern "scripts/configure_napcat_ws.sh" "dogbot_resolve_uv_bin" || patte
 ensure_pattern "deploy/dogbot.env.example" "AGENT_RUNNER_BIND_ADDR" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "deploy/dogbot.env.example" "PLATFORM_QQ_ACCOUNT_ID" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "deploy/dogbot.env.example" "PLATFORM_WECHATPADPRO_ACCOUNT_ID" || pattern_errors=$((pattern_errors+1))
+if grep -q '^QQ_ADAPTER_QQ_BOT_ID=' "$repo_root/deploy/dogbot.env"; then
+  echo "Stale QQ_ADAPTER_QQ_BOT_ID found in deploy/dogbot.env" >&2
+  pattern_errors=$((pattern_errors+1))
+fi
 ensure_pattern "scripts/deploy_stack.sh" "docker compose --env-file" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/deploy_stack.sh" "dogbot_write_claude_runner_runtime" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/start_agent_runner.sh" "build --release --manifest-path" || pattern_errors=$((pattern_errors+1))
@@ -129,6 +135,7 @@ bash -n "$repo_root/scripts/prepare_napcat_login.sh"
 bash -n "$repo_root/scripts/prepare_wechatpadpro_login.sh"
 bash -n "$repo_root/scripts/configure_wechatpadpro_webhook.sh"
 bash -n "$repo_root/scripts/tests/smoke_test_claude_runner.sh"
+bash -n "$repo_root/scripts/tests/test_agent_runner_docker_e2e.sh"
 bash "$repo_root/scripts/tests/test_common.sh"
 bash "$repo_root/scripts/tests/test_configure_napcat_ws.sh"
 bash "$repo_root/scripts/tests/test_deploy_stack_platform_ingress.sh"
