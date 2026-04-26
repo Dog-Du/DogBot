@@ -7,12 +7,13 @@ env_example="$repo_root/deploy/dogbot.env.example"
 
 patterns=(
   'DOGBOT_CLAUDE_PROMPT_ROOT="${DOGBOT_CLAUDE_PROMPT_ROOT:-'
-  'HISTORY_DB_PATH="${HISTORY_DB_PATH:-'
   'DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR="${DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR:-'
   'PLATFORM_QQ_ACCOUNT_ID="${PLATFORM_QQ_ACCOUNT_ID:-'
   'PLATFORM_QQ_BOT_ID="${PLATFORM_QQ_BOT_ID:-'
   'PLATFORM_WECHATPADPRO_ACCOUNT_ID="${PLATFORM_WECHATPADPRO_ACCOUNT_ID:-'
   'PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES="${PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES:-'
+  'SESSION_DB_PATH="$session_db_path"'
+  'HISTORY_DB_PATH="$history_db_path"'
 )
 
 for pattern in "${patterns[@]}"; do
@@ -22,13 +23,15 @@ for pattern in "${patterns[@]}"; do
   fi
 done
 
-if ! grep -q 'mkdir -p "$AGENT_WORKSPACE_DIR" "$AGENT_STATE_DIR" "$log_dir" "$claude_prompt_root" "$claude_runner_runtime_dir"' "$start_script"; then
-  echo "FAIL: start_agent_runner.sh must prepare DOGBOT_CLAUDE_PROMPT_ROOT and the claude-runner runtime directory before launch" >&2
-  exit 1
-fi
-
 extra_patterns=(
   'nohup setsid env \'
+  'dogbot_ensure_user_writable_dir "$AGENT_WORKSPACE_DIR"'
+  'dogbot_ensure_user_writable_dir "$AGENT_STATE_DIR"'
+  'dogbot_ensure_user_writable_dir "$log_dir"'
+  'dogbot_ensure_user_writable_dir "$claude_prompt_root"'
+  'dogbot_ensure_user_writable_dir "$claude_runner_runtime_dir"'
+  'dogbot_ensure_user_writable_file_path "${SESSION_DB_PATH:-$AGENT_STATE_DIR/runner.db}"'
+  'dogbot_ensure_user_writable_file_path "${HISTORY_DB_PATH:-$AGENT_STATE_DIR/history.db}"'
   'bind_port="$(dogbot_bind_addr_port "$bind_addr")"'
   'healthz_url="http://127.0.0.1:${bind_port}/healthz"'
   'existing_pid="$(cat "$pid_file")"'

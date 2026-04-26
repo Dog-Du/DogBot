@@ -28,6 +28,23 @@ if ! grep -q 'DOGBOT_COMPOSE_PROJECT_NAME' "$repo_root/scripts/deploy_stack.sh";
   exit 1
 fi
 
+required_runtime_repairs=(
+  'dogbot_ensure_user_writable_dir "$agent_workspace_dir"'
+  'dogbot_ensure_user_writable_dir "$agent_state_dir"'
+  'dogbot_ensure_user_writable_dir "$DOGBOT_CLAUDE_PROMPT_ROOT"'
+  'dogbot_ensure_user_writable_dir "$DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR"'
+  'dogbot_ensure_user_writable_dir "$runner_log_dir"'
+  'dogbot_ensure_user_writable_file_path "$session_db_path"'
+  'dogbot_ensure_user_writable_file_path "$history_db_path"'
+)
+
+for pattern in "${required_runtime_repairs[@]}"; do
+  if ! grep -Fq "$pattern" "$repo_root/scripts/deploy_stack.sh"; then
+    echo "FAIL: deploy_stack.sh must repair agent-runner runtime directory ownership before launch" >&2
+    exit 1
+  fi
+done
+
 if ! grep -q 'DOGBOT_COMPOSE_PROJECT_NAME' "$repo_root/scripts/stop_stack.sh"; then
   echo "FAIL: stop_stack.sh must pin a stable Docker Compose project name" >&2
   exit 1

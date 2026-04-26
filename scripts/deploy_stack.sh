@@ -185,23 +185,30 @@ if ! compose_cmd="$(dogbot_resolve_compose_cmd)"; then
   exit 1
 fi
 
+agent_workspace_dir="${AGENT_WORKSPACE_DIR:-/srv/agent-workdir}"
+agent_state_dir="${AGENT_STATE_DIR:-/srv/agent-state}"
+runner_log_dir="${AGENT_RUNNER_LOG_DIR:-${AGENT_STATE_DIR:-/srv/agent-state}/logs}"
+session_db_path="${SESSION_DB_PATH:-${AGENT_STATE_DIR:-/srv/agent-state}/runner.db}"
+history_db_path="${HISTORY_DB_PATH:-${AGENT_STATE_DIR:-/srv/agent-state}/history.db}"
 DOGBOT_CLAUDE_PROMPT_ROOT="${DOGBOT_CLAUDE_PROMPT_ROOT:-${AGENT_STATE_DIR:-/srv/agent-state}/claude-prompt}"
 DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR="${DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR:-$(dogbot_claude_runner_runtime_dir)}"
+dogbot_ensure_user_writable_dir "$agent_workspace_dir"
+dogbot_ensure_user_writable_dir "$agent_state_dir"
+dogbot_ensure_user_writable_dir "$DOGBOT_CLAUDE_PROMPT_ROOT"
+dogbot_ensure_user_writable_dir "$DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR"
+dogbot_ensure_user_writable_dir "$runner_log_dir"
+dogbot_ensure_user_writable_file_path "$session_db_path"
+dogbot_ensure_user_writable_file_path "$history_db_path"
 
 dogbot_sync_claude_prompt_root "$repo_root/claude-prompt" "$DOGBOT_CLAUDE_PROMPT_ROOT"
 dogbot_write_claude_runner_runtime "$DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR"
 
 mkdir -p \
-  "${AGENT_WORKSPACE_DIR:-/srv/agent-workdir}" \
-  "${AGENT_STATE_DIR:-/srv/agent-state}" \
-  "$DOGBOT_CLAUDE_PROMPT_ROOT" \
-  "$DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR" \
   "${NAPCAT_QQ_DIR:-/srv/napcat/qq}" \
   "${NAPCAT_CONFIG_DIR:-/srv/napcat/config}" \
   "${WECHATPADPRO_DATA_DIR:-/srv/wechatpadpro/data}" \
   "${WECHATPADPRO_MYSQL_DIR:-/srv/wechatpadpro/mysql}" \
-  "${WECHATPADPRO_REDIS_DIR:-/srv/wechatpadpro/redis}" \
-  "${AGENT_RUNNER_LOG_DIR:-${AGENT_STATE_DIR:-/srv/agent-state}/logs}"
+  "${WECHATPADPRO_REDIS_DIR:-/srv/wechatpadpro/redis}"
 
 dogbot_save_runtime_state "$runtime_state_file"
 

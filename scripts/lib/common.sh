@@ -103,6 +103,109 @@ dogbot_bind_addr_port() {
   return 1
 }
 
+dogbot_runtime_owner_user() {
+  printf '%s\n' "${DOGBOT_RUNTIME_OWNER_USER:-${SUDO_USER:-$USER}}"
+}
+
+dogbot_runtime_owner_group() {
+  local owner_user="${1:-$(dogbot_runtime_owner_user)}"
+  id -gn "$owner_user"
+}
+
+dogbot_run_with_privilege() {
+  if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    "$@"
+    return $?
+  fi
+
+  if command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+    return $?
+  fi
+
+  return 1
+}
+
+dogbot_ensure_user_writable_dir() {
+  local dir_path="$1"
+  local owner_user="${DOGBOT_RUNTIME_OWNER_USER:-$(dogbot_runtime_owner_user)}"
+  local owner_group="${DOGBOT_RUNTIME_OWNER_GROUP:-$(dogbot_runtime_owner_group "$owner_user")}"
+
+  if [[ -z "$dir_path" ]]; then
+    echo "Runtime directory path must not be empty." >&2
+    return 1
+  fi
+
+  if [[ ! -d "$dir_path" ]]; then
+    mkdir -p "$dir_path" 2>/dev/null || dogbot_run_with_privilege mkdir -p "$dir_path"
+  fi
+
+  if [[ -w "$dir_path" ]]; then
+    return 0
+  fi
+
+  if [[ -O "$dir_path" ]]; then
+    chmod u+rwx "$dir_path" 2>/dev/null || true
+  fi
+
+  if [[ -w "$dir_path" ]]; then
+    return 0
+  fi
+
+  echo "Repairing runtime directory ownership: $dir_path" >&2
+  dogbot_run_with_privilege chown -R "$owner_user:$owner_group" "$dir_path"
+  dogbot_run_with_privilege chmod u+rwx "$dir_path" >/dev/null 2>&1 || true
+
+  if [[ ! -w "$dir_path" ]]; then
+    echo "Runtime directory is not writable after repair: $dir_path" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+dogbot_ensure_user_writable_file_path() {
+  local file_path="$1"
+  local parent_dir
+  local owner_user="${DOGBOT_RUNTIME_OWNER_USER:-$(dogbot_runtime_owner_user)}"
+  local owner_group="${DOGBOT_RUNTIME_OWNER_GROUP:-$(dogbot_runtime_owner_group "$owner_user")}"
+
+  if [[ -z "$file_path" ]]; then
+    echo "Runtime file path must not be empty." >&2
+    return 1
+  fi
+
+  parent_dir="$(dirname "$file_path")"
+  dogbot_ensure_user_writable_dir "$parent_dir" || return 1
+
+  if [[ ! -e "$file_path" ]]; then
+    return 0
+  fi
+
+  if [[ -w "$file_path" ]]; then
+    return 0
+  fi
+
+  if [[ -O "$file_path" ]]; then
+    chmod u+rw "$file_path" 2>/dev/null || true
+  fi
+
+  if [[ -w "$file_path" ]]; then
+    return 0
+  fi
+
+  echo "Repairing runtime file ownership: $file_path" >&2
+  dogbot_run_with_privilege chown "$owner_user:$owner_group" "$file_path"
+  dogbot_run_with_privilege chmod u+rw "$file_path" >/dev/null 2>&1 || true
+
+  if [[ ! -w "$file_path" ]]; then
+    echo "Runtime file is not writable after repair: $file_path" >&2
+    return 1
+  fi
+
+  return 0
+}
+
 dogbot_deadline_in() {
   local timeout_secs="${1:-0}"
   printf '%s\n' "$(( $(date +%s) + timeout_secs ))"

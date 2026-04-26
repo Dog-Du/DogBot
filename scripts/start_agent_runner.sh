@@ -50,8 +50,16 @@ claude_runner_runtime_dir="${DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR:-$(dogbot_claude_r
 bind_addr="${AGENT_RUNNER_BIND_ADDR:-0.0.0.0:8787}"
 bind_port="$(dogbot_bind_addr_port "$bind_addr")"
 healthz_url="http://127.0.0.1:${bind_port}/healthz"
+session_db_path="${SESSION_DB_PATH:-$AGENT_STATE_DIR/runner.db}"
+history_db_path="${HISTORY_DB_PATH:-$AGENT_STATE_DIR/history.db}"
 
-mkdir -p "$AGENT_WORKSPACE_DIR" "$AGENT_STATE_DIR" "$log_dir" "$claude_prompt_root" "$claude_runner_runtime_dir"
+dogbot_ensure_user_writable_dir "$AGENT_WORKSPACE_DIR"
+dogbot_ensure_user_writable_dir "$AGENT_STATE_DIR"
+dogbot_ensure_user_writable_dir "$log_dir"
+dogbot_ensure_user_writable_dir "$claude_prompt_root"
+dogbot_ensure_user_writable_dir "$claude_runner_runtime_dir"
+dogbot_ensure_user_writable_file_path "${SESSION_DB_PATH:-$AGENT_STATE_DIR/runner.db}"
+dogbot_ensure_user_writable_file_path "${HISTORY_DB_PATH:-$AGENT_STATE_DIR/history.db}"
 dogbot_write_claude_runner_runtime "$claude_runner_runtime_dir"
 
 if [[ -f "$pid_file" ]]; then
@@ -108,10 +116,10 @@ nohup setsid env \
   GLOBAL_RATE_LIMIT_PER_MINUTE="${GLOBAL_RATE_LIMIT_PER_MINUTE:-10}" \
   USER_RATE_LIMIT_PER_MINUTE="${USER_RATE_LIMIT_PER_MINUTE:-3}" \
   CONVERSATION_RATE_LIMIT_PER_MINUTE="${CONVERSATION_RATE_LIMIT_PER_MINUTE:-5}" \
-  SESSION_DB_PATH="${SESSION_DB_PATH:-$AGENT_STATE_DIR/runner.db}" \
+  SESSION_DB_PATH="$session_db_path" \
   DOGBOT_CLAUDE_PROMPT_ROOT="${DOGBOT_CLAUDE_PROMPT_ROOT:-$repo_root/claude-prompt}" \
   DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR="${DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR:-$(dogbot_claude_runner_runtime_dir)}" \
-  HISTORY_DB_PATH="${HISTORY_DB_PATH:-$AGENT_STATE_DIR/history.db}" \
+  HISTORY_DB_PATH="$history_db_path" \
   CLAUDE_CONTAINER_CPU_CORES="${CLAUDE_CONTAINER_CPU_CORES:-4}" \
   CLAUDE_CONTAINER_MEMORY_MB="${CLAUDE_CONTAINER_MEMORY_MB:-4096}" \
   CLAUDE_CONTAINER_DISK_GB="${CLAUDE_CONTAINER_DISK_GB:-50}" \

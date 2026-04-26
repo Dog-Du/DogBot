@@ -25,6 +25,48 @@ assert_eq "$dogbot_default_env_file" "$(dogbot_resolve_env_file "")" \
 assert_eq "/tmp/custom.env" "$(dogbot_resolve_env_file "/tmp/custom.env")" \
   "explicit env-file override should be preserved"
 
+tmp_permissions_root="$(mktemp -d)"
+missing_runtime_dir="$tmp_permissions_root/missing/agent-state"
+if ! dogbot_ensure_user_writable_dir "$missing_runtime_dir"; then
+  echo "FAIL: dogbot_ensure_user_writable_dir must create missing runtime directories" >&2
+  exit 1
+fi
+
+if [[ ! -d "$missing_runtime_dir" || ! -w "$missing_runtime_dir" ]]; then
+  echo "FAIL: dogbot_ensure_user_writable_dir must leave created directories writable" >&2
+  exit 1
+fi
+
+readonly_runtime_dir="$tmp_permissions_root/readonly-dir"
+mkdir -p "$readonly_runtime_dir"
+chmod u-w "$readonly_runtime_dir"
+if ! dogbot_ensure_user_writable_dir "$readonly_runtime_dir"; then
+  echo "FAIL: dogbot_ensure_user_writable_dir must repair write access for owned directories" >&2
+  exit 1
+fi
+
+if [[ ! -w "$readonly_runtime_dir" ]]; then
+  echo "FAIL: dogbot_ensure_user_writable_dir did not restore write access" >&2
+  exit 1
+fi
+
+db_parent_dir="$tmp_permissions_root/db-parent"
+db_path="$db_parent_dir/runner.db"
+mkdir -p "$db_parent_dir"
+touch "$db_path"
+chmod u-w "$db_parent_dir" "$db_path"
+if ! dogbot_ensure_user_writable_file_path "$db_path"; then
+  echo "FAIL: dogbot_ensure_user_writable_file_path must repair writable database paths" >&2
+  exit 1
+fi
+
+if [[ ! -w "$db_parent_dir" || ! -w "$db_path" ]]; then
+  echo "FAIL: dogbot_ensure_user_writable_file_path must leave database file paths writable" >&2
+  exit 1
+fi
+
+rm -rf "$tmp_permissions_root"
+
 tmp_runtime_root="$(mktemp -d)"
 runtime_launch_dir="$tmp_runtime_root/claude-runner"
 dogbot_write_claude_runner_runtime "$runtime_launch_dir"
