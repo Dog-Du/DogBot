@@ -209,7 +209,7 @@ fi
 echo "Deployment finished."
 if [[ "${ENABLE_QQ}" == "1" ]]; then
   echo "NapCat WebUI: http://127.0.0.1:${NAPCAT_WEBUI_PORT:-6099}"
-  echo "QQ platform ingress: ws://${AGENT_RUNNER_BIND_ADDR:-127.0.0.1:8787}/v1/platforms/qq/napcat/ws"
+  echo "QQ platform ingress: http://${AGENT_RUNNER_BIND_ADDR:-127.0.0.1:8787}/v1/platforms/qq/napcat/ws"
 fi
 if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
   echo "WeChatPadPro API: http://127.0.0.1:${WECHATPADPRO_HOST_PORT:-38849}"

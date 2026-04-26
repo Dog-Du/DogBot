@@ -176,7 +176,7 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - `claude-runner` 运行时会把 `/state/claude-prompt` 暴露给 Claude 作为 additional directory
 - [x] 触发识别与基础回复链路
   - QQ / WeChat 统一先走 `agent-runner` 平台入口
-  - QQ: `/v1/platforms/qq/napcat/ws`
+  - QQ: `http://<bind>/v1/platforms/qq/napcat/ws`
   - WeChatPadPro: `/v1/platforms/wechatpadpro/events`
   - 规范化 inbound message、mention/reply 元数据和 runner-side trigger resolver 已落地
   - QQ / WeChat 的 reply / mention 回发链路已整理

@@ -105,12 +105,12 @@ ensure_pattern "scripts/lib/common.sh" "bifrost -host 127.0.0.1 -port" || patter
 ensure_pattern "compose/docker-compose.yml" "mem_limit" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/docker-compose.yml" "CLAUDE_CONFIG_DIR" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "compose/platform-stack.yml" "mlikiowa/napcat-docker:latest" || pattern_errors=$((pattern_errors+1))
-ensure_pattern "scripts/configure_napcat_ws.sh" "host.docker.internal:8787/v1/platforms/qq/napcat/ws" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/configure_napcat_ws.sh" "http://host.docker.internal:8787/v1/platforms/qq/napcat/ws" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/configure_napcat_ws.sh" "dogbot_resolve_uv_bin" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "deploy/dogbot.env.example" "AGENT_RUNNER_BIND_ADDR" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "deploy/dogbot.env.example" "PLATFORM_QQ_ACCOUNT_ID" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "deploy/dogbot.env.example" "PLATFORM_WECHATPADPRO_ACCOUNT_ID" || pattern_errors=$((pattern_errors+1))
-ensure_pattern "deploy/dogbot.env.example" "NAPCAT_WS_CLIENT_URL" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "deploy/dogbot.env.example" "NAPCAT_WS_CLIENT_URL=http://host.docker.internal:8787/v1/platforms/qq/napcat/ws" || pattern_errors=$((pattern_errors+1))
 if grep -q '^QQ_ADAPTER_QQ_BOT_ID=' "$repo_root/deploy/dogbot.env"; then
   echo "Stale QQ_ADAPTER_QQ_BOT_ID found in deploy/dogbot.env" >&2
   pattern_errors=$((pattern_errors+1))

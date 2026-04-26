@@ -14,7 +14,7 @@ if grep -q 'start_wechatpadpro_adapter.sh' "$repo_root/scripts/deploy_stack.sh";
 fi
 
 if ! grep -q '/v1/platforms/qq/napcat/ws' "$repo_root/scripts/configure_napcat_ws.sh"; then
-  echo "FAIL: NapCat websocket client must point at agent-runner platform ingress" >&2
+  echo "FAIL: NapCat HTTP client must point at agent-runner platform ingress" >&2
   exit 1
 fi
 

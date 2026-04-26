@@ -185,7 +185,7 @@ cp deploy/dogbot.env.example deploy/dogbot.env
 
 - 当前不再启动 `qq_adapter/` 或 `wechatpadpro_adapter/`
 - `agent-runner` 直接提供：
-  - `ws://<bind>/v1/platforms/qq/napcat/ws`
+  - `http://<bind>/v1/platforms/qq/napcat/ws`
   - `http://<bind>/v1/platforms/wechatpadpro/events`
 - 示例配置默认启用了 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1`
 - 如果你手动改成 `0`，部署脚本不会替你注册 webhook
@@ -364,7 +364,7 @@ http://127.0.0.1:6099
 目标地址：
 
 ```text
-ws://host.docker.internal:8787/v1/platforms/qq/napcat/ws
+http://host.docker.internal:8787/v1/platforms/qq/napcat/ws
 ```
 
 这部分现在由脚本自动写入：

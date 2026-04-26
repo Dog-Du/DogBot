@@ -11,8 +11,8 @@ env_file="$tmpdir/dogbot.env"
 config_dir="$tmpdir/napcat-config"
 docker_log="$tmpdir/docker.log"
 
-if ! grep -q '^NAPCAT_WS_CLIENT_URL=ws://host.docker.internal:8787/v1/platforms/qq/napcat/ws$' "$env_example"; then
-  echo "FAIL: dogbot.env.example must define the default NapCat websocket client URL" >&2
+if ! grep -q '^NAPCAT_WS_CLIENT_URL=http://host.docker.internal:8787/v1/platforms/qq/napcat/ws$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must define the default NapCat HTTP client URL" >&2
   exit 1
 fi
 
@@ -75,12 +75,12 @@ assert server["messagePostFormat"] == "array", server
 assert server["enableCors"] is True, server
 assert server["enableWebsocket"] is False, server
 
-ws_clients = data["network"]["websocketClients"]
-assert len(ws_clients) == 1, ws_clients
-assert ws_clients[0]["url"] == "ws://host.docker.internal:8787/v1/platforms/qq/napcat/ws", ws_clients[0]
+http_clients = data["network"]["httpClients"]
+assert len(http_clients) == 1, http_clients
+assert http_clients[0]["url"] == "http://host.docker.internal:8787/v1/platforms/qq/napcat/ws", http_clients[0]
 PY
 
-if [[ "$output" != *"configured NapCat websocket client in $config_file"* ]]; then
+if [[ "$output" != *"configured NapCat HTTP client in $config_file"* ]]; then
   echo "FAIL: expected configure_napcat_ws.sh success message" >&2
   echo "$output" >&2
   exit 1

@@ -15,14 +15,12 @@ NAPCAT_CONTAINER_NAME="${NAPCAT_CONTAINER_NAME:-napcat}"
 NAPCAT_CONFIG_DIR="${NAPCAT_CONFIG_DIR:-$dogbot_repo_root/agent-state/napcat-config}"
 NAPCAT_ONEBOT_PORT="${NAPCAT_ONEBOT_PORT:-3001}"
 NAPCAT_HTTP_TOKEN="${NAPCAT_ACCESS_TOKEN:-}"
-NAPCAT_WS_CLIENT_URL="${NAPCAT_WS_CLIENT_URL:-ws://host.docker.internal:8787/v1/platforms/qq/napcat/ws}"
+NAPCAT_WS_CLIENT_URL="${NAPCAT_WS_CLIENT_URL:-http://host.docker.internal:8787/v1/platforms/qq/napcat/ws}"
 NAPCAT_WS_CLIENT_TOKEN="${NAPCAT_WS_CLIENT_TOKEN:-}"
-NAPCAT_WS_CLIENT_RECONNECT_MS="${NAPCAT_WS_CLIENT_RECONNECT_MS:-1000}"
-NAPCAT_WS_CLIENT_HEART_MS="${NAPCAT_WS_CLIENT_HEART_MS:-1000}"
 PLATFORM_QQ_BOT_ID="${PLATFORM_QQ_BOT_ID:-}"
 
 if [[ -z "$PLATFORM_QQ_BOT_ID" ]]; then
-  echo "PLATFORM_QQ_BOT_ID is required to configure NapCat websocket client" >&2
+  echo "PLATFORM_QQ_BOT_ID is required to configure NapCat HTTP client" >&2
   exit 1
 fi
 
@@ -55,7 +53,7 @@ network["httpServers"] = [{
     "debug": False,
 }]
 
-network["websocketClients"] = [{
+network["httpClients"] = [{
     "name": "agent-runner-platform-ingress",
     "enable": True,
     "url": ${NAPCAT_WS_CLIENT_URL@Q},
@@ -63,12 +61,11 @@ network["websocketClients"] = [{
     "messagePostFormat": "array",
     "token": ${NAPCAT_WS_CLIENT_TOKEN@Q},
     "debug": False,
-    "heartInterval": int(${NAPCAT_WS_CLIENT_HEART_MS@Q}),
-    "reconnectInterval": int(${NAPCAT_WS_CLIENT_RECONNECT_MS@Q}),
 }]
+network["websocketClients"] = []
 
 config_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 
 docker restart "$NAPCAT_CONTAINER_NAME" >/dev/null
-echo "configured NapCat websocket client in $CONFIG_FILE"
+echo "configured NapCat HTTP client in $CONFIG_FILE"

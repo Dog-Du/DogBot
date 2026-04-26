@@ -17,7 +17,7 @@
   - `history`
   - `trigger resolver`
 - direct platform ingress 链路
-  - QQ: `NapCat -> agent-runner /v1/platforms/qq/napcat/ws`
+  - QQ: `NapCat -> agent-runner http://.../v1/platforms/qq/napcat/ws`
   - WeChatPadPro: `WeChatPadPro -> agent-runner /v1/platforms/wechatpadpro/events`
 - 历史消息基础版
   - 首次有效触发会启用当前会话的 history ingest
