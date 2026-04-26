@@ -91,6 +91,18 @@ dogbot_wait_for_http_ok() {
   return 1
 }
 
+dogbot_bind_addr_port() {
+  local bind_addr="$1"
+
+  if [[ "$bind_addr" =~ :([0-9]+)$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  echo "Unable to resolve port from bind address: $bind_addr" >&2
+  return 1
+}
+
 dogbot_deadline_in() {
   local timeout_secs="${1:-0}"
   printf '%s\n' "$(( $(date +%s) + timeout_secs ))"

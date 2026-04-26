@@ -27,6 +27,24 @@ if ! grep -q 'mkdir -p "$AGENT_WORKSPACE_DIR" "$AGENT_STATE_DIR" "$log_dir" "$cl
   exit 1
 fi
 
+extra_patterns=(
+  'nohup setsid env \'
+  'bind_port="$(dogbot_bind_addr_port "$bind_addr")"'
+  'healthz_url="http://127.0.0.1:${bind_port}/healthz"'
+  'existing_pid="$(cat "$pid_file")"'
+  'dogbot_wait_for_http_ok "$healthz_url" 1'
+  'existing_listener_pid="$(dogbot_find_listener_pid "$bind_port" || true)"'
+  'dogbot_wait_for_http_ok "$healthz_url" 15'
+  'printf '\''%s\n'\'' "$launched_pid" >"$pid_file"'
+)
+
+for pattern in "${extra_patterns[@]}"; do
+  if ! grep -Fq "$pattern" "$start_script"; then
+    echo "FAIL: start_agent_runner.sh must verify health and reconcile existing listeners before writing pid file" >&2
+    exit 1
+  fi
+done
+
 if ! grep -q 'dogbot_write_claude_runner_runtime "$claude_runner_runtime_dir"' "$start_script"; then
   echo "FAIL: start_agent_runner.sh must materialize the claude-runner launch script before startup" >&2
   exit 1
