@@ -71,10 +71,8 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
 ├── README.md
 ├── agent-runner/                 # Rust 核心服务
 ├── claude-prompt/                # Claude 原生静态 prompt / skills 源目录
-├── compose/                      # Docker Compose 编排
-│   └── README.md                 # 高级用户的 compose 说明
-├── deploy/                       # 配置模板与部署说明
-├── docker/claude-runner/         # Claude 容器镜像
+├── deploy/                       # 配置模板、部署说明与容器定义
+│   └── docker/                   # compose 文件和 claude-runner 镜像文件
 ├── scripts/                      # 启停、配置、诊断脚本
 └── docs/                         # 设计文档
 ```
@@ -106,7 +104,7 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
 - `runtime/agent-state`
 - `runtime/agent-state/wechatpadpro-data/`
 
-`compose/` 目录默认不需要修改；如果你确实需要自定义容器层行为，请查看 `compose/README.md`。
+`deploy/docker/` 目录默认不需要修改；如果你确实需要自定义容器层行为，请查看 `deploy/docker/README.md`。
 
 当前部署脚本支持两种使用方式：
 
@@ -176,7 +174,7 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - `claude-runner` 运行时会把 `/state/claude-prompt` 暴露给 Claude 作为 additional directory
 - [x] 触发识别与基础回复链路
   - QQ / WeChat 统一先走 `agent-runner` 平台入口
-  - QQ: `http://<bind>/v1/platforms/qq/napcat/ws`
+  - QQ: `http://<bind>/v1/platforms/qq/napcat/events`
   - WeChatPadPro: `/v1/platforms/wechatpadpro/events`
   - 规范化 inbound message、mention/reply 元数据和 runner-side trigger resolver 已落地
   - QQ / WeChat 的 reply / mention 回发链路已整理

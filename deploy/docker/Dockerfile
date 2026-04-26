@@ -95,7 +95,7 @@ RUN mkdir -p /etc/apt/keyrings \
   && npx playwright install --with-deps chromium \
   && ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
-COPY docker/claude-runner/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 RUN useradd --system --create-home --home-dir /workspace claude \

@@ -194,7 +194,7 @@ async fn qq_private_status_command_bypasses_runner_and_returns_health_reply() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/v1/platforms/qq/napcat/ws")
+                .uri("/v1/platforms/qq/napcat/events")
                 .header("content-type", "application/json")
                 .body(Body::from(payload.to_string()))
                 .unwrap(),

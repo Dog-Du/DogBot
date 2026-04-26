@@ -17,7 +17,7 @@ use crate::{
 };
 
 const INGRESS_ROUTES: &[IngressRoute] = &[IngressRoute {
-    path: "/v1/platforms/qq/napcat/ws",
+    path: "/v1/platforms/qq/napcat/events",
     allow_head: false,
 }];
 

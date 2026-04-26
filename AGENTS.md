@@ -14,8 +14,8 @@
 当前已经落地两条链路：
 
 ```text
-QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner
-微信 -> WeChatPadPro -> wechatpadpro-adapter -> agent-runner -> claude-runner
+QQ -> NapCat -> agent-runner -> claude-runner
+微信 -> WeChatPadPro -> agent-runner -> claude-runner
 ```
 
 ## 2. 核心组件
@@ -44,17 +44,13 @@ QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner
 
 - `NapCat`
   - 负责 QQ 登录和 OneBot
-- `qq_adapter`
-  - 宿主机 Python 服务
-  - 负责把 QQ 事件转给 `agent-runner`
+  - 通过 HTTP 回调把 QQ 事件直接推给 `agent-runner`
 
 ### 微信接入层
 
 - `WeChatPadPro`
   - 负责微信登录和消息入口
-- `wechatpadpro-adapter`
-  - 宿主机 Python 服务
-  - 负责把微信事件转给 `agent-runner`
+  - 通过 webhook 直接把微信事件推给 `agent-runner`
 
 ## 3. 当前触发规则
 
@@ -67,7 +63,7 @@ QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner
 
 补充说明：
 
-- `agent-runner` 已与两个 adapter 对齐到“私聊任意文本、群聊显式 mention”规则
+- `agent-runner` 当前直接执行平台侧 trigger gate
 - 群聊 reply 本身不会单独触发执行
 - 不要把“reply 中带 `/agent` 就已经全量开放”当成当前现态
 
@@ -75,14 +71,10 @@ QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner
 
 - `agent-runner/`
   - Rust 核心服务
-- `qq_adapter/`
-  - QQ 适配器
-- `wechatpadpro_adapter/`
-  - 微信适配器
-- `compose/`
-  - Docker Compose 配置
 - `deploy/`
-  - 部署文档与配置模板
+  - 部署文档、配置模板与容器定义
+- `deploy/docker/`
+  - `claude-runner` 镜像、compose 栈与平台容器定义
 - `scripts/`
   - 启停、配置、诊断脚本
 - `docs/`
@@ -103,7 +95,7 @@ QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner
   - QQ 仅支持首次启用后的有限 backfill
   - WeChat 目前仅支持启用后的 realtime mirror
 - 图片链路尚未完成端到端出站发送
-- adapter 仍保留群聊显式 mention gate，reply 单独触发还未对外开放
+- 群聊仍保留显式 mention gate，reply 单独触发还未对外开放
 
 ## 7. 后续方向
 
@@ -121,5 +113,5 @@ QQ -> NapCat -> qq-adapter -> agent-runner -> claude-runner
 3. `deploy/dogbot.env.example`
 4. `docs/control-plane-integration.md`
 5. `agent-runner/`
-6. `qq_adapter/`
-7. `wechatpadpro_adapter/`
+6. `deploy/docker/`
+7. `scripts/`

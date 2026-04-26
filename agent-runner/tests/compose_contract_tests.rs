@@ -3,7 +3,8 @@ use std::fs;
 #[test]
 fn compose_defines_required_claude_runner_limits() {
     let compose =
-        fs::read_to_string("../compose/docker-compose.yml").expect("failed to read compose file");
+        fs::read_to_string("../deploy/docker/docker-compose.yml")
+            .expect("failed to read compose file");
     let required = [
         "image: ${CLAUDE_IMAGE_NAME:-dogbot/claude-runner:local}",
         "cpus: \"4.0\"",
@@ -46,7 +47,7 @@ fn compose_defines_required_claude_runner_limits() {
 
 #[test]
 fn dockerfile_bootstrap_repairs_claude_state_permissions() {
-    let dockerfile = fs::read_to_string("../docker/claude-runner/Dockerfile")
+    let dockerfile = fs::read_to_string("../deploy/docker/Dockerfile")
         .expect("failed to read dockerfile");
 
     let required = [
@@ -64,7 +65,7 @@ fn dockerfile_bootstrap_repairs_claude_state_permissions() {
 
 #[test]
 fn claude_runner_entrypoint_execs_runtime_launch_script() {
-    let entrypoint = fs::read_to_string("../docker/claude-runner/entrypoint.sh")
+    let entrypoint = fs::read_to_string("../deploy/docker/entrypoint.sh")
         .expect("failed to read entrypoint file");
     let common =
         fs::read_to_string("../scripts/lib/common.sh").expect("failed to read common helper file");

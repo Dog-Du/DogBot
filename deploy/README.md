@@ -50,7 +50,7 @@ QQ
 - `Linux`
   - 当前部署方案默认以 Linux 宿主机为目标
 - `uv`
-  - 用来运行 Python 相关脚本、适配器和测试
+  - 用来运行 Python 相关脚本和测试
 - `Docker Engine`
   - 用来运行 `claude-runner`、`NapCat`、`WeChatPadPro`
 - `Docker Compose v2`
@@ -108,7 +108,7 @@ newgrp docker
 - `./deploy_stack.sh`
 - `./stop_stack.sh`
 
-`compose/` 目录默认不需要修改；如果你确实要调整容器层行为，请查看 `compose/README.md`。
+`deploy/docker/` 目录默认不需要修改；如果你确实要调整容器层行为，请查看 `deploy/docker/README.md`。
 
 ## 3. 重要文件
 
@@ -122,15 +122,15 @@ newgrp docker
   - 根目录部署入口
 - `./stop_stack.sh`
   - 根目录停止入口
-- `compose/docker-compose.yml`
+- `deploy/docker/docker-compose.yml`
   - `claude-runner` 容器定义
-- `compose/platform-stack.yml`
+- `deploy/docker/platform-stack.yml`
   - `napcat` 容器定义
-- `compose/wechatpadpro-stack.yml`
+- `deploy/docker/wechatpadpro-stack.yml`
   - `wechatpadpro` / MySQL / Redis 容器定义
 - `scripts/start_agent_runner.sh`
   - 启动宿主机 `agent-runner`
-- `scripts/configure_napcat_ws.sh`
+- `scripts/configure_napcat_ingress.sh`
   - 配置 NapCat 直连 `agent-runner`
 - `scripts/configure_wechatpadpro_webhook.sh`
   - 配置 WeChatPadPro 直连 `agent-runner`
@@ -185,7 +185,7 @@ cp deploy/dogbot.env.example deploy/dogbot.env
 
 - 当前不再启动 `qq_adapter/` 或 `wechatpadpro_adapter/`
 - `agent-runner` 直接提供：
-  - `http://<bind>/v1/platforms/qq/napcat/ws`
+  - `http://<bind>/v1/platforms/qq/napcat/events`
   - `http://<bind>/v1/platforms/wechatpadpro/events`
 - 示例配置默认启用了 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1`
 - 如果你手动改成 `0`，部署脚本不会替你注册 webhook
@@ -364,12 +364,12 @@ http://127.0.0.1:6099
 目标地址：
 
 ```text
-http://host.docker.internal:8787/v1/platforms/qq/napcat/ws
+http://host.docker.internal:8787/v1/platforms/qq/napcat/events
 ```
 
 这部分现在由脚本自动写入：
 
-- `scripts/configure_napcat_ws.sh`
+- `scripts/configure_napcat_ingress.sh`
 
 正常情况下不需要你手动改容器内配置。
 

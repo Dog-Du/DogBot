@@ -217,7 +217,7 @@ USER claude
 EOF
 
 if ! docker image inspect "$base_image" >/dev/null 2>&1; then
-  docker build -t "$base_image" -f "$repo_root/docker/claude-runner/Dockerfile" "$repo_root" >/dev/null
+  docker build -t "$base_image" -f "$repo_root/deploy/docker/Dockerfile" "$repo_root" >/dev/null
 fi
 
 docker build -t "$mock_image" "$mock_ctx" >/dev/null
@@ -280,7 +280,7 @@ if ! curl -fsS "http://127.0.0.1:$runner_port/healthz" >/dev/null; then
 fi
 
 status_code="$(curl -sS -o "$ingress_response" -w '%{http_code}' \
-  -X POST "http://127.0.0.1:$runner_port/v1/platforms/qq/napcat/ws" \
+  -X POST "http://127.0.0.1:$runner_port/v1/platforms/qq/napcat/events" \
   -H 'content-type: application/json' \
   --data-binary @- <<'JSON'
 {

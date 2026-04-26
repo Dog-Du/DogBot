@@ -11,8 +11,8 @@ env_file="$tmpdir/dogbot.env"
 config_dir="$tmpdir/napcat-config"
 docker_log="$tmpdir/docker.log"
 
-if ! grep -q '^NAPCAT_WS_CLIENT_URL=http://host.docker.internal:8787/v1/platforms/qq/napcat/ws$' "$env_example"; then
-  echo "FAIL: dogbot.env.example must define the default NapCat HTTP client URL" >&2
+if ! grep -q '^NAPCAT_HTTP_CLIENT_URL=http://host.docker.internal:8787/v1/platforms/qq/napcat/events$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must define the default NapCat HTTP ingress URL" >&2
   exit 1
 fi
 
@@ -51,7 +51,7 @@ chmod +x "$tmpdir/bin/uv" "$tmpdir/bin/docker"
 
 output="$(
   PATH="$tmpdir/bin:$PATH" \
-    "$repo_root/scripts/configure_napcat_ws.sh" "$env_file" 2>&1
+    "$repo_root/scripts/configure_napcat_ingress.sh" "$env_file" 2>&1
 )"
 
 config_file="$config_dir/onebot11_3472283357.json"
@@ -77,11 +77,11 @@ assert server["enableWebsocket"] is False, server
 
 http_clients = data["network"]["httpClients"]
 assert len(http_clients) == 1, http_clients
-assert http_clients[0]["url"] == "http://host.docker.internal:8787/v1/platforms/qq/napcat/ws", http_clients[0]
+assert http_clients[0]["url"] == "http://host.docker.internal:8787/v1/platforms/qq/napcat/events", http_clients[0]
 PY
 
 if [[ "$output" != *"configured NapCat HTTP client in $config_file"* ]]; then
-  echo "FAIL: expected configure_napcat_ws.sh success message" >&2
+  echo "FAIL: expected configure_napcat_ingress.sh success message" >&2
   echo "$output" >&2
   exit 1
 fi
@@ -92,4 +92,4 @@ if ! grep -q 'docker restart napcat' "$docker_log"; then
   exit 1
 fi
 
-echo "configure_napcat_ws test passed."
+echo "configure_napcat_ingress test passed."

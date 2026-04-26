@@ -115,7 +115,7 @@ async fn inbound_request_triggers_runtime_history_cleanup() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/v1/platforms/qq/napcat/ws")
+                .uri("/v1/platforms/qq/napcat/events")
                 .header("content-type", "application/json")
                 .body(Body::from(payload))
                 .unwrap(),

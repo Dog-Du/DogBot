@@ -15,8 +15,8 @@ NAPCAT_CONTAINER_NAME="${NAPCAT_CONTAINER_NAME:-napcat}"
 NAPCAT_CONFIG_DIR="${NAPCAT_CONFIG_DIR:-$dogbot_repo_root/agent-state/napcat-config}"
 NAPCAT_ONEBOT_PORT="${NAPCAT_ONEBOT_PORT:-3001}"
 NAPCAT_HTTP_TOKEN="${NAPCAT_ACCESS_TOKEN:-}"
-NAPCAT_WS_CLIENT_URL="${NAPCAT_WS_CLIENT_URL:-http://host.docker.internal:8787/v1/platforms/qq/napcat/ws}"
-NAPCAT_WS_CLIENT_TOKEN="${NAPCAT_WS_CLIENT_TOKEN:-}"
+NAPCAT_HTTP_CLIENT_URL="${NAPCAT_HTTP_CLIENT_URL:-http://host.docker.internal:8787/v1/platforms/qq/napcat/events}"
+NAPCAT_HTTP_CLIENT_TOKEN="${NAPCAT_HTTP_CLIENT_TOKEN:-}"
 PLATFORM_QQ_BOT_ID="${PLATFORM_QQ_BOT_ID:-}"
 
 if [[ -z "$PLATFORM_QQ_BOT_ID" ]]; then
@@ -56,10 +56,10 @@ network["httpServers"] = [{
 network["httpClients"] = [{
     "name": "agent-runner-platform-ingress",
     "enable": True,
-    "url": ${NAPCAT_WS_CLIENT_URL@Q},
+    "url": ${NAPCAT_HTTP_CLIENT_URL@Q},
     "reportSelfMessage": False,
     "messagePostFormat": "array",
-    "token": ${NAPCAT_WS_CLIENT_TOKEN@Q},
+    "token": ${NAPCAT_HTTP_CLIENT_TOKEN@Q},
     "debug": False,
 }]
 network["websocketClients"] = []

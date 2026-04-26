@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 env_example="$repo_root/deploy/dogbot.env.example"
 deploy_script="$repo_root/scripts/deploy_stack.sh"
 configure_script="$repo_root/scripts/configure_wechatpadpro_webhook.sh"
-wechat_compose="$repo_root/compose/wechatpadpro-stack.yml"
+wechat_compose="$repo_root/deploy/docker/wechatpadpro-stack.yml"
 
 if ! grep -q '^WECHATPADPRO_WEBHOOK_URL=http://host.docker.internal:8787/v1/platforms/wechatpadpro/events$' "$env_example"; then
   echo "FAIL: WeChat example config must point webhook delivery to agent-runner direct ingress" >&2

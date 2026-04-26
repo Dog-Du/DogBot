@@ -360,7 +360,7 @@ async fn qq_ingress_group_message_uses_registered_platform_adapter_for_delivery(
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/v1/platforms/qq/napcat/ws")
+                .uri("/v1/platforms/qq/napcat/events")
                 .header("content-type", "application/json")
                 .body(Body::from(payload.to_string()))
                 .unwrap(),
@@ -403,7 +403,7 @@ async fn qq_private_ingress_uses_send_private_msg_for_delivery() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/v1/platforms/qq/napcat/ws")
+                .uri("/v1/platforms/qq/napcat/events")
                 .header("content-type", "application/json")
                 .body(Body::from(payload.to_string()))
                 .unwrap(),
@@ -664,7 +664,7 @@ async fn qq_ingress_reaction_add_uses_native_napcat_endpoint() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/v1/platforms/qq/napcat/ws")
+                .uri("/v1/platforms/qq/napcat/events")
                 .header("content-type", "application/json")
                 .body(Body::from(payload.to_string()))
                 .unwrap(),

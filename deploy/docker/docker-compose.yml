@@ -3,8 +3,8 @@ services:
     container_name: ${CLAUDE_CONTAINER_NAME:-claude-runner} # default name expected by agent-runner
     image: ${CLAUDE_IMAGE_NAME:-dogbot/claude-runner:local}
     build:
-      context: ..
-      dockerfile: docker/claude-runner/Dockerfile
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
       args:
         CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.104}
     restart: unless-stopped

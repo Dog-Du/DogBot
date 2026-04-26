@@ -17,7 +17,7 @@
   - `history`
   - `trigger resolver`
 - direct platform ingress 链路
-  - QQ: `NapCat -> agent-runner http://.../v1/platforms/qq/napcat/ws`
+  - QQ: `NapCat -> agent-runner http://.../v1/platforms/qq/napcat/events`
   - WeChatPadPro: `WeChatPadPro -> agent-runner /v1/platforms/wechatpadpro/events`
 - 历史消息基础版
   - 首次有效触发会启用当前会话的 history ingest
@@ -137,7 +137,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 
 预期：
 
-- 当前消息先进入 `/v1/platforms/qq/napcat/ws`
+- 当前消息先进入 `/v1/platforms/qq/napcat/events`
 - 首次有效触发时会启用该群的 history ingest
 - QQ 平台侧会对该群做一次最多 `50` 条的有界 history backfill
 - 机器人回复时会 `@` 当前发言人
@@ -203,7 +203,7 @@ sqlite3 /srv/dogbot/runtime/agent-state/history.db \
 
 ```bash
 cargo test --test history_cleanup_tests --test history_ingest_tests --test inbound_api_tests --test context_run_tests --test http_api_tests --manifest-path agent-runner/Cargo.toml
-bash scripts/tests/test_configure_napcat_ws.sh
+bash scripts/tests/test_configure_napcat_ingress.sh
 bash scripts/tests/test_configure_wechatpadpro_webhook.sh
 ```
 

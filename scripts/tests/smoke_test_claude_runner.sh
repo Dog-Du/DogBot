@@ -81,7 +81,7 @@ upstream_pid=$!
 blocked_pid=$!
 sleep 1
 
-docker build -t "$image_name" -f "$repo_root/docker/claude-runner/Dockerfile" "$repo_root" >"$docker_build_log"
+docker build -t "$image_name" -f "$repo_root/deploy/docker/Dockerfile" "$repo_root" >"$docker_build_log"
 run_args=(
   -d
   --name "$container_name"

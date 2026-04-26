@@ -178,7 +178,7 @@ async fn app_exposes_platform_ingress_routes() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/v1/platforms/qq/napcat/ws")
+                .uri("/v1/platforms/qq/napcat/events")
                 .body(Body::empty())
                 .unwrap(),
         )

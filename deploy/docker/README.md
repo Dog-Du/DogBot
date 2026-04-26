@@ -1,9 +1,13 @@
-# compose 目录说明
+# deploy/docker 目录说明
 
 一般情况下不需要直接修改本目录。
 
 本目录中的文件用于定义容器层运行方式：
 
+- `Dockerfile`
+  - 定义 `claude-runner` 镜像
+- `entrypoint.sh`
+  - 定义 `claude-runner` 容器入口
 - `docker-compose.yml`
   - 定义 `claude-runner`
 - `platform-stack.yml`

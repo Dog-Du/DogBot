@@ -19,20 +19,20 @@ fi
 
 if [[ "$compose_cmd" == "docker compose" ]]; then
   if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
-    docker compose --env-file "$env_file" -f "$repo_root/compose/wechatpadpro-stack.yml" down
+    docker compose --env-file "$env_file" -f "$repo_root/deploy/docker/wechatpadpro-stack.yml" down
   fi
   if [[ "${ENABLE_QQ:-1}" == "1" ]]; then
-    docker compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" down
+    docker compose --env-file "$env_file" -f "$repo_root/deploy/docker/platform-stack.yml" down
   fi
-  docker compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" down
+  docker compose --env-file "$env_file" -f "$repo_root/deploy/docker/docker-compose.yml" down
 else
   if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
-    docker-compose --env-file "$env_file" -f "$repo_root/compose/wechatpadpro-stack.yml" down
+    docker-compose --env-file "$env_file" -f "$repo_root/deploy/docker/wechatpadpro-stack.yml" down
   fi
   if [[ "${ENABLE_QQ:-1}" == "1" ]]; then
-    docker-compose --env-file "$env_file" -f "$repo_root/compose/platform-stack.yml" down
+    docker-compose --env-file "$env_file" -f "$repo_root/deploy/docker/platform-stack.yml" down
   fi
-  docker-compose --env-file "$env_file" -f "$repo_root/compose/docker-compose.yml" down
+  docker-compose --env-file "$env_file" -f "$repo_root/deploy/docker/docker-compose.yml" down
 fi
 
 pid_file="${AGENT_RUNNER_PID_FILE:-${AGENT_STATE_DIR:-/srv/agent-state}/agent-runner.pid}"
@@ -43,27 +43,6 @@ if [[ -f "$pid_file" ]]; then
   fi
   rm -f "$pid_file"
 fi
-
-qq_adapter_pid_file="${QQ_ADAPTER_PID_FILE:-${AGENT_STATE_DIR:-/srv/agent-state}/qq-adapter.pid}"
-if [[ -f "$qq_adapter_pid_file" ]]; then
-  pid="$(cat "$qq_adapter_pid_file")"
-  if kill -0 "$pid" >/dev/null 2>&1; then
-    kill "$pid"
-  fi
-  rm -f "$qq_adapter_pid_file"
-fi
-
-wechatpadpro_adapter_pid_file="${WECHATPADPRO_ADAPTER_PID_FILE:-${AGENT_STATE_DIR:-/srv/agent-state}/wechatpadpro-adapter.pid}"
-if [[ -f "$wechatpadpro_adapter_pid_file" ]]; then
-  pid="$(cat "$wechatpadpro_adapter_pid_file")"
-  if kill -0 "$pid" >/dev/null 2>&1; then
-    kill "$pid"
-  fi
-  rm -f "$wechatpadpro_adapter_pid_file"
-fi
-
-pkill -f 'uvicorn qq_adapter.app:create_app' >/dev/null 2>&1 || true
-pkill -f 'uvicorn wechatpadpro_adapter.app:create_app' >/dev/null 2>&1 || true
 
 if [[ "${APPLY_NETWORK_POLICY:-1}" == "1" ]]; then
   if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
