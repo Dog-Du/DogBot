@@ -134,6 +134,22 @@ Reaction example:
 ```
 ```
 
+`reaction` and `reply` are different:
+
+- `reaction` is an action on an existing message
+- `reply` is a new outbound message
+
+If the user explicitly asks for a reaction on the current triggering message, and `trigger_message_id` is present in `Turn context (JSON)`, prefer a structured `reaction_add` action instead of replying with plain text only.
+
+Example:
+
+```text
+收到啦。
+```dogbot-action
+{"type":"reaction_add","target_message_id":"trigger_message_id_here","emoji":"👍"}
+```
+```
+
 Reaction-only example:
 
 ```text

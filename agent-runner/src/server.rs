@@ -15,7 +15,7 @@ use axum::{
 };
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, mpsc, oneshot};
-use tracing::warn;
+use tracing::{error, info, warn};
 
 use crate::{
     config::Settings,
@@ -446,10 +446,19 @@ async fn send_message(State(state): State<AppState>, body: Bytes) -> Response {
 
 async fn handle_platform_event(state: AppState, platform_id: &str, body: Bytes) -> Response {
     maybe_purge_expired_history(&state);
+    info!(
+        platform = platform_id,
+        body_bytes = body.len(),
+        "received platform ingress payload"
+    );
 
     let payload: Value = match serde_json::from_slice(&body) {
         Ok(payload) => payload,
         Err(err) => {
+            warn!(
+                platform = platform_id,
+                "failed to decode platform payload JSON: {err}"
+            );
             return error_response(StatusCode::BAD_REQUEST, "invalid_json", &err.to_string())
                 .into_response();
         }
@@ -465,6 +474,10 @@ async fn handle_platform_event(state: AppState, platform_id: &str, body: Bytes) 
     };
 
     let Some(event) = adapter.decode_event(&payload) else {
+        info!(
+            platform = platform_id,
+            "platform payload decoded to no canonical event"
+        );
         return accepted_response("ignored");
     };
 
@@ -473,6 +486,15 @@ async fn handle_platform_event(state: AppState, platform_id: &str, body: Bytes) 
 
 async fn handle_canonical_event(state: &AppState, event: CanonicalEvent) -> Response {
     let decision = TriggerResolver::default().resolve(&event);
+    info!(
+        platform = %event.platform,
+        conversation = %event.conversation,
+        actor = %event.actor,
+        event_id = %event.event_id,
+        decision = ?decision,
+        summary = %summarize_event_for_log(&event),
+        "decoded canonical event"
+    );
 
     if let Err(err) = ensure_history_ingest_state_for_trigger(state, &event, &decision) {
         warn!(
@@ -494,6 +516,12 @@ async fn handle_canonical_event(state: &AppState, event: CanonicalEvent) -> Resp
         TriggerDecision::Ignore => accepted_response("ignored"),
         TriggerDecision::Status => {
             let plan = status_outbound_plan();
+            info!(
+                platform = %event.platform,
+                conversation = %event.conversation,
+                summary = %summarize_plan_for_log(&plan),
+                "delivering status outbound plan"
+            );
             match deliver_plan_for_event(state, &event, &plan).await {
                 Ok(response) => (StatusCode::OK, Json(response)).into_response(),
                 Err(error) if error.error_code == "unsupported_platform" => {
@@ -509,19 +537,48 @@ async fn handle_canonical_event(state: &AppState, event: CanonicalEvent) -> Resp
             let Some(request) = build_run_request_from_event(&event) else {
                 return accepted_response("ignored");
             };
+            info!(
+                platform = %request.platform,
+                conversation = %request.conversation_id,
+                actor = %request.user_id,
+                trigger_message_id = request.trigger_message_id.as_deref().unwrap_or(""),
+                trigger_reply_to_message_id = request
+                    .trigger_reply_to_message_id
+                    .as_deref()
+                    .unwrap_or(""),
+                mention_refs = request.mention_refs.len(),
+                prompt_chars = request.prompt.chars().count(),
+                trigger_summary_chars = request
+                    .trigger_summary
+                    .as_deref()
+                    .map(str::chars)
+                    .map(Iterator::count)
+                    .unwrap_or(0),
+                "built run request from canonical event"
+            );
             let run_response = match execute_run_request(state, request).await {
                 Ok(response) => response,
                 Err(error) => return map_run_result_to_response(Err(error)),
             };
+            info!(
+                exit_code = run_response.exit_code,
+                timed_out = run_response.timed_out,
+                stdout_chars = run_response.stdout.chars().count(),
+                stderr_chars = run_response.stderr.chars().count(),
+                duration_ms = run_response.duration_ms,
+                "runner completed"
+            );
 
             let output = run_response_output(&run_response);
             if output.is_empty() {
+                info!("runner produced empty output; nothing to deliver");
                 return accepted_response("accepted");
             }
 
             let plan = match normalize_agent_output(output) {
                 Ok(plan) => plan,
                 Err(err) => {
+                    error!("failed to normalize agent output: {err}");
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(to_internal_error_message(&format!(
@@ -531,6 +588,7 @@ async fn handle_canonical_event(state: &AppState, event: CanonicalEvent) -> Resp
                         .into_response();
                 }
             };
+            info!(summary = %summarize_plan_for_log(&plan), "normalized runner output into outbound plan");
 
             match deliver_plan_for_event(state, &event, &plan).await {
                 Ok(response) => (StatusCode::OK, Json(response)).into_response(),
@@ -652,6 +710,11 @@ async fn execute_run_request(
     };
 
     let (responder, receiver) = oneshot::channel();
+    info!(
+        conversation = %request.conversation_id,
+        actor = %request.user_id,
+        "queueing run request"
+    );
     match state.queue_tx.try_send(QueuedRun {
         request,
         validated,
@@ -761,6 +824,15 @@ async fn deliver_message_request(
     request: MessageRequest,
     session: crate::session_store::SessionRecord,
 ) -> Result<MessageResponse, ErrorResponse> {
+    info!(
+        session_id = %request.session_id,
+        platform = %session.platform,
+        conversation = %session.conversation_id,
+        reply_to = request.reply_to_message_id.as_deref().unwrap_or(""),
+        mention_user = request.mention_user_id.as_deref().unwrap_or(""),
+        text_chars = request.text.chars().count(),
+        "delivering explicit message request"
+    );
     if let Some(override_messenger) = &state.message_override {
         return override_messenger.send(request, session).await;
     }
@@ -804,6 +876,13 @@ async fn deliver_plan_for_event(
     event: &CanonicalEvent,
     plan: &OutboundPlan,
 ) -> Result<MessageResponse, ErrorResponse> {
+    info!(
+        platform = %event.platform,
+        conversation = %event.conversation,
+        event_id = %event.event_id,
+        summary = %summarize_plan_for_log(plan),
+        "delivering outbound plan for canonical event"
+    );
     if let Some(override_messenger) = &state.message_override {
         let text = plan
             .messages
@@ -850,7 +929,95 @@ async fn deliver_plan_for_event(
     };
 
     let context = delivery_context_from_event(event);
-    adapter.send_plan(&context, plan).await
+    let response = adapter.send_plan(&context, plan).await;
+    match &response {
+        Ok(message) => info!(
+            platform = %event.platform,
+            conversation = %event.conversation,
+            message_id = message.message_id.as_deref().unwrap_or(""),
+            "platform delivery succeeded"
+        ),
+        Err(error) => error!(
+            platform = %event.platform,
+            conversation = %event.conversation,
+            error_code = %error.error_code,
+            message = %error.message,
+            "platform delivery failed"
+        ),
+    }
+    response
+}
+
+fn summarize_event_for_log(event: &CanonicalEvent) -> String {
+    match &event.kind {
+        crate::protocol::EventKind::Message { message } => format!(
+            "kind=message message_id={} reply_to={} parts={} mentions={}",
+            message.message_id,
+            message.reply_to.as_deref().unwrap_or("-"),
+            message.parts.len(),
+            message.mentions.len()
+        ),
+        crate::protocol::EventKind::ReactionAdded {
+            target_message_id,
+            emoji,
+        } => format!("kind=reaction_added target_message_id={target_message_id} emoji={emoji}"),
+        crate::protocol::EventKind::ReactionRemoved {
+            target_message_id,
+            emoji,
+        } => format!("kind=reaction_removed target_message_id={target_message_id} emoji={emoji}"),
+    }
+}
+
+fn summarize_plan_for_log(plan: &OutboundPlan) -> String {
+    let mut replies = 0usize;
+    let mut suppressed_replies = 0usize;
+    let mut mentions = 0usize;
+    let mut text_parts = 0usize;
+    let mut media_parts = 0usize;
+    let mut reaction_add = 0usize;
+    let mut reaction_remove = 0usize;
+
+    for message in &plan.messages {
+        if message.reply_to.is_some() {
+            replies += 1;
+        }
+        if message.suppress_default_reply {
+            suppressed_replies += 1;
+        }
+
+        for part in &message.parts {
+            match part {
+                MessagePart::Text { .. } => text_parts += 1,
+                MessagePart::Mention { .. } => mentions += 1,
+                MessagePart::Image { .. }
+                | MessagePart::File { .. }
+                | MessagePart::Voice { .. }
+                | MessagePart::Video { .. }
+                | MessagePart::Sticker { .. } => media_parts += 1,
+                MessagePart::Quote { .. } => replies += 1,
+            }
+        }
+    }
+
+    for action in &plan.actions {
+        match action {
+            crate::protocol::OutboundAction::ReactionAdd(_) => reaction_add += 1,
+            crate::protocol::OutboundAction::ReactionRemove(_) => reaction_remove += 1,
+        }
+    }
+
+    format!(
+        "messages={} actions={} replies={} suppress_default_replies={} mentions={} text_parts={} media_parts={} reaction_add={} reaction_remove={}",
+        plan.messages.len(),
+        plan.actions.len(),
+        replies,
+        suppressed_replies,
+        mentions,
+        text_parts,
+        media_parts,
+        reaction_add,
+        reaction_remove
+    )
 }
 
 fn accepted_response(status: &str) -> Response {
@@ -924,4 +1091,87 @@ fn conversation_scope(conversation: &str) -> Option<&str> {
     let mut parts = conversation.splitn(3, ':');
     let _platform = parts.next()?;
     parts.next()
+}
+
+#[cfg(test)]
+mod logging_summary_tests {
+    use super::{summarize_event_for_log, summarize_plan_for_log};
+    use crate::protocol::{
+        CanonicalEvent, CanonicalMessage, EventKind, MessagePart, OutboundAction, OutboundMessage,
+        OutboundPlan, ReactionAction,
+    };
+
+    #[test]
+    fn event_summary_mentions_trigger_message_and_refs() {
+        let event = CanonicalEvent {
+            platform: "qq".into(),
+            platform_account: "qq:bot_uin:123".into(),
+            conversation: "qq:group:5566".into(),
+            actor: "qq:user:42".into(),
+            event_id: "evt-1".into(),
+            timestamp_epoch_secs: 1,
+            kind: EventKind::Message {
+                message: CanonicalMessage {
+                    message_id: "msg-9".into(),
+                    reply_to: Some("msg-7".into()),
+                    parts: vec![
+                        MessagePart::Mention {
+                            actor_id: "qq:bot_uin:123".into(),
+                            display: "@DogDu".into(),
+                        },
+                        MessagePart::Text {
+                            text: " 请看 ".into(),
+                        },
+                        MessagePart::Mention {
+                            actor_id: "qq:user:77".into(),
+                            display: "@fly-dog".into(),
+                        },
+                    ],
+                    mentions: vec!["qq:bot_uin:123".into()],
+                    native_metadata: serde_json::json!({}),
+                },
+            },
+            raw_native_payload: serde_json::json!({}),
+        };
+
+        let summary = summarize_event_for_log(&event);
+        assert!(summary.contains("kind=message"));
+        assert!(summary.contains("message_id=msg-9"));
+        assert!(summary.contains("reply_to=msg-7"));
+        assert!(summary.contains("mentions=1"));
+        assert!(summary.contains("parts=3"));
+    }
+
+    #[test]
+    fn plan_summary_mentions_message_action_and_reply_counts() {
+        let plan = OutboundPlan {
+            messages: vec![OutboundMessage {
+                parts: vec![
+                    MessagePart::Mention {
+                        actor_id: "qq:user:77".into(),
+                        display: "@fly-dog".into(),
+                    },
+                    MessagePart::Text {
+                        text: "收到".into(),
+                    },
+                ],
+                reply_to: Some("msg-9".into()),
+                suppress_default_reply: false,
+                delivery_policy: None,
+            }],
+            actions: vec![OutboundAction::ReactionAdd(ReactionAction {
+                target_message_id: "msg-9".into(),
+                emoji: "👍".into(),
+            })],
+            delivery_report_policy: None,
+        };
+
+        let summary = summarize_plan_for_log(&plan);
+        assert!(summary.contains("messages=1"));
+        assert!(summary.contains("actions=1"));
+        assert!(summary.contains("replies=1"));
+        assert!(summary.contains("mentions=1"));
+        assert!(summary.contains("reaction_add=1"));
+        assert!(summary.contains("text_parts=1"));
+    }
 }

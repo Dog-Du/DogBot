@@ -40,4 +40,10 @@ fn reply_format_skill_exists_and_mentions_no_markdown_rule() {
         skill.contains("\"reply_to\":null") && skill.contains("\"reply_to\":\""),
         "reply-format skill must document reply_to override semantics"
     );
+    assert!(
+        skill.contains("reaction_add")
+            && skill.contains("trigger_message_id")
+            && skill.contains("explicitly asks for a reaction"),
+        "reply-format skill must explain when to prefer structured reaction output"
+    );
 }
