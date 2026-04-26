@@ -9,7 +9,6 @@ trap 'rm -rf "$tmpdir"' EXIT
 env_example="$repo_root/deploy/dogbot.env.example"
 env_file="$tmpdir/dogbot.env"
 config_dir="$tmpdir/napcat-config"
-docker_log="$tmpdir/docker.log"
 
 if ! grep -q '^NAPCAT_HTTP_CLIENT_URL=http://host.docker.internal:8787/v1/platforms/qq/napcat/events$' "$env_example"; then
   echo "FAIL: dogbot.env.example must define the default NapCat HTTP ingress URL" >&2
@@ -41,13 +40,7 @@ fi
 exec python3 "$@"
 EOF
 
-cat >"$tmpdir/bin/docker" <<EOF
-#!/usr/bin/env bash
-echo docker "\$@" >>"$docker_log"
-exit 0
-EOF
-
-chmod +x "$tmpdir/bin/uv" "$tmpdir/bin/docker"
+chmod +x "$tmpdir/bin/uv"
 
 output="$(
   PATH="$tmpdir/bin:$PATH" \
@@ -86,9 +79,9 @@ if [[ "$output" != *"configured NapCat HTTP client in $config_file"* ]]; then
   exit 1
 fi
 
-if ! grep -q 'docker restart napcat' "$docker_log"; then
-  echo "FAIL: expected napcat restart command" >&2
-  cat "$docker_log" >&2 || true
+if [[ "$output" == *"restart"* ]]; then
+  echo "FAIL: configure_napcat_ingress.sh must not restart napcat anymore" >&2
+  echo "$output" >&2
   exit 1
 fi
 

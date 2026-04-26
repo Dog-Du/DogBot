@@ -222,12 +222,12 @@ run_compose_up "$repo_root/deploy/docker/docker-compose.yml" claude-runner
 
 if [[ "${ENABLE_QQ}" == "1" ]]; then
   dogbot_require_env PLATFORM_QQ_BOT_ID
+  "$repo_root/scripts/configure_napcat_ingress.sh" "$env_file"
   remove_legacy_compose_container_if_needed \
     "${NAPCAT_CONTAINER_NAME:-napcat}" \
     "napcat" \
     "$repo_root/deploy/docker/platform-stack.yml"
   run_compose_up "$repo_root/deploy/docker/platform-stack.yml" napcat
-  "$repo_root/scripts/configure_napcat_ingress.sh" "$env_file"
   echo "Waiting up to ${DOGBOT_LOGIN_TIMEOUT_SECS:-100}s for NapCat login..."
   "$repo_root/scripts/prepare_napcat_login.sh" "$env_file"
 fi

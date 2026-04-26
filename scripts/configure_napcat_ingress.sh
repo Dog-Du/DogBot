@@ -11,7 +11,6 @@ if ! uv_bin="$(dogbot_resolve_uv_bin)"; then
   exit 1
 fi
 
-NAPCAT_CONTAINER_NAME="${NAPCAT_CONTAINER_NAME:-napcat}"
 NAPCAT_CONFIG_DIR="${NAPCAT_CONFIG_DIR:-$dogbot_repo_root/agent-state/napcat-config}"
 NAPCAT_ONEBOT_PORT="${NAPCAT_ONEBOT_PORT:-3001}"
 NAPCAT_HTTP_TOKEN="${NAPCAT_ACCESS_TOKEN:-}"
@@ -67,5 +66,4 @@ network["websocketClients"] = []
 config_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 
-docker restart "$NAPCAT_CONTAINER_NAME" >/dev/null
 echo "configured NapCat HTTP client in $CONFIG_FILE"

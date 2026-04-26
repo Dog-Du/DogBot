@@ -28,8 +28,26 @@ if ! grep -Fq '${AGENT_WORKSPACE_DIR:-/srv/agent-workdir}:/workspace:ro' "$repo_
   exit 1
 fi
 
+if ! grep -Fq 'ACCOUNT: ${PLATFORM_QQ_BOT_ID:-}' "$repo_root/deploy/docker/platform-stack.yml"; then
+  echo "FAIL: NapCat container must default to quick login with PLATFORM_QQ_BOT_ID" >&2
+  exit 1
+fi
+
 if ! grep -q 'DOGBOT_COMPOSE_PROJECT_NAME' "$repo_root/scripts/deploy_stack.sh"; then
   echo "FAIL: deploy_stack.sh must pin a stable Docker Compose project name" >&2
+  exit 1
+fi
+
+configure_line="$(grep -n '"\$repo_root/scripts/configure_napcat_ingress.sh" "\$env_file"' "$repo_root/scripts/deploy_stack.sh" | cut -d: -f1)"
+compose_line="$(grep -n 'run_compose_up "\$repo_root/deploy/docker/platform-stack.yml" napcat' "$repo_root/scripts/deploy_stack.sh" | cut -d: -f1)"
+
+if [[ -z "$configure_line" || -z "$compose_line" || "$configure_line" -ge "$compose_line" ]]; then
+  echo "FAIL: deploy_stack.sh must configure NapCat ingress before starting the NapCat container" >&2
+  exit 1
+fi
+
+if grep -q 'docker restart "\$NAPCAT_CONTAINER_NAME"' "$repo_root/scripts/configure_napcat_ingress.sh"; then
+  echo "FAIL: configure_napcat_ingress.sh must not restart NapCat during deploy" >&2
   exit 1
 fi
 
@@ -52,6 +70,16 @@ done
 
 if ! grep -q 'DOGBOT_COMPOSE_PROJECT_NAME' "$repo_root/scripts/stop_stack.sh"; then
   echo "FAIL: stop_stack.sh must pin a stable Docker Compose project name" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--keep-qq' "$repo_root/scripts/stop_stack.sh"; then
+  echo "FAIL: stop_stack.sh must support keeping NapCat running during runner-only restarts" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--keep-wechat' "$repo_root/scripts/stop_stack.sh"; then
+  echo "FAIL: stop_stack.sh must support keeping WeChatPadPro running during runner-only restarts" >&2
   exit 1
 fi
 
