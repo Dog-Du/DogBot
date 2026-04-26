@@ -23,6 +23,11 @@ if ! grep -q '/v1/platforms/wechatpadpro/events' "$repo_root/scripts/configure_w
   exit 1
 fi
 
+if ! grep -Fq '${AGENT_WORKSPACE_DIR:-/srv/agent-workdir}:/workspace:ro' "$repo_root/deploy/docker/platform-stack.yml"; then
+  echo "FAIL: NapCat container must mount AGENT_WORKSPACE_DIR read-only at /workspace for local media delivery" >&2
+  exit 1
+fi
+
 if ! grep -q 'DOGBOT_COMPOSE_PROJECT_NAME' "$repo_root/scripts/deploy_stack.sh"; then
   echo "FAIL: deploy_stack.sh must pin a stable Docker Compose project name" >&2
   exit 1

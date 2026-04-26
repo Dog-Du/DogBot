@@ -794,7 +794,7 @@ async fn qq_ingress_reaction_add_uses_native_napcat_endpoint() {
 ```dogbot-action
 {"actions":[
   {"type":"reaction_add","target_message_id":"99","emoji":"👍"},
-  {"type":"reaction_add","target_message_id":"99","emoji":"😂"}
+  {"type":"reaction_add","target_message_id":"99","emoji":"🔥"}
 ]}
 ```"#,
     };
@@ -830,15 +830,69 @@ async fn qq_ingress_reaction_add_uses_native_napcat_endpoint() {
     assert_eq!(requests.len(), 3);
     assert_eq!(requests[0].0, "/set_msg_emoji_like");
     assert_eq!(requests[0].1["message_id"], 99);
-    assert_eq!(requests[0].1["emoji_id"], "👍");
+    assert_eq!(requests[0].1["emoji_id"], "128077");
     assert_eq!(requests[1].0, "/set_msg_emoji_like");
     assert_eq!(requests[1].1["message_id"], 99);
-    assert_eq!(requests[1].1["emoji_id"], "😂");
+    assert_eq!(requests[1].1["emoji_id"], "128591");
     assert_eq!(requests[2].0, "/send_group_msg");
     assert_eq!(
         requests[2].1["message"],
         "[CQ:reply,id=99][CQ:at,qq=42] 收到"
     );
+}
+
+#[tokio::test]
+async fn qq_reaction_business_error_returns_bad_gateway() {
+    let capture = Capture::default();
+    let base_url = spawn_mock_server(
+        capture.clone(),
+        json!({
+            "status": "ok",
+            "retcode": 0,
+            "data": {"result": 51, "errMsg": "invalid ReqBody.EmojiId"}
+        }),
+    )
+    .await;
+    let mut settings = test_settings();
+    settings.napcat_api_base_url = base_url;
+
+    let runner = FixedOutputRunner {
+        stdout: r#"```dogbot-action
+{"type":"reaction_add","target_message_id":"99","emoji":"👍"}
+```"#,
+    };
+    let app = build_test_app_with_settings(Arc::new(runner), settings);
+    let payload = json!({
+        "time": 1_710_000_000,
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 5566,
+        "user_id": 42,
+        "message_id": 99,
+        "raw_message": "[CQ:at,qq=123] hello",
+        "message": [
+            {"type":"at","data":{"qq":"123"}},
+            {"type":"text","data":{"text":" hello"}}
+        ]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/platforms/qq/napcat/events")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    let requests = capture.all();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0, "/set_msg_emoji_like");
+    assert_eq!(requests[0].1["emoji_id"], "128077");
 }
 
 #[tokio::test]

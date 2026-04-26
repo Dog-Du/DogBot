@@ -20,5 +20,6 @@ services:
     volumes:
       - "${NAPCAT_QQ_DIR:-/srv/napcat/qq}:/app/.config/QQ"
       - "${NAPCAT_CONFIG_DIR:-/srv/napcat/config}:/app/napcat/config"
+      - "${AGENT_WORKSPACE_DIR:-/srv/agent-workdir}:/workspace:ro"
     extra_hosts:
       - "host.docker.internal:host-gateway"

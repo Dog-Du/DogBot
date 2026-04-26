@@ -1,6 +1,6 @@
 # DogBot Runtime
 
-@persona.md
+You MUST read `persona.md` before doing anything. It defines your persona.
 
 Available skills:
 

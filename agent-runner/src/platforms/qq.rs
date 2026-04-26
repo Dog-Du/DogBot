@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::{Value, json};
+use tracing::{info, warn};
 
 use crate::{
     config::Settings,
@@ -20,6 +21,15 @@ const INGRESS_ROUTES: &[IngressRoute] = &[IngressRoute {
     path: "/v1/platforms/qq/napcat/events",
     allow_head: false,
 }];
+
+const QQ_REACTION_EMOJI_IDS: [(&str, &str); 6] = [
+    ("👍", "128077"),
+    ("🙏", "128591"),
+    ("🫡", "129761"),
+    ("😂", "128514"),
+    ("❤", "10084"),
+    ("👏", "128079"),
+];
 
 pub struct QqPlatform {
     client: reqwest::Client,
@@ -152,10 +162,19 @@ impl QqPlatform {
             })?
             .parse::<i64>()
             .map_err(|_| internal_error("invalid QQ reaction target id"))?;
+        let emoji_id = qq_reaction_emoji_id(&action.emoji);
         let payload = json!({
             "message_id": message_id,
-            "emoji_id": action.emoji,
+            "emoji_id": emoji_id,
+            "set": true,
         });
+
+        info!(
+            message_id,
+            emoji = %action.emoji,
+            emoji_id = %emoji_id,
+            "sending QQ reaction via NapCat"
+        );
 
         let response = self
             .client
@@ -179,10 +198,34 @@ impl QqPlatform {
         })?;
 
         if !status.is_success() {
+            warn!(
+                message_id,
+                emoji = %action.emoji,
+                emoji_id = %emoji_id,
+                status = %status,
+                body = %body,
+                "NapCat rejected QQ reaction request"
+            );
             return Err(ErrorResponse {
                 status: "error".into(),
                 error_code: "delivery_failed".into(),
                 message: format!("NapCat API returned {status}: {body}"),
+                timed_out: false,
+            });
+        }
+
+        if let Some(message) = napcat_business_error(&body) {
+            warn!(
+                message_id,
+                emoji = %action.emoji,
+                emoji_id = %emoji_id,
+                body = %body,
+                "NapCat reported QQ reaction business failure"
+            );
+            return Err(ErrorResponse {
+                status: "error".into(),
+                error_code: "delivery_failed".into(),
+                message,
                 timed_out: false,
             });
         }
@@ -380,11 +423,65 @@ pub fn compile_outbound_message(
 
 fn qq_asset_reference(asset: &AssetRef) -> String {
     match &asset.source {
-        crate::protocol::AssetSource::WorkspacePath(path) => format!("file://{path}"),
+        crate::protocol::AssetSource::WorkspacePath(path) => path.clone(),
         crate::protocol::AssetSource::ManagedStore(value)
         | crate::protocol::AssetSource::ExternalUrl(value)
         | crate::protocol::AssetSource::PlatformNativeHandle(value)
         | crate::protocol::AssetSource::BridgeHandle(value) => value.clone(),
+    }
+}
+
+fn qq_reaction_emoji_id(emoji: &str) -> String {
+    let trimmed = emoji.trim();
+    if trimmed.chars().all(|value| value.is_ascii_digit()) {
+        return trimmed.to_string();
+    }
+
+    if let Some(id) = qq_supported_reaction_id(trimmed) {
+        return id.to_string();
+    }
+
+    let fallback_index = trimmed
+        .chars()
+        .find(|value| !matches!(*value, '\u{fe0e}' | '\u{fe0f}'))
+        .map(|value| value as usize % QQ_REACTION_EMOJI_IDS.len())
+        .unwrap_or(0);
+    let (fallback_emoji, fallback_id) = QQ_REACTION_EMOJI_IDS[fallback_index];
+    info!(
+        emoji = %emoji,
+        fallback_emoji,
+        emoji_id = fallback_id,
+        "mapped unsupported QQ reaction emoji to supported fallback"
+    );
+    fallback_id.to_string()
+}
+
+fn qq_supported_reaction_id(emoji: &str) -> Option<&'static str> {
+    match emoji {
+        "❤" | "❤️" => Some("10084"),
+        other => QQ_REACTION_EMOJI_IDS
+            .iter()
+            .find_map(|(candidate, id)| (*candidate == other).then_some(*id)),
+    }
+}
+
+fn napcat_business_error(body: &Value) -> Option<String> {
+    let result = body
+        .pointer("/data/result")
+        .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()));
+    let err_msg = body
+        .pointer("/data/errMsg")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+
+    match result {
+        Some(0) | Some(65002) => None,
+        Some(code) => Some(format!(
+            "NapCat reaction request failed: result={code}, errMsg={err_msg}"
+        )),
+        None if err_msg.is_empty() => None,
+        None => Some(format!("NapCat reaction request failed: errMsg={err_msg}")),
     }
 }
 

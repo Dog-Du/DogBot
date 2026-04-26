@@ -1,5 +1,5 @@
 use agent_runner::platforms::qq::{compile_outbound_message, decode_napcat_event};
-use agent_runner::protocol::{MessagePart, OutboundMessage};
+use agent_runner::protocol::{AssetRef, AssetSource, MessagePart, OutboundMessage};
 
 #[test]
 fn qq_group_event_maps_at_segment_to_structured_mention_and_detects_bot_mention() {
@@ -116,4 +116,26 @@ fn qq_outbound_can_skip_reply_prefix() {
     let encoded = compile_outbound_message(&outbound, None, Some("42")).unwrap();
 
     assert_eq!(encoded, "[CQ:at,qq=42] done");
+}
+
+#[test]
+fn qq_workspace_media_uses_plain_container_path() {
+    let outbound = OutboundMessage {
+        parts: vec![MessagePart::Image {
+            asset: AssetRef {
+                asset_id: "image:/workspace/outbox/example.png".into(),
+                kind: "image".into(),
+                mime: "image/png".into(),
+                size_bytes: 0,
+                source: AssetSource::WorkspacePath("/workspace/outbox/example.png".into()),
+            },
+        }],
+        reply_to: None,
+        suppress_default_reply: false,
+        delivery_policy: None,
+    };
+
+    let encoded = compile_outbound_message(&outbound, None, None).unwrap();
+
+    assert_eq!(encoded, "[CQ:image,file=/workspace/outbox/example.png]");
 }

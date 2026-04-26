@@ -46,4 +46,11 @@ fn reply_format_skill_exists_and_mentions_no_markdown_rule() {
             && skill.contains("explicitly asks for a reaction"),
         "reply-format skill must explain when to prefer structured reaction output"
     );
+    assert!(
+        skill.contains("mainly social or interactive")
+            && skill.contains("only use one of these emojis")
+            && skill.contains("🫡")
+            && skill.contains("❤"),
+        "reply-format skill must define autonomous social reaction policy and emoji whitelist"
+    );
 }
