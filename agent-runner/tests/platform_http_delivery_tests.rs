@@ -144,6 +144,28 @@ async fn spawn_mock_server(capture: Capture, response: Value) -> String {
             }),
         )
         .route(
+            "/send_private_msg",
+            post({
+                let capture = capture.clone();
+                let response = response.clone();
+                move |request: Request<Body>| {
+                    let capture = capture.clone();
+                    let response = response.clone();
+                    async move {
+                        let path = request
+                            .uri()
+                            .path_and_query()
+                            .map(|value| value.as_str().to_string())
+                            .unwrap_or_else(|| "/".to_string());
+                        let body = to_bytes(request.into_body(), usize::MAX).await.unwrap();
+                        let json: Value = serde_json::from_slice(&body).unwrap();
+                        capture.push(path, json);
+                        axum::Json(response)
+                    }
+                }
+            }),
+        )
+        .route(
             "/send_group_msg",
             post({
                 let capture = capture.clone();
@@ -351,6 +373,49 @@ async fn qq_ingress_group_message_uses_registered_platform_adapter_for_delivery(
     assert_eq!(path, "/send_group_msg");
     assert_eq!(body["group_id"], 5566);
     assert_eq!(body["message"], "[CQ:reply,id=99][CQ:at,qq=42] 收到");
+}
+
+#[tokio::test]
+async fn qq_private_ingress_uses_send_private_msg_for_delivery() {
+    let capture = Capture::default();
+    let base_url = spawn_mock_server(
+        capture.clone(),
+        json!({"status": "ok", "data": {"message_id": 92}}),
+    )
+    .await;
+    let mut settings = test_settings();
+    settings.napcat_api_base_url = base_url;
+
+    let app = build_test_app_with_settings(Arc::new(SuccessRunner), settings);
+    let payload = json!({
+        "time": 1_710_000_000,
+        "post_type": "message",
+        "message_type": "private",
+        "user_id": 42,
+        "message_id": 100,
+        "raw_message": "hello",
+        "message": [
+            {"type":"text","data":{"text":"hello"}}
+        ]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/platforms/qq/napcat/ws")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let (path, body) = capture.last().expect("captured request");
+    assert_eq!(path, "/send_private_msg");
+    assert_eq!(body["user_id"], 42);
+    assert_eq!(body["message"], "[CQ:reply,id=100]收到");
 }
 
 #[tokio::test]

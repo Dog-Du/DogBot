@@ -22,6 +22,17 @@ impl CapturingMessenger {
     }
 }
 
+#[derive(Default)]
+struct CountingRunner {
+    calls: Mutex<usize>,
+}
+
+impl CountingRunner {
+    fn call_count(&self) -> usize {
+        *self.calls.lock().unwrap()
+    }
+}
+
 #[async_trait]
 impl Messenger for CapturingMessenger {
     async fn send(
@@ -49,6 +60,25 @@ impl Runner for SuccessRunner {
         Ok(RunResponse {
             status: "ok".into(),
             stdout: "收到".into(),
+            stderr: String::new(),
+            exit_code: 0,
+            timed_out: false,
+            duration_ms: 1,
+        })
+    }
+}
+
+#[async_trait]
+impl Runner for CountingRunner {
+    async fn run(
+        &self,
+        _request: RunRequest,
+        _validated: ValidatedRunRequest,
+    ) -> Result<RunResponse, ErrorResponse> {
+        *self.calls.lock().unwrap() += 1;
+        Ok(RunResponse {
+            status: "ok".into(),
+            stdout: "不应该调用 runner".into(),
             stderr: String::new(),
             exit_code: 0,
             timed_out: false,
@@ -137,6 +167,48 @@ async fn wechat_ingress_runs_and_delivers_reply_message() {
         Some(MessageRequest {
             session_id: "wechatpadpro:private:wxid_user_1".into(),
             text: "收到".into(),
+            reply_to_message_id: None,
+            mention_user_id: None,
+        })
+    );
+}
+
+#[tokio::test]
+async fn qq_private_status_command_bypasses_runner_and_returns_health_reply() {
+    let runner = Arc::new(CountingRunner::default());
+    let messenger = Arc::new(CapturingMessenger::default());
+    let app = build_test_app_with_message_support(runner.clone(), messenger.clone(), test_settings());
+    let payload = serde_json::json!({
+        "time": 1_710_000_000,
+        "post_type": "message",
+        "message_type": "private",
+        "user_id": 42,
+        "message_id": 99,
+        "raw_message": "/agent-status",
+        "message": [
+            {"type":"text","data":{"text":"/agent-status"}}
+        ]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/platforms/qq/napcat/ws")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(runner.call_count(), 0);
+    assert_eq!(
+        messenger.last_request(),
+        Some(MessageRequest {
+            session_id: "qq:private:42".into(),
+            text: "agent-runner ok".into(),
             reply_to_message_id: None,
             mention_user_id: None,
         })

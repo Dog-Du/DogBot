@@ -492,7 +492,20 @@ async fn handle_canonical_event(state: &AppState, event: CanonicalEvent) -> Resp
 
     match decision {
         TriggerDecision::Ignore => accepted_response("ignored"),
-        TriggerDecision::Run | TriggerDecision::Status => {
+        TriggerDecision::Status => {
+            let plan = status_outbound_plan();
+            match deliver_plan_for_event(state, &event, &plan).await {
+                Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+                Err(error) if error.error_code == "unsupported_platform" => {
+                    (StatusCode::BAD_REQUEST, Json(error)).into_response()
+                }
+                Err(error) if error.error_code.starts_with("delivery_") => {
+                    (StatusCode::BAD_GATEWAY, Json(error)).into_response()
+                }
+                Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response(),
+            }
+        }
+        TriggerDecision::Run => {
             let Some(request) = build_run_request_from_event(&event) else {
                 return accepted_response("ignored");
             };
@@ -530,6 +543,20 @@ async fn handle_canonical_event(state: &AppState, event: CanonicalEvent) -> Resp
                 Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response(),
             }
         }
+    }
+}
+
+fn status_outbound_plan() -> OutboundPlan {
+    OutboundPlan {
+        messages: vec![OutboundMessage {
+            parts: vec![MessagePart::Text {
+                text: "agent-runner ok".into(),
+            }],
+            reply_to: None,
+            delivery_policy: None,
+        }],
+        actions: vec![],
+        delivery_report_policy: None,
     }
 }
 
