@@ -1,4 +1,5 @@
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use serde_json::Value;
 use tracing::warn;
 
 use crate::protocol::{
@@ -10,6 +11,10 @@ use crate::protocol::{
 #[serde(deny_unknown_fields)]
 struct ActionEnvelope {
     #[serde(default)]
+    reply_to: ReplyToDirective,
+    #[serde(default)]
+    mentions: Vec<MentionSpec>,
+    #[serde(default)]
     actions: Vec<ActionItem>,
 }
 
@@ -20,9 +25,18 @@ struct ActionItem {
     action_type: String,
     target_message_id: Option<String>,
     emoji: Option<String>,
+    #[serde(default)]
+    reply_to: ReplyToDirective,
     source_type: Option<String>,
     source_value: Option<String>,
     caption_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MentionSpec {
+    actor_id: String,
+    display: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,9 +46,38 @@ enum ActionBlock {
     Single(ActionItem),
 }
 
+#[derive(Debug, Clone, Default)]
+enum ReplyToDirective {
+    #[default]
+    Missing,
+    Null,
+    Value(String),
+}
+
+impl<'de> Deserialize<'de> for ReplyToDirective {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        Ok(match value {
+            Value::Null => Self::Null,
+            Value::String(text) => Self::Value(text),
+            _ => {
+                return Err(serde::de::Error::custom(
+                    "reply_to must be a string or null",
+                ));
+            }
+        })
+    }
+}
+
 pub fn normalize_agent_output(output: &str) -> Result<OutboundPlan, serde_json::Error> {
     let normalized = output.replace("\r\n", "\n");
     let mut body = String::new();
+    let mut body_reply_to = None;
+    let mut suppress_body_default_reply = false;
+    let mut body_mentions = Vec::new();
     let mut actions = Vec::new();
     let mut messages = Vec::new();
     let mut remaining = normalized.as_str();
@@ -50,9 +93,18 @@ pub fn normalize_agent_output(output: &str) -> Result<OutboundPlan, serde_json::
 
         match serde_json::from_str::<ActionBlock>(json_block.trim()) {
             Ok(ActionBlock::Envelope(envelope)) => {
+                if let Some((reply_to, suppress_default_reply)) =
+                    parse_reply_to_directive(&envelope.reply_to)
+                {
+                    body_reply_to = reply_to;
+                    suppress_body_default_reply = suppress_default_reply;
+                }
+                body_mentions.extend(envelope.mentions);
                 append_action_items(&mut messages, &mut actions, envelope.actions);
             }
-            Ok(ActionBlock::Single(item)) => append_action_items(&mut messages, &mut actions, vec![item]),
+            Ok(ActionBlock::Single(item)) => {
+                append_action_items(&mut messages, &mut actions, vec![item])
+            }
             Err(err) => warn!("failed to parse dogbot-action block: {err}"),
         }
 
@@ -62,8 +114,27 @@ pub fn normalize_agent_output(output: &str) -> Result<OutboundPlan, serde_json::
     body.push_str(remaining);
 
     let body = degrade_markdown(body.trim());
-    if !body.is_empty() {
-        messages.insert(0, OutboundMessage::text(&body));
+    if !body.is_empty() || !body_mentions.is_empty() {
+        let mut message = OutboundMessage {
+            parts: body_mentions
+                .into_iter()
+                .map(|mention| MessagePart::Mention {
+                    actor_id: mention.actor_id,
+                    display: mention.display,
+                })
+                .collect(),
+            reply_to: None,
+            suppress_default_reply: false,
+            delivery_policy: None,
+        };
+        if !body.is_empty() {
+            message.parts.push(MessagePart::Text {
+                text: body.to_string(),
+            });
+        }
+        message.reply_to = body_reply_to;
+        message.suppress_default_reply = suppress_body_default_reply;
+        messages.insert(0, message);
     }
 
     Ok(OutboundPlan {
@@ -126,7 +197,10 @@ fn media_action_to_message(item: &ActionItem) -> Option<OutboundMessage> {
     };
 
     let asset = AssetRef {
-        asset_id: format!("{part_kind}:{}", item.source_value.as_deref().unwrap_or_default()),
+        asset_id: format!(
+            "{part_kind}:{}",
+            item.source_value.as_deref().unwrap_or_default()
+        ),
         kind: part_kind.to_string(),
         mime: default_mime(part_kind).to_string(),
         size_bytes: 0,
@@ -152,9 +226,31 @@ fn media_action_to_message(item: &ActionItem) -> Option<OutboundMessage> {
 
     Some(OutboundMessage {
         parts,
-        reply_to: None,
+        reply_to: parse_reply_to_directive(&item.reply_to).and_then(|(reply_to, _)| reply_to),
+        suppress_default_reply: parse_reply_to_directive(&item.reply_to)
+            .map(|(_, suppress_default_reply)| suppress_default_reply)
+            .unwrap_or(false),
         delivery_policy: None,
     })
+}
+
+fn normalize_reply_to_value(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn parse_reply_to_directive(value: &ReplyToDirective) -> Option<(Option<String>, bool)> {
+    match value {
+        ReplyToDirective::Missing => None,
+        ReplyToDirective::Null => Some((None, true)),
+        ReplyToDirective::Value(value) => {
+            normalize_reply_to_value(value).map(|reply_to| (Some(reply_to), false))
+        }
+    }
 }
 
 fn default_mime(part_kind: &str) -> &'static str {

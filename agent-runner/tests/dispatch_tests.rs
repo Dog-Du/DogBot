@@ -38,6 +38,7 @@ fn dispatcher_rejects_workspace_escape_asset_paths() {
                 },
             }],
             reply_to: None,
+            suppress_default_reply: false,
             delivery_policy: None,
         }],
         actions: vec![],

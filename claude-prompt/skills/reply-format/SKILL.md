@@ -22,12 +22,22 @@ Read the current turn from the prompt you were given:
 
 - `Turn context (JSON)`
   - `conversation` and `actor` are short-lived metadata for this turn
+  - `trigger_message_id` is the current message id when you need to reply to or react to the triggering message
+  - `trigger_reply_to_message_id` is the message id that the current message itself replied to, when present
   - `reply_excerpt` is quoted context when available
   - `trigger_summary` is a compact summary of what triggered this turn
+  - `mention_refs` maps `[#m1]`, `[#m2]` and similar markers in `trigger_summary` back to canonical `actor_id` values
 - `User prompt`
   - this is the main message content you should answer
 
 Treat `reply_excerpt` as context only. Do not repeat it unless the reply really needs it.
+
+If `trigger_summary` contains something like `@fly-dog[#m1]`, that means:
+
+- the user-visible mention text is `@fly-dog`
+- the real target id is in `mention_refs`
+
+Use the `actor_id` from `mention_refs` when you need to mention the same person in a structured message. Do not copy `[#m1]` into your user-visible reply text.
 
 ## How To Reply
 
@@ -59,6 +69,46 @@ If you need multiple actions, use one envelope:
 ]}
 ```
 ```
+
+If you need to control which message DogBot replies to, add `reply_to` inside the same action block:
+
+- omit `reply_to`: use DogBot's default behavior, which usually replies to the triggering message
+- `"reply_to":"123456"`: explicitly reply to message `123456`
+- `"reply_to":null`: explicitly do not add a reply target
+
+Example: keep the normal text but disable the default reply target:
+
+```text
+这条我直接说，不挂 reply。
+```dogbot-action
+{"reply_to":null}
+```
+```
+
+Example: override the default reply target:
+
+```text
+我回上一条就好。
+```dogbot-action
+{"reply_to":"123456"}
+```
+```
+
+If you need structured mentions in the same visible message, add `mentions` inside the same action block. The normal text still stays outside the JSON block:
+
+```text
+请看一下。
+```dogbot-action
+{"mentions":[{"actor_id":"qq:user:77","display":"@fly-dog"}]}
+```
+```
+
+Each mention object needs:
+
+- `actor_id`
+- `display`
+
+When the current turn includes `mention_refs`, use those values directly instead of inventing them.
 
 ## Supported Actions
 
@@ -108,6 +158,17 @@ File example:
 ```dogbot-action
 {"type":"send_file","source_type":"workspace_path","source_value":"/workspace/outbox/report.md"}
 ```
+
+Mention example using `mention_refs` from the current turn:
+
+```text
+请他看一下。
+```dogbot-action
+{"mentions":[{"actor_id":"qq:user:77","display":"@fly-dog"}]}
+```
+```
+
+Do not invent a mention target yourself. If you need to mention someone from the triggering message, first find their `actor_id` and `display` in `mention_refs`, then copy those values into `mentions`.
 ```
 
 ## Media Rules

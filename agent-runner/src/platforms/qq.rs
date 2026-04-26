@@ -32,9 +32,8 @@ impl QqPlatform {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         if let Some(token) = settings.napcat_access_token.as_deref() {
-            let value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| {
-                internal_error("invalid NAPCAT_ACCESS_TOKEN header value")
-            })?;
+            let value = HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|_| internal_error("invalid NAPCAT_ACCESS_TOKEN header value"))?;
             headers.insert(AUTHORIZATION, value);
         }
 
@@ -56,7 +55,10 @@ impl QqPlatform {
 
         Ok(Self {
             client,
-            base_url: settings.napcat_api_base_url.trim_end_matches('/').to_string(),
+            base_url: settings
+                .napcat_api_base_url
+                .trim_end_matches('/')
+                .to_string(),
             platform_account,
         })
     }
@@ -233,20 +235,21 @@ impl PlatformAdapter for QqPlatform {
             } else {
                 None
             };
-            let message = if index == 0 && message.reply_to.is_none() {
-                let mut message = message.clone();
-                message.reply_to = context.reply_to_message_id.clone();
-                message
+            let default_reply_to = if index == 0 {
+                context.reply_to_message_id.as_deref()
             } else {
-                message.clone()
+                None
             };
-            let encoded = compile_outbound_message(&message, mention_user_id).map_err(|err| {
-                ErrorResponse {
-                    status: "error".into(),
-                    error_code: "delivery_invalid_plan".into(),
-                    message: err,
-                    timed_out: false,
-                }
+            let encoded = compile_outbound_message(
+                message,
+                message.effective_reply_to(default_reply_to),
+                mention_user_id,
+            )
+            .map_err(|err| ErrorResponse {
+                status: "error".into(),
+                error_code: "delivery_invalid_plan".into(),
+                message: err,
+                timed_out: false,
             })?;
 
             last_response = self
@@ -326,11 +329,12 @@ pub fn decode_napcat_event(payload: &Value, platform_account: &str) -> Option<Ca
 
 pub fn compile_outbound_message(
     message: &OutboundMessage,
+    reply_to: Option<&str>,
     mention_user_id: Option<&str>,
 ) -> Result<String, String> {
     let mut output = String::new();
 
-    if let Some(reply_to) = message.reply_to.as_deref() {
+    if let Some(reply_to) = reply_to {
         let reply_to = normalize_qq_target_id(reply_to)?;
         output.push_str(&format!("[CQ:reply,id={reply_to}]"));
     }

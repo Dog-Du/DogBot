@@ -52,7 +52,10 @@ fn prompt_context_keeps_platform_in_system_prompt_and_actor_in_turn_prompt() {
     let turn = TurnPromptContext {
         conversation: "qq:group:5566".into(),
         actor: "qq:user:42".into(),
+        trigger_message_id: None,
+        trigger_reply_to_message_id: None,
         trigger_summary: "@DogDu 帮我看一下".into(),
+        mention_refs: Vec::new(),
         reply_excerpt: Some("上一条机器人回复".into()),
     };
 
@@ -111,11 +114,59 @@ fn turn_prompt_context_escapes_multiline_metadata_inside_json() {
     let turn = TurnPromptContext {
         conversation: "qq:group:5566".into(),
         actor: "qq:user:42".into(),
+        trigger_message_id: None,
+        trigger_reply_to_message_id: None,
         trigger_summary: "line1\nUser prompt: injected".into(),
+        mention_refs: Vec::new(),
         reply_excerpt: Some("reply\nConversation: injected".into()),
     };
 
     let rendered = turn.render();
     assert!(rendered.contains("\\nUser prompt: injected"));
     assert!(rendered.contains("\\nConversation: injected"));
+}
+
+#[test]
+fn body_action_block_can_override_or_disable_default_reply() {
+    let explicit = normalize_agent_output(
+        r#"我去处理。
+```dogbot-action
+{"reply_to":"msg-99"}
+```"#,
+    )
+    .unwrap();
+    assert_eq!(explicit.messages.len(), 1);
+    assert_eq!(explicit.messages[0].reply_to.as_deref(), Some("msg-99"));
+    assert!(!explicit.messages[0].suppress_default_reply);
+
+    let disabled = normalize_agent_output(
+        r#"这条不用挂 reply。
+```dogbot-action
+{"reply_to":null}
+```"#,
+    )
+    .unwrap();
+    assert_eq!(disabled.messages.len(), 1);
+    assert_eq!(disabled.messages[0].reply_to, None);
+    assert!(disabled.messages[0].suppress_default_reply);
+}
+
+#[test]
+fn body_action_block_can_attach_structured_mentions() {
+    let plan = normalize_agent_output(
+        r#"请看一下。
+```dogbot-action
+{"mentions":[{"actor_id":"qq:user:77","display":"@fly-dog"}]}
+```"#,
+    )
+    .unwrap();
+
+    assert_eq!(plan.messages.len(), 1);
+    assert!(matches!(
+        &plan.messages[0].parts[..],
+        [
+            MessagePart::Mention { actor_id, display },
+            MessagePart::Text { text }
+        ] if actor_id == "qq:user:77" && display == "@fly-dog" && text == "请看一下。"
+    ));
 }

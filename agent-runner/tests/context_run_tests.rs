@@ -4,7 +4,10 @@ use agent_runner::config::Settings;
 use agent_runner::history::store::HistoryStore;
 use agent_runner::models::{ErrorResponse, RunRequest, RunResponse, ValidatedRunRequest};
 use agent_runner::protocol::{CanonicalEvent, CanonicalMessage, EventKind, MessagePart};
-use agent_runner::server::{Runner, build_test_app, build_test_app_with_settings};
+use agent_runner::server::{
+    Messenger, Runner, build_test_app, build_test_app_with_message_support,
+    build_test_app_with_settings,
+};
 use async_trait::async_trait;
 use axum::{
     body::Body,
@@ -19,6 +22,9 @@ struct CapturingRunner {
     request: Arc<Mutex<Option<RunRequest>>>,
     validated: Arc<Mutex<Option<ValidatedRunRequest>>>,
 }
+
+#[derive(Default)]
+struct NullMessenger;
 
 impl CapturingRunner {
     fn captured_request(&self) -> Option<RunRequest> {
@@ -50,6 +56,20 @@ impl Runner for CapturingRunner {
     }
 }
 
+#[async_trait]
+impl Messenger for NullMessenger {
+    async fn send(
+        &self,
+        _request: agent_runner::models::MessageRequest,
+        _session: agent_runner::session_store::SessionRecord,
+    ) -> Result<agent_runner::models::MessageResponse, ErrorResponse> {
+        Ok(agent_runner::models::MessageResponse {
+            status: "ok".into(),
+            message_id: Some("msg-out-1".into()),
+        })
+    }
+}
+
 fn base_request() -> RunRequest {
     RunRequest {
         platform: "qq".into(),
@@ -61,6 +81,9 @@ fn base_request() -> RunRequest {
         cwd: "/workspace".into(),
         prompt: "hello".into(),
         trigger_summary: Some("hello".into()),
+        trigger_message_id: None,
+        trigger_reply_to_message_id: None,
+        mention_refs: Vec::new(),
         reply_excerpt: None,
         timeout_secs: None,
     }
@@ -175,6 +198,8 @@ async fn run_endpoint_builds_prompt_envelope_for_runner() {
     assert!(validated.prompt.contains("qq:private:1"));
     assert!(validated.prompt.contains("qq:user:1"));
     assert!(validated.prompt.contains("hello"));
+    assert!(validated.prompt.contains("\"trigger_message_id\":null"));
+    assert!(validated.prompt.contains("\"mention_refs\":[]"));
 }
 
 #[tokio::test]
@@ -325,4 +350,58 @@ async fn run_endpoint_keeps_runtime_context_without_pack_items() {
         .expect("captured validated request");
     assert!(!validated.prompt.contains("Readable scopes:\n"));
     assert!(!validated.system_prompt.contains("Readable scopes:\n"));
+}
+
+#[tokio::test]
+async fn qq_ingress_builds_trigger_context_with_message_ids_and_mention_refs() {
+    let runner = Arc::new(CapturingRunner::default());
+    let app = build_test_app_with_message_support(
+        runner.clone(),
+        Arc::new(NullMessenger),
+        test_settings(),
+    );
+    let payload = serde_json::json!({
+        "time": 1_710_000_000,
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 5566,
+        "user_id": 42,
+        "message_id": 99,
+        "raw_message": "[CQ:at,qq=123] 请你给 [CQ:at,qq=77] 发消息",
+        "message": [
+            {"type":"at","data":{"qq":"123"}},
+            {"type":"text","data":{"text":" 请你给 "}},
+            {"type":"at","data":{"qq":"77"}},
+            {"type":"text","data":{"text":" 发消息"}}
+        ]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/platforms/qq/napcat/events")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .expect("build request"),
+        )
+        .await
+        .expect("run request");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let captured_request = runner.captured_request().expect("captured request");
+    let validated = runner
+        .captured_validated()
+        .expect("captured validated request");
+
+    assert_eq!(captured_request.prompt, "@123 请你给 @77 发消息");
+    assert_eq!(captured_request.trigger_message_id.as_deref(), Some("99"));
+    assert_eq!(captured_request.trigger_reply_to_message_id, None);
+    assert_eq!(captured_request.mention_refs.len(), 1);
+    assert_eq!(captured_request.mention_refs[0].ref_id, "m1");
+    assert_eq!(captured_request.mention_refs[0].actor_id, "qq:user:77");
+    assert_eq!(captured_request.mention_refs[0].display, "@77");
+    assert!(validated.prompt.contains("\"trigger_message_id\":\"99\""));
+    assert!(validated.prompt.contains("@77[#m1]"));
+    assert!(validated.prompt.contains("\"actor_id\":\"qq:user:77\""));
 }

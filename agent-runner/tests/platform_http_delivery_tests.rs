@@ -419,6 +419,159 @@ async fn qq_private_ingress_uses_send_private_msg_for_delivery() {
 }
 
 #[tokio::test]
+async fn qq_ingress_can_disable_default_reply_via_action_block() {
+    let capture = Capture::default();
+    let base_url = spawn_mock_server(
+        capture.clone(),
+        json!({"status": "ok", "data": {"message_id": 93}}),
+    )
+    .await;
+    let mut settings = test_settings();
+    settings.napcat_api_base_url = base_url;
+
+    let runner = FixedOutputRunner {
+        stdout: r#"收到
+```dogbot-action
+{"reply_to":null}
+```"#,
+    };
+    let app = build_test_app_with_settings(Arc::new(runner), settings);
+    let payload = json!({
+        "time": 1_710_000_000,
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 5566,
+        "user_id": 42,
+        "message_id": 101,
+        "raw_message": "[CQ:at,qq=123] 不要 reply 我",
+        "message": [
+            {"type":"at","data":{"qq":"123"}},
+            {"type":"text","data":{"text":" 不要 reply 我"}}
+        ]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/platforms/qq/napcat/events")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let (path, body) = capture.last().expect("captured request");
+    assert_eq!(path, "/send_group_msg");
+    assert_eq!(body["message"], "[CQ:at,qq=42] 收到");
+}
+
+#[tokio::test]
+async fn qq_ingress_can_override_reply_target_via_action_block() {
+    let capture = Capture::default();
+    let base_url = spawn_mock_server(
+        capture.clone(),
+        json!({"status": "ok", "data": {"message_id": 94}}),
+    )
+    .await;
+    let mut settings = test_settings();
+    settings.napcat_api_base_url = base_url;
+
+    let runner = FixedOutputRunner {
+        stdout: r#"收到
+```dogbot-action
+{"reply_to":"777"}
+```"#,
+    };
+    let app = build_test_app_with_settings(Arc::new(runner), settings);
+    let payload = json!({
+        "time": 1_710_000_000,
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 5566,
+        "user_id": 42,
+        "message_id": 102,
+        "raw_message": "[CQ:at,qq=123] 改 reply 目标",
+        "message": [
+            {"type":"at","data":{"qq":"123"}},
+            {"type":"text","data":{"text":" 改 reply 目标"}}
+        ]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/platforms/qq/napcat/events")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let (path, body) = capture.last().expect("captured request");
+    assert_eq!(path, "/send_group_msg");
+    assert_eq!(body["message"], "[CQ:reply,id=777][CQ:at,qq=42] 收到");
+}
+
+#[tokio::test]
+async fn qq_ingress_can_send_structured_mentions_from_action_block() {
+    let capture = Capture::default();
+    let base_url = spawn_mock_server(
+        capture.clone(),
+        json!({"status": "ok", "data": {"message_id": 95}}),
+    )
+    .await;
+    let mut settings = test_settings();
+    settings.napcat_api_base_url = base_url;
+
+    let runner = FixedOutputRunner {
+        stdout: r#"请看一下。
+```dogbot-action
+{"mentions":[{"actor_id":"qq:user:77","display":"@fly-dog"}]}
+```"#,
+    };
+    let app = build_test_app_with_settings(Arc::new(runner), settings);
+    let payload = json!({
+        "time": 1_710_000_000,
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 5566,
+        "user_id": 42,
+        "message_id": 103,
+        "raw_message": "[CQ:at,qq=123] 帮我叫一下 fly-dog",
+        "message": [
+            {"type":"at","data":{"qq":"123"}},
+            {"type":"text","data":{"text":" 帮我叫一下 fly-dog"}}
+        ]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/platforms/qq/napcat/events")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let (path, body) = capture.last().expect("captured request");
+    assert_eq!(path, "/send_group_msg");
+    assert_eq!(
+        body["message"],
+        "[CQ:reply,id=103][CQ:at,qq=42] [CQ:at,qq=77]请看一下。"
+    );
+}
+
+#[tokio::test]
 async fn wechat_ingress_image_action_uses_send_file_endpoint_and_caption_text() {
     let capture = Capture::default();
     let base_url = spawn_mock_server(
@@ -682,7 +835,10 @@ async fn qq_ingress_reaction_add_uses_native_napcat_endpoint() {
     assert_eq!(requests[1].1["message_id"], 99);
     assert_eq!(requests[1].1["emoji_id"], "😂");
     assert_eq!(requests[2].0, "/send_group_msg");
-    assert_eq!(requests[2].1["message"], "[CQ:reply,id=99][CQ:at,qq=42] 收到");
+    assert_eq!(
+        requests[2].1["message"],
+        "[CQ:reply,id=99][CQ:at,qq=42] 收到"
+    );
 }
 
 #[tokio::test]

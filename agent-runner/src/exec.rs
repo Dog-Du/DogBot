@@ -295,6 +295,9 @@ mod tests {
             cwd: "/workspace".into(),
             prompt: "hello".into(),
             trigger_summary: Some("hello".into()),
+            trigger_message_id: None,
+            trigger_reply_to_message_id: None,
+            mention_refs: Vec::new(),
             reply_excerpt: None,
             timeout_secs: None,
         }

@@ -32,4 +32,12 @@ fn reply_format_skill_exists_and_mentions_no_markdown_rule() {
         skill.contains("/workspace"),
         "reply-format skill must document /workspace media constraints"
     );
+    assert!(
+        skill.contains("trigger_message_id") && skill.contains("mention_refs"),
+        "reply-format skill must explain trigger message metadata"
+    );
+    assert!(
+        skill.contains("\"reply_to\":null") && skill.contains("\"reply_to\":\""),
+        "reply-format skill must document reply_to override semantics"
+    );
 }

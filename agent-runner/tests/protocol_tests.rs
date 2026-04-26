@@ -64,7 +64,10 @@ fn canonical_event_kind_distinguishes_message_and_reaction() {
     );
 
     assert_eq!(event.kind_name(), "reaction_added");
-    assert_eq!(event.raw_native_payload, serde_json::json!({"reaction_source": "bridge"}));
+    assert_eq!(
+        event.raw_native_payload,
+        serde_json::json!({"reaction_source": "bridge"})
+    );
 }
 
 #[test]
@@ -106,6 +109,7 @@ fn outbound_message_text_uses_exact_defaults() {
                 text: "done".into(),
             }],
             reply_to: None,
+            suppress_default_reply: false,
             delivery_policy: None,
         }
     );

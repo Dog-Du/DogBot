@@ -27,8 +27,9 @@ use crate::{
         ValidatedRunRequest,
     },
     normalizer::normalize_agent_output,
+    pipeline::MentionRef,
     platforms::{PlatformRegistry, delivery_context_from_event, run_response_output},
-    protocol::{CanonicalEvent, MessagePart, OutboundMessage, OutboundPlan},
+    protocol::{CanonicalEvent, CanonicalMessage, MessagePart, OutboundMessage, OutboundPlan},
     session_store::SessionStore,
     trigger_resolver::{TriggerDecision, TriggerResolver},
 };
@@ -463,8 +464,7 @@ async fn handle_platform_event(state: AppState, platform_id: &str, body: Bytes) 
         .into_response();
     };
 
-    let Some(event) = adapter.decode_event(&payload)
-    else {
+    let Some(event) = adapter.decode_event(&payload) else {
         return accepted_response("ignored");
     };
 
@@ -553,6 +553,7 @@ fn status_outbound_plan() -> OutboundPlan {
                 text: "agent-runner ok".into(),
             }],
             reply_to: None,
+            suppress_default_reply: false,
             delivery_policy: None,
         }],
         actions: vec![],
@@ -563,6 +564,8 @@ fn status_outbound_plan() -> OutboundPlan {
 fn build_run_request_from_event(event: &CanonicalEvent) -> Option<RunRequest> {
     let message = event.message()?;
     let prompt = message.project_plain_text().trim().to_string();
+    let (trigger_summary, mention_refs) =
+        render_trigger_summary_with_refs(message, &event.platform_account);
     let chat_type = match conversation_scope(&event.conversation) {
         Some("private") => "private",
         Some("group") => "group",
@@ -578,10 +581,55 @@ fn build_run_request_from_event(event: &CanonicalEvent) -> Option<RunRequest> {
         chat_type: chat_type.into(),
         cwd: "/workspace".into(),
         prompt: prompt.clone(),
-        trigger_summary: Some(prompt),
+        trigger_summary: Some(trigger_summary),
+        trigger_message_id: Some(message.message_id.clone()),
+        trigger_reply_to_message_id: message.reply_to.clone(),
+        mention_refs,
         reply_excerpt: None,
         timeout_secs: None,
     })
+}
+
+fn render_trigger_summary_with_refs(
+    message: &CanonicalMessage,
+    platform_account: &str,
+) -> (String, Vec<MentionRef>) {
+    let mut summary = String::new();
+    let mut mention_refs = Vec::new();
+
+    for part in &message.parts {
+        match part {
+            MessagePart::Text { text } => summary.push_str(text),
+            MessagePart::Mention { actor_id, display } => {
+                if actor_id == platform_account {
+                    summary.push_str(display);
+                    continue;
+                }
+
+                let ref_id = format!("m{}", mention_refs.len() + 1);
+                summary.push_str(display);
+                summary.push_str("[#");
+                summary.push_str(&ref_id);
+                summary.push(']');
+                mention_refs.push(MentionRef {
+                    ref_id,
+                    actor_id: actor_id.clone(),
+                    display: display.clone(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let summary = summary.trim().to_string();
+    if summary.is_empty() {
+        (
+            message.project_plain_text().trim().to_string(),
+            mention_refs,
+        )
+    } else {
+        (summary, mention_refs)
+    }
 }
 
 async fn execute_run_request(
@@ -732,6 +780,7 @@ async fn deliver_message_request(
                 text: request.text.clone(),
             }],
             reply_to: request.reply_to_message_id.clone(),
+            suppress_default_reply: false,
             delivery_policy: None,
         }],
         actions: vec![],

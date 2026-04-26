@@ -42,10 +42,12 @@ fn qq_group_outbound_uses_reply_and_at_cq_codes_in_order() {
             text: "done".into(),
         }],
         reply_to: Some("991".into()),
+        suppress_default_reply: false,
         delivery_policy: None,
     };
 
-    let encoded = compile_outbound_message(&outbound, Some("42")).unwrap();
+    let encoded =
+        compile_outbound_message(&outbound, outbound.reply_to.as_deref(), Some("42")).unwrap();
 
     assert_eq!(encoded, "[CQ:reply,id=991][CQ:at,qq=42] done");
 }
@@ -79,14 +81,39 @@ fn qq_outbound_escapes_text_and_rejects_invalid_target_ids() {
             text: "[CQ:at,qq=99] & done".into(),
         }],
         reply_to: Some("991".into()),
+        suppress_default_reply: false,
         delivery_policy: None,
     };
 
-    let encoded = compile_outbound_message(&outbound, Some("42")).unwrap();
+    let encoded =
+        compile_outbound_message(&outbound, outbound.reply_to.as_deref(), Some("42")).unwrap();
     assert_eq!(
         encoded,
         "[CQ:reply,id=991][CQ:at,qq=42] &#91;CQ:at,qq=99&#93; &amp; done"
     );
 
-    assert!(compile_outbound_message(&outbound, Some("not-a-number")).is_err());
+    assert!(
+        compile_outbound_message(
+            &outbound,
+            outbound.reply_to.as_deref(),
+            Some("not-a-number")
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn qq_outbound_can_skip_reply_prefix() {
+    let outbound = OutboundMessage {
+        parts: vec![MessagePart::Text {
+            text: "done".into(),
+        }],
+        reply_to: None,
+        suppress_default_reply: true,
+        delivery_policy: None,
+    };
+
+    let encoded = compile_outbound_message(&outbound, None, Some("42")).unwrap();
+
+    assert_eq!(encoded, "[CQ:at,qq=42] done");
 }

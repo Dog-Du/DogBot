@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::pipeline::{SystemPromptContext, TurnPromptContext};
+use crate::pipeline::{MentionRef, SystemPromptContext, TurnPromptContext};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RunRequest {
@@ -14,6 +14,12 @@ pub struct RunRequest {
     pub prompt: String,
     #[serde(default)]
     pub trigger_summary: Option<String>,
+    #[serde(default)]
+    pub trigger_message_id: Option<String>,
+    #[serde(default)]
+    pub trigger_reply_to_message_id: Option<String>,
+    #[serde(default)]
+    pub mention_refs: Vec<MentionRef>,
     #[serde(default)]
     pub reply_excerpt: Option<String>,
     pub timeout_secs: Option<u64>,
@@ -45,8 +51,13 @@ impl RunRequest {
         let prompt = TurnPromptContext {
             conversation: self.conversation_id.clone(),
             actor: self.user_id.clone(),
+            trigger_message_id: normalized_optional_text(&self.trigger_message_id),
+            trigger_reply_to_message_id: normalized_optional_text(
+                &self.trigger_reply_to_message_id,
+            ),
             trigger_summary: normalized_optional_text(&self.trigger_summary)
                 .unwrap_or_else(|| self.prompt.trim().to_string()),
+            mention_refs: self.mention_refs.clone(),
             reply_excerpt: normalized_optional_text(&self.reply_excerpt),
         }
         .render_with_user_prompt(&self.prompt);
