@@ -110,10 +110,25 @@ ensure_pattern "scripts/configure_napcat_ws.sh" "dogbot_resolve_uv_bin" || patte
 ensure_pattern "deploy/dogbot.env.example" "AGENT_RUNNER_BIND_ADDR" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "deploy/dogbot.env.example" "PLATFORM_QQ_ACCOUNT_ID" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "deploy/dogbot.env.example" "PLATFORM_WECHATPADPRO_ACCOUNT_ID" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "deploy/dogbot.env.example" "NAPCAT_WS_CLIENT_URL" || pattern_errors=$((pattern_errors+1))
 if grep -q '^QQ_ADAPTER_QQ_BOT_ID=' "$repo_root/deploy/dogbot.env"; then
   echo "Stale QQ_ADAPTER_QQ_BOT_ID found in deploy/dogbot.env" >&2
   pattern_errors=$((pattern_errors+1))
 fi
+
+if [[ -f "$repo_root/deploy/dogbot.env" ]]; then
+  example_norm="$(mktemp)"
+  env_norm="$(mktemp)"
+  sed -E 's/^([A-Z0-9_]+)=.*/\1=/' "$repo_root/deploy/dogbot.env.example" >"$example_norm"
+  sed -E 's/^([A-Z0-9_]+)=.*/\1=/' "$repo_root/deploy/dogbot.env" >"$env_norm"
+  if ! diff -u "$example_norm" "$env_norm" >/dev/null; then
+    echo "deploy/dogbot.env structure is not aligned with deploy/dogbot.env.example" >&2
+    diff -u "$example_norm" "$env_norm" >&2 || true
+    pattern_errors=$((pattern_errors+1))
+  fi
+  rm -f "$example_norm" "$env_norm"
+fi
+
 ensure_pattern "scripts/deploy_stack.sh" "docker compose --env-file" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/deploy_stack.sh" "dogbot_write_claude_runner_runtime" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/start_agent_runner.sh" "build --release --manifest-path" || pattern_errors=$((pattern_errors+1))

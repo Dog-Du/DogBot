@@ -6,9 +6,15 @@ repo_root="$(cd "$script_dir/../.." && pwd)"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
+env_example="$repo_root/deploy/dogbot.env.example"
 env_file="$tmpdir/dogbot.env"
 config_dir="$tmpdir/napcat-config"
 docker_log="$tmpdir/docker.log"
+
+if ! grep -q '^NAPCAT_WS_CLIENT_URL=ws://host.docker.internal:8787/v1/platforms/qq/napcat/ws$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must define the default NapCat websocket client URL" >&2
+  exit 1
+fi
 
 mkdir -p "$config_dir" "$tmpdir/bin"
 

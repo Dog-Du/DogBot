@@ -62,6 +62,11 @@ if ! grep -q '^API_PROXY_UPSTREAM_TOKEN=replace-me$' "$env_example"; then
   exit 1
 fi
 
+if ! grep -q '^AGENT_RUNNER_BIND_ADDR=0.0.0.0:8787$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must bind agent-runner on 0.0.0.0:8787 so platform containers can reach it" >&2
+  exit 1
+fi
+
 if ! grep -q '^PLATFORM_QQ_ACCOUNT_ID=qq:bot_uin:unknown$' "$env_example"; then
   echo "FAIL: dogbot.env.example must define PLATFORM_QQ_ACCOUNT_ID with the direct-ingress default" >&2
   exit 1

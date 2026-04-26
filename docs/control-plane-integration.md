@@ -71,7 +71,7 @@
 至少确认下面这些配置已经显式设置或理解其默认值：
 
 ```env
-AGENT_RUNNER_BIND_ADDR=127.0.0.1:8787
+AGENT_RUNNER_BIND_ADDR=0.0.0.0:8787
 SESSION_DB_PATH=/srv/dogbot/runtime/agent-state/runner.db
 HISTORY_DB_PATH=/srv/dogbot/runtime/agent-state/history.db
 DOGBOT_CLAUDE_PROMPT_ROOT=/srv/dogbot/runtime/agent-state/claude-prompt

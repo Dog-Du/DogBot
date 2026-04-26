@@ -59,7 +59,7 @@ fi
 "$cargo_bin" build --release --manifest-path "$repo_root/agent-runner/Cargo.toml"
 
 nohup env \
-  BIND_ADDR="${AGENT_RUNNER_BIND_ADDR:-127.0.0.1:8787}" \
+  BIND_ADDR="${AGENT_RUNNER_BIND_ADDR:-0.0.0.0:8787}" \
   DEFAULT_TIMEOUT_SECS="${DEFAULT_TIMEOUT_SECS:-120}" \
   MAX_TIMEOUT_SECS="${MAX_TIMEOUT_SECS:-300}" \
   CLAUDE_CONTAINER_NAME="${CLAUDE_CONTAINER_NAME:-claude-runner}" \

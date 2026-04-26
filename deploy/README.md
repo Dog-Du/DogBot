@@ -283,7 +283,7 @@ PLATFORM_WECHATPADPRO_ACCOUNT_ID=wechatpadpro:account:wxid_bot_1
 ### 5.4 agent-runner 与 Bifrost
 
 ```env
-AGENT_RUNNER_BIND_ADDR=127.0.0.1:8787
+AGENT_RUNNER_BIND_ADDR=0.0.0.0:8787
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080/anthropic
 ANTHROPIC_API_KEY=dummy
 BIFROST_PORT=8080
@@ -303,7 +303,7 @@ API_PROXY_UPSTREAM_MODEL=
 
 说明：
 
-- `AGENT_RUNNER_BIND_ADDR` 给 QQ / 微信 adapter 调用
+- `AGENT_RUNNER_BIND_ADDR` 是 QQ / 微信平台直连 `agent-runner` 的监听地址；如果容器要通过 `host.docker.internal` 回调它，不要绑定 `127.0.0.1`
 - `Claude Code` 本身只访问 `127.0.0.1:${BIFROST_PORT}/anthropic`
 - `BIFROST_MODEL` 是 Claude 在容器内默认使用的模型别名，格式通常是 `<provider-alias>/<model-id>`
 - `BIFROST_UPSTREAM_*` 只用于 `claude-runner` 内的 `bifrost -> 宿主机 api-proxy` 链路，不应放真实上游 token
