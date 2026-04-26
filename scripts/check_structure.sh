@@ -131,7 +131,9 @@ if [[ -f "$repo_root/deploy/dogbot.env" ]]; then
   rm -f "$example_norm" "$env_norm"
 fi
 
-ensure_pattern "scripts/deploy_stack.sh" "docker compose --env-file" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/deploy_stack.sh" "DOGBOT_COMPOSE_PROJECT_NAME" || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/deploy_stack.sh" '--project-name "$compose_project_name"' || pattern_errors=$((pattern_errors+1))
+ensure_pattern "scripts/stop_stack.sh" "DOGBOT_COMPOSE_PROJECT_NAME" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/deploy_stack.sh" "dogbot_write_claude_runner_runtime" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/start_agent_runner.sh" "build --release --manifest-path" || pattern_errors=$((pattern_errors+1))
 ensure_pattern "scripts/apply_runner_network_policy.sh" "INPUT" || pattern_errors=$((pattern_errors+1))

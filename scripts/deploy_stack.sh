@@ -62,6 +62,7 @@ fi
 
 dogbot_load_env_file "$env_file"
 runtime_state_file="$(dogbot_runtime_state_file)"
+compose_project_name="${DOGBOT_COMPOSE_PROJECT_NAME:-dogbot}"
 
 if [[ $explicit_selection -eq 0 ]]; then
   if [[ -t 0 ]]; then
@@ -121,13 +122,23 @@ run_compose_up() {
   stderr_file="$(mktemp)"
 
   if [[ "$compose_cmd" == "docker compose" ]]; then
-    if ! docker compose --env-file "$env_file" -f "$compose_file" up -d "$@" 2> >(tee "$stderr_file" >&2); then
+    if ! docker compose \
+      --project-name "$compose_project_name" \
+      --project-directory "$repo_root" \
+      --env-file "$env_file" \
+      -f "$compose_file" \
+      up -d "$@" 2> >(tee "$stderr_file" >&2); then
       print_compose_failure_hint "$stderr_file"
       rm -f "$stderr_file"
       exit 1
     fi
   else
-    if ! docker-compose --env-file "$env_file" -f "$compose_file" up -d "$@" 2> >(tee "$stderr_file" >&2); then
+    if ! docker-compose \
+      --project-name "$compose_project_name" \
+      --project-directory "$repo_root" \
+      --env-file "$env_file" \
+      -f "$compose_file" \
+      up -d "$@" 2> >(tee "$stderr_file" >&2); then
       print_compose_failure_hint "$stderr_file"
       rm -f "$stderr_file"
       exit 1
@@ -135,6 +146,37 @@ run_compose_up() {
   fi
 
   rm -f "$stderr_file"
+}
+
+remove_legacy_compose_container_if_needed() {
+  local container_name="$1"
+  local expected_service="$2"
+  local expected_config_file="$3"
+
+  if ! docker inspect "$container_name" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local current_project current_service current_config
+  current_project="$(docker inspect "$container_name" --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
+  current_service="$(docker inspect "$container_name" --format '{{index .Config.Labels "com.docker.compose.service"}}' 2>/dev/null || true)"
+  current_config="$(docker inspect "$container_name" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' 2>/dev/null || true)"
+
+  if [[ "$current_service" == "$expected_service" ]] && {
+    [[ "$current_project" != "$compose_project_name" ]] || [[ "$current_config" != "$expected_config_file" ]];
+  }; then
+    echo "Removing legacy compose-managed container: $container_name"
+    docker rm -f "$container_name" >/dev/null
+    return 0
+  fi
+
+  if [[ "$current_service" == "$expected_service" ]]; then
+    return 0
+  fi
+
+  echo "Container name conflict: $container_name already exists and is not managed by the current DogBot compose project." >&2
+  echo "Remove it manually or set a different container name in deploy/dogbot.env." >&2
+  exit 1
 }
 
 if ! compose_cmd="$(dogbot_resolve_compose_cmd)"; then
@@ -165,10 +207,18 @@ dogbot_save_runtime_state "$runtime_state_file"
 
 "$repo_root/scripts/start_agent_runner.sh" "$env_file"
 
+remove_legacy_compose_container_if_needed \
+  "${CLAUDE_CONTAINER_NAME:-claude-runner}" \
+  "claude-runner" \
+  "$repo_root/deploy/docker/docker-compose.yml"
 run_compose_up "$repo_root/deploy/docker/docker-compose.yml" claude-runner
 
 if [[ "${ENABLE_QQ}" == "1" ]]; then
   dogbot_require_env PLATFORM_QQ_BOT_ID
+  remove_legacy_compose_container_if_needed \
+    "${NAPCAT_CONTAINER_NAME:-napcat}" \
+    "napcat" \
+    "$repo_root/deploy/docker/platform-stack.yml"
   run_compose_up "$repo_root/deploy/docker/platform-stack.yml" napcat
   "$repo_root/scripts/configure_napcat_ingress.sh" "$env_file"
   echo "Waiting up to ${DOGBOT_LOGIN_TIMEOUT_SECS:-100}s for NapCat login..."
@@ -181,6 +231,18 @@ if [[ "${ENABLE_WECHATPADPRO:-0}" == "1" ]]; then
   dogbot_require_env WECHATPADPRO_MYSQL_ROOT_PASSWORD
   dogbot_require_env WECHATPADPRO_MYSQL_PASSWORD
 
+  remove_legacy_compose_container_if_needed \
+    "${WECHATPADPRO_CONTAINER_NAME:-wechatpadpro}" \
+    "wechatpadpro" \
+    "$repo_root/deploy/docker/wechatpadpro-stack.yml"
+  remove_legacy_compose_container_if_needed \
+    "${WECHATPADPRO_MYSQL_CONTAINER_NAME:-wechatpadpro_mysql}" \
+    "wechatpadpro_mysql" \
+    "$repo_root/deploy/docker/wechatpadpro-stack.yml"
+  remove_legacy_compose_container_if_needed \
+    "${WECHATPADPRO_REDIS_CONTAINER_NAME:-wechatpadpro_redis}" \
+    "wechatpadpro_redis" \
+    "$repo_root/deploy/docker/wechatpadpro-stack.yml"
   run_compose_up "$repo_root/deploy/docker/wechatpadpro-stack.yml"
   echo "Waiting up to ${DOGBOT_LOGIN_TIMEOUT_SECS:-100}s for WeChatPadPro login..."
   "$repo_root/scripts/prepare_wechatpadpro_login.sh" "$env_file"
