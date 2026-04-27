@@ -1,117 +1,128 @@
 # AGENTS
 
-本文件用于让进入仓库的 AI Agent 迅速理解当前项目，而不必先通读全部历史对话。
+本文件给进入仓库的 AI Agent 快速建立上下文。优先相信本文件、`README.md`、`deploy/README.md` 和当前代码，不要依赖旧对话记忆。
 
-## 1. 项目定位
+## 项目定位
 
-`DogBot` 是一个个人账号机器人项目，当前目标是：
+DogBot 是个人账号机器人项目，当前主线是：
 
 - QQ 个人号机器人
 - 微信个人号机器人
 - 统一复用同一套 Agent 执行后端
-- 用 Docker 约束 CLI Agent 的资源和宿主机暴露面
+- 用 Docker 隔离 Claude Code 的运行环境
+- 用 PostgreSQL 保存 session 映射和文本历史消息
 
-当前已经落地两条链路：
+当前链路：
 
 ```text
 QQ -> NapCat -> agent-runner -> claude-runner
 微信 -> WeChatPadPro -> agent-runner -> claude-runner
 ```
 
-## 2. 核心组件
+模型链路：
+
+```text
+Claude Code -> Bifrost -> agent-runner api-proxy -> upstream model provider
+```
+
+## 核心组件
 
 ### `agent-runner`
 
-- 语言：Rust
-- 作用：
-  - 管理 Claude 容器生命周期
-  - 执行 CLI Agent
-  - 控制超时、并发、队列、限流
-  - 维护会话与 session 映射
-  - 提供消息回发接口
-  - 提供宿主机内置上游代理
+- Rust 服务，运行在宿主机。
+- 提供平台 HTTP ingress。
+- 管理同会话队列和全局并发。
+- 执行 Docker 内 Claude Code。
+- 保存和读取 PostgreSQL session/history/grant。
+- 负责平台消息回发。
+- 内置 api-proxy，真实上游模型 key 只保存在宿主机。
 
 ### `claude-runner`
 
-- 运行在 Docker 中
-- 作用：
-  - 运行 Claude Code CLI
-- 约束：
-  - 只允许访问工作目录和状态目录
-  - 不能直接持有真实上游 key
+- Docker 容器。
+- 运行 Claude Code CLI 和 Bifrost。
+- 只挂载 `/workspace` 和 `/state`。
+- 不直接持有真实上游 key。
+- Claude Code 只访问容器内 `127.0.0.1:${BIFROST_PORT}/anthropic`。
 
-### QQ 接入层
+### 平台层
 
-- `NapCat`
-  - 负责 QQ 登录和 OneBot
-  - 通过 HTTP 回调把 QQ 事件直接推给 `agent-runner`
+- QQ 使用 NapCat。
+- 微信使用 WeChatPadPro。
+- 两个平台都直接把事件推给 `agent-runner`，不再经过旧 adapter。
 
-### 微信接入层
+## 触发规则
 
-- `WeChatPadPro`
-  - 负责微信登录和消息入口
-  - 通过 webhook 直接把微信事件推给 `agent-runner`
+- QQ 私聊：任意非空文本。
+- QQ 群聊：必须 `@机器人 + 正文`。
+- 微信私聊：任意非空文本。
+- 微信群聊：必须 `@机器人名 + 正文`。
+- `/agent-status` 保留。
 
-## 3. 当前触发规则
+群聊 reply 本身不会单独触发执行。
 
-- 当前用户可见规则：
-  - QQ 私聊：任意非空文本
-  - QQ 群聊：必须 `@机器人 + 正文`
-  - 微信私聊：任意非空文本
-  - 微信群聊：必须 `@机器人名 + 正文`
-- `/agent-status`：保留
+## 历史消息
 
-补充说明：
+- PostgreSQL only。
+- 旧 sqlite `runner.db` / `history.db` 已废弃，不做迁移。
+- 普通 Agent 只能读取当前会话历史。
+- `DOGBOT_ADMIN_ACTOR_IDS` 中的 admin 在私聊中可获得跨会话读取授权。
+- Agent 通过 `claude-prompt/skills/history-read/` 查询历史。
+- 当前不保存图片历史。
 
-- `agent-runner` 当前直接执行平台侧 trigger gate
-- 群聊 reply 本身不会单独触发执行
-- 不要把“reply 中带 `/agent` 就已经全量开放”当成当前现态
+## 调度语义
 
-## 4. 重要目录
+- 全局并发由 `MAX_CONCURRENT_RUNS` 控制。
+- 同一会话同时只运行一个任务，后续任务 FIFO 排队。
+- 等待中的任务只回复前面还有几个任务。
+- 任务真正开始执行时才发送 reaction。
+- 不再使用分钟级限流。
+- 不再用固定 wall-clock timeout kill Claude Code。
 
-- `agent-runner/`
-  - Rust 核心服务
-- `deploy/`
-  - 部署文档、配置模板与容器定义
-- `deploy/docker/`
-  - `claude-runner` 镜像、compose 栈与平台容器定义
-- `scripts/`
-  - 启停、配置、诊断脚本
-- `docs/`
-  - 项目文档和设计文档
+## 重要目录
 
-## 5. 当前约束
+- `agent-runner/`：Rust 核心服务。
+- `claude-prompt/`：`CLAUDE.md`、`persona.md`、skills。
+- `deploy/`：部署文档、env 模板、Docker Compose。
+- `scripts/`：启停、配置、登录、诊断脚本。
+- `docs/`：设计文档。
+- `runtime/`：本地运行态目录，默认不提交。
 
-- 真实模型 key 只保留在宿主机
-- Docker 内的 Claude 只连接宿主机上的本地代理
-- Docker 容器应能访问外网
-- Docker 容器不应访问宿主机除本地代理外的其他服务
+## 配置入口
 
-## 6. 当前已知问题
+用户只应修改：
 
-- `WeChatPadPro` 仍然存在自身不稳定点
-  - 尤其是私聊推送、同步流和 DNS 稳定性
-- 历史消息持久化已经落地基础版
-  - QQ 仅支持首次启用后的有限 backfill
-  - WeChat 目前仅支持启用后的 realtime mirror
-- 图片链路尚未完成端到端出站发送
-- 群聊仍保留显式 mention gate，reply 单独触发还未对外开放
+```text
+deploy/dogbot.env
+```
 
-## 7. 后续方向
+模板：
 
-- 主动消息 / automation / outbox
-- 更完整的 Agent 内容管理与记忆审批
-- 支持 `Codex`、`OpenCode`
-- 完整图片链路和更丰富的回复渲染
+```text
+deploy/dogbot.env.example
+```
 
-## 8. 阅读顺序建议
+启动和停止：
 
-新 Agent 进入仓库后，建议优先阅读：
+```bash
+./deploy_stack.sh
+./stop_stack.sh
+```
+
+## 已知注意事项
+
+- 切换模型后，旧 Claude session 可能因 thinking 状态不兼容报错；需要重置或更新 PostgreSQL 中对应 session。
+- WeChatPadPro 自身仍有稳定性风险，尤其是私聊推送、同步流、DNS 和登录状态。
+- QQ reaction 失败通常不影响最终文本回复。
+- 图片出站链路尚未完整收敛。
+- 网络策略开启时，Claude 容器只应访问必要的宿主机代理端口。
+
+## 阅读顺序
 
 1. `README.md`
 2. `deploy/README.md`
 3. `deploy/dogbot.env.example`
-4. `docs/control-plane-integration.md`
-5. `agent-runner/`
-6. `deploy/docker/`
-7. `scripts/`
+4. `agent-runner/src/`
+5. `claude-prompt/CLAUDE.md`
+6. `scripts/`
+7. `deploy/docker/`

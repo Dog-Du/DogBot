@@ -24,7 +24,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.104}
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
     restart: unless-stopped
     stdin_open: false
     tty: false

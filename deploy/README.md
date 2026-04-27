@@ -1,179 +1,90 @@
-# DogBot 部署说明
+# DogBot 部署指南
 
-本文档说明如何部署当前仓库里的 `DogBot`。
+本文档只描述当前部署方式。历史上的 sqlite、外部 adapter 和旧的多层配置方式已经废弃。
 
-当前部署遵循三条原则：
+部署原则：
 
-1. 用户只修改 `deploy/dogbot.env`
-2. 用户只通过 `./deploy_stack.sh` 启动
-3. 用户只通过 `./stop_stack.sh` 停止
+- 用户配置只改 `deploy/dogbot.env`。
+- 启动只用 `./deploy_stack.sh`。
+- 停止只用 `./stop_stack.sh`。
+- `deploy/docker/` 默认不用改。
 
-当前 `./deploy_stack.sh` 支持两种模式：
-
-- 无参数运行
-  - 进入交互式平台选择
-- 显式参数运行
-  - `--qq`
-  - `--wechat`
-  - `--qq --wechat`
-
-Claude prompt 内容当前也已经接入部署流程：
-
-- 部署前会把仓库中的 `claude-prompt/` 同步到外部 `DOGBOT_CLAUDE_PROMPT_ROOT`
-- `agent-runner` 运行时从该目录为 Claude 提供静态 `CLAUDE.md`、`persona.md` 和 `skills/`
-- 动态 scope / history / session 约束仍由 `agent-runner` 在每次运行时注入
-
-当前支持两条主要链路：
+## 1. 部署链路
 
 ```text
-QQ
--> NapCat
--> agent-runner
--> claude-runner
--> agent-runner 内置上游代理
--> 上游模型服务
+QQ -> NapCat HTTP callback
+   -> agent-runner
+   -> claude-runner container
+   -> Bifrost inside container
+   -> agent-runner api-proxy on host
+   -> upstream model provider
 
-微信
--> WeChatPadPro
--> agent-runner
--> claude-runner
--> agent-runner 内置上游代理
--> 上游模型服务
+微信 -> WeChatPadPro webhook
+    -> agent-runner
+    -> claude-runner container
+    -> Bifrost inside container
+    -> agent-runner api-proxy on host
+    -> upstream model provider
 ```
 
-## 1. 部署依赖
+数据持久化：
 
-下面这些是当前仓库部署 `DogBot` 所需的完整前置条件。
+- PostgreSQL 保存 session 映射、文本历史消息和 history read grants。
+- `claude-runner` 的 Claude Code 状态保存在 `AGENT_STATE_DIR`。
+- NapCat / WeChatPadPro 登录态也建议放在同一个 `AGENT_STATE_DIR` 下。
 
-### 1.1 必需软件
+## 2. 依赖
 
-- `Linux`
-  - 当前部署方案默认以 Linux 宿主机为目标
-- `uv`
-  - 用来运行 Python 相关脚本和测试
-- `Docker Engine`
-  - 用来运行 `claude-runner`、`NapCat`、`WeChatPadPro`
-- `Docker Compose v2`
-  - 用来编排多个容器栈
-- `Rust` / `cargo`
-  - 用来编译和运行宿主机上的 `agent-runner`
-- `curl`
-  - 用于接口联调、健康检查和脚本诊断
-- `sudo`
-  - 某些 Docker、iptables、网络策略和系统级操作需要 root 权限
+必需：
 
-### 1.2 必需外部条件
+- Linux 宿主机
+- Docker Engine
+- Docker Compose v2，或兼容的 `docker-compose`
+- Rust / cargo
+- uv
+- curl
+- sudo
 
-- 一个可用的 `Claude 协议模型源`
-  - 当前 Docker 内的 Claude Code 只能直接使用 Claude 协议接口
-  - 你需要自行提供可用的上游地址和对应 key
-- 至少一个可登录的平台账号
-  - QQ：个人 QQ 号，供 `NapCat` 登录
-  - 微信：个人微信号，供 `WeChatPadPro` 登录
-
-### 1.3 可选但推荐
-
-- `git`
-- `rg`
-
-### 1.4 快速检查
+快速检查：
 
 ```bash
 docker --version
 docker compose version
 cargo --version
 uv --version
+curl --version
 ```
 
-如果当前用户不能直接访问 Docker，可以：
+如果当前用户不能访问 Docker：
 
 ```bash
 sudo usermod -aG docker "$USER"
 newgrp docker
 ```
 
-或者直接在部署命令前加 `sudo`。
+或者直接用 `sudo ./deploy_stack.sh`。
 
-### 1.5 重要说明
+## 3. 快速开始
 
-- 不能把 OpenAI 协议地址直接给当前 Docker 内的 Claude Code 使用
-- 真实上游 key 只应保留在宿主机，不能直接注入 `claude-runner` 容器
-- 当前工程已经把真实 key 隔离在宿主机 `agent-runner` 的内置代理里
-
-## 2. 配置与入口
-
-正常情况下，用户只需要关心下面三个入口：
-
-- `deploy/dogbot.env`
-- `./deploy_stack.sh`
-- `./stop_stack.sh`
-
-`deploy/docker/` 目录默认不需要修改；如果你确实要调整容器层行为，请查看 `deploy/docker/README.md`。
-
-## 3. 重要文件
-
-最重要的配置和脚本如下：
-
-- `deploy/dogbot.env`
-  - 你自己的实际部署配置
-- `deploy/dogbot.env.example`
-  - 默认配置模板
-- `./deploy_stack.sh`
-  - 根目录部署入口
-- `./stop_stack.sh`
-  - 根目录停止入口
-- `deploy/docker/docker-compose.yml`
-  - `claude-runner` 容器定义
-- `deploy/docker/platform-stack.yml`
-  - `napcat` 容器定义
-- `deploy/docker/wechatpadpro-stack.yml`
-  - `wechatpadpro` / MySQL / Redis 容器定义
-- `scripts/start_agent_runner.sh`
-  - 启动宿主机 `agent-runner`
-- `scripts/configure_napcat_ingress.sh`
-  - 配置 NapCat 直连 `agent-runner`
-- `scripts/configure_wechatpadpro_webhook.sh`
-  - 配置 WeChatPadPro 直连 `agent-runner`
-
-## 4. 快速开始
-
-### 4.1 复制配置模板
+复制配置：
 
 ```bash
 cp deploy/dogbot.env.example deploy/dogbot.env
 ```
 
-### 4.2 编辑配置文件
+编辑配置：
 
-至少要改这些项：
+```bash
+$EDITOR deploy/dogbot.env
+```
 
-- 工作目录和状态目录
-- `AGENT_RUNNER_BIND_ADDR`
-- 上游配置
-- 上游 key
-- `PLATFORM_QQ_BOT_ID`
-- `PLATFORM_QQ_ACCOUNT_ID`
-- `WECHATPADPRO_ADMIN_KEY`
-- `WECHATPADPRO_MYSQL_ROOT_PASSWORD`
-- `WECHATPADPRO_MYSQL_PASSWORD`
-- `PLATFORM_WECHATPADPRO_ACCOUNT_ID`
-- 如果保留群聊 mention 门禁，需要把 `PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES` 改成你的机器人群昵称
-- QQ / 微信相关目录和端口
-
-### 4.3 启动
+启动：
 
 ```bash
 ./deploy_stack.sh
 ```
 
-默认会进入交互式平台选择：
-
-- 询问是否启用 QQ
-- 询问是否启用微信
-- 如果选择了对应平台，会自动准备登录二维码并阻塞等待扫码
-- 若 100 秒内未完成扫码，部署脚本会退出
-
-也可以显式指定平台：
+显式选择平台：
 
 ```bash
 ./deploy_stack.sh --qq
@@ -181,460 +92,296 @@ cp deploy/dogbot.env.example deploy/dogbot.env
 ./deploy_stack.sh --qq --wechat
 ```
 
-说明：
-
-- 当前不再启动 `qq_adapter/` 或 `wechatpadpro_adapter/`
-- `agent-runner` 直接提供：
-  - `http://<bind>/v1/platforms/qq/napcat/events`
-  - `http://<bind>/v1/platforms/wechatpadpro/events`
-- 示例配置默认启用了 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1`
-- 如果你手动改成 `0`，部署脚本不会替你注册 webhook
-- 这时必须自行配置 `WECHATPADPRO_WEBHOOK_URL`
-- 部署前会自动把仓库内 `claude-prompt/` 同步到 `DOGBOT_CLAUDE_PROMPT_ROOT`
-
-如果 Docker 权限不够：
+指定 env 文件：
 
 ```bash
-sudo ./deploy_stack.sh
-```
-
-如果你希望显式指定配置文件，也可以：
-
-```bash
-./deploy_stack.sh deploy/dogbot.env
 ./deploy_stack.sh --qq --env-file deploy/dogbot.env
 ```
 
-### 4.4 停止
+停止：
 
 ```bash
 ./stop_stack.sh
 ```
 
-如果你希望显式指定配置文件，也可以：
+停止核心链路但保留平台容器：
 
 ```bash
-./stop_stack.sh deploy/dogbot.env
+./stop_stack.sh --keep-qq --keep-wechat
 ```
 
-## 5. 配置文件说明
+## 4. 必须修改的参数
 
-推荐使用：
+大部分参数可以使用 `deploy/dogbot.env.example` 的默认值。下面这些需要按你的环境修改。
 
-- `deploy/dogbot.env.example`
+### 4.1 所有部署都要改
 
-模板里已经为每个字段补了中文注释。下面只强调最重要的几组。
+| 参数 | 说明 |
+| --- | --- |
+| `AGENT_WORKSPACE_DIR` | Agent 能读写的工作目录。建议用绝对路径。 |
+| `AGENT_STATE_DIR` | 运行态目录，保存日志、会话、Postgres、平台状态。建议用绝对路径。 |
+| `DOGBOT_CLAUDE_PROMPT_ROOT` | 运行时 prompt 同步目录。通常放在 `${AGENT_STATE_DIR}/claude-prompt`。 |
+| `POSTGRES_DATA_DIR` | Postgres 数据目录。通常放在 `${AGENT_STATE_DIR}/postgres`。 |
+| `BIFROST_MODEL` | 容器内 Claude 使用的模型别名，例如 `primary/deepseek-v4-pro`。 |
+| `API_PROXY_UPSTREAM_BASE_URL` | 真实上游模型地址。 |
+| `API_PROXY_UPSTREAM_TOKEN` | 真实上游 token，只保存在宿主机。 |
+| `API_PROXY_UPSTREAM_MODEL` | 可选但常用。把容器内模型别名改写成真实上游模型名。 |
 
-### 5.1 Claude 容器
+### 4.2 QQ 部署要改
+
+| 参数 | 说明 |
+| --- | --- |
+| `ENABLE_QQ=1` | 启用 QQ。 |
+| `PLATFORM_QQ_BOT_ID` | 登录的 QQ 号。NapCat 配置文件名依赖它。 |
+| `PLATFORM_QQ_ACCOUNT_ID` | 平台账号隔离键，推荐 `qq:bot_uin:<你的QQ号>`。 |
+
+如果改了 `AGENT_RUNNER_BIND_ADDR` 的端口，还要同步改：
 
 ```env
-CLAUDE_CONTAINER_NAME=claude-runner
-CLAUDE_IMAGE_NAME=dogbot/claude-runner:local
-CLAUDE_CODE_VERSION=2.1.104
+NAPCAT_HTTP_CLIENT_URL=http://host.docker.internal:<agent-runner-port>/v1/platforms/qq/napcat/events
 ```
 
-含义：
+### 4.3 微信部署要改
 
-- Claude 容器名
-- Claude 镜像名
-- 镜像内安装的 Claude Code 版本
+| 参数 | 说明 |
+| --- | --- |
+| `ENABLE_WECHATPADPRO=1` | 启用微信。 |
+| `WECHATPADPRO_ADMIN_KEY` | WeChatPadPro 管理 key。必须换成自己的值。 |
+| `WECHATPADPRO_MYSQL_ROOT_PASSWORD` | MySQL root 密码。必须换。 |
+| `WECHATPADPRO_MYSQL_PASSWORD` | WeChatPadPro 业务库密码。必须换。 |
+| `PLATFORM_WECHATPADPRO_ACCOUNT_ID` | 平台账号隔离键，例如 `wechatpadpro:account:<wxid>`。 |
+| `PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES` | 微信群里触发机器人的昵称，多个用逗号分隔。 |
 
-### 5.2 工作目录和状态目录
+`WECHATPADPRO_ACCOUNT_KEY` 不需要手写。登录脚本会生成或刷新，并写回 `deploy/dogbot.env`。
+
+如果改了 `AGENT_RUNNER_BIND_ADDR` 的端口，还要同步改：
 
 ```env
-AGENT_WORKSPACE_DIR=/srv/dogbot/runtime/agent-workspace
-AGENT_STATE_DIR=/srv/dogbot/runtime/agent-state
-DOGBOT_CLAUDE_PROMPT_ROOT=/srv/dogbot/runtime/agent-state/claude-prompt
-POSTGRES_DATA_DIR=/srv/dogbot/runtime/agent-state/postgres
+WECHATPADPRO_WEBHOOK_URL=http://host.docker.internal:<agent-runner-port>/v1/platforms/wechatpadpro/events
 ```
 
-建议：
+### 4.4 端口冲突时才改
 
-- `AGENT_WORKSPACE_DIR` 给 Agent 读写业务工作目录
-- 建议把 `AGENT_WORKSPACE_DIR` 和 `AGENT_STATE_DIR` 放到同一个 `runtime/` 根目录下
-- `AGENT_STATE_DIR` 用来保存：
-  - Claude 会话状态
-  - PostgreSQL 数据目录
-  - 日志
-  - NapCat / WeChatPadPro 状态
-- PostgreSQL 保存短期 Claude session 映射、文本 history、history read grants
-- 旧的 `runner.db` / `history.db` 已废弃，不做迁移
-- `DOGBOT_CLAUDE_PROMPT_ROOT` 推荐使用绝对路径，指向运行时 Claude prompt 根目录
-- 部署脚本会把仓库内 `claude-prompt/` 同步到 `DOGBOT_CLAUDE_PROMPT_ROOT`
-- `WeChatPadPro` 的 `data/mysql/redis` 目录也建议放到 `AGENT_STATE_DIR/wechatpadpro-data/`
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `POSTGRES_PORT` | `15432` | 宿主机访问 Postgres 的端口。 |
+| `AGENT_RUNNER_BIND_ADDR` | `0.0.0.0:8787` | 平台事件入口。 |
+| `API_PROXY_BIND_ADDR` | `0.0.0.0:9000` | 宿主机本地模型代理入口。 |
+| `API_PROXY_PORT` | `9000` | 网络策略放行端口，要和 `API_PROXY_BIND_ADDR` 一致。 |
+| `NAPCAT_WEBUI_PORT` | `6099` | NapCat WebUI。 |
+| `NAPCAT_ONEBOT_PORT` | `3001` | NapCat HTTP API。 |
+| `WECHATPADPRO_HOST_PORT` | `38849` | WeChatPadPro API。 |
 
-如果你改这些路径，旧会话和旧状态看起来会像“丢了”。
+Postgres 默认使用 `15432`，避免和宿主机已有 `5432` 冲突。
 
-### 5.3 PostgreSQL
+## 5. 模型配置
 
-```env
-POSTGRES_HOST=127.0.0.1
-POSTGRES_PORT=15432
-POSTGRES_DB=dogbot
-POSTGRES_ADMIN_USER=dogbot_admin
-POSTGRES_ADMIN_PASSWORD=change-me
-POSTGRES_AGENT_READER_USER=dogbot_agent_reader
-POSTGRES_AGENT_READER_PASSWORD=change-me-reader
-POSTGRES_AGENT_READER_DATABASE_URL=postgres://dogbot_agent_reader:change-me-reader@postgres:5432/dogbot
-HISTORY_RUN_TOKEN_TTL_SECS=1800
-HISTORY_RETENTION_DAYS=180
-DOGBOT_ADMIN_ACTOR_IDS=
-```
-
-说明：
-
-- `agent-runner` 用 admin 连接初始化 schema、写入 session/history/grant
-- Claude exec 只收到 reader 连接串和短期 run token
-- 普通 run 只能读取当前会话历史
-- `DOGBOT_ADMIN_ACTOR_IDS` 中的 actor 在私聊中可获得跨会话 history 读取授权
-- 如果 Postgres 在本项目 compose 中运行，reader URL 使用内部服务地址 `postgres:5432`
-- 如果 Postgres 不在 compose 网络内运行，需要显式覆盖 `POSTGRES_AGENT_READER_DATABASE_URL`，并同步调整容器网络访问策略
-
-### 5.4 平台账号隔离键
-
-建议显式设置：
+### 5.1 DeepSeek Anthropic-compatible 示例
 
 ```env
-PLATFORM_QQ_ACCOUNT_ID=qq:bot_uin:123456
-PLATFORM_WECHATPADPRO_ACCOUNT_ID=wechatpadpro:account:wxid_bot_1
-```
-
-作用：
-
-- 作为 `platform-account-shared` scope 的隔离键
-- 避免多个机器人账号共用同一套 platform 级上下文
-
-### 5.5 agent-runner 与 Bifrost
-
-```env
-AGENT_RUNNER_BIND_ADDR=0.0.0.0:8787
-ANTHROPIC_BASE_URL=http://127.0.0.1:8080/anthropic
-ANTHROPIC_API_KEY=dummy
-BIFROST_PORT=8080
 BIFROST_PROVIDER_NAME=primary
-BIFROST_MODEL=primary/model-id
+BIFROST_MODEL=primary/deepseek-v4-pro
 BIFROST_UPSTREAM_PROVIDER_TYPE=anthropic
 BIFROST_UPSTREAM_BASE_URL=http://host.docker.internal:9000
 BIFROST_UPSTREAM_API_KEY=local-proxy-token
+
 API_PROXY_BIND_ADDR=0.0.0.0:9000
 API_PROXY_AUTH_TOKEN=local-proxy-token
-API_PROXY_UPSTREAM_BASE_URL=https://example.com
+API_PROXY_UPSTREAM_BASE_URL=https://api.deepseek.com/anthropic
 API_PROXY_UPSTREAM_TOKEN=你的真实 token
 API_PROXY_UPSTREAM_AUTH_HEADER=x-api-key
 API_PROXY_UPSTREAM_AUTH_SCHEME=
-API_PROXY_UPSTREAM_MODEL=
+API_PROXY_UPSTREAM_MODEL=deepseek-v4-pro[1m]
 ```
 
 说明：
 
-- `AGENT_RUNNER_BIND_ADDR` 是 QQ / 微信平台直连 `agent-runner` 的监听地址；如果容器要通过 `host.docker.internal` 回调它，不要绑定 `127.0.0.1`
-- `Claude Code` 本身只访问 `127.0.0.1:${BIFROST_PORT}/anthropic`
-- `BIFROST_MODEL` 是 Claude 在容器内默认使用的模型别名，格式通常是 `<provider-alias>/<model-id>`
-- `BIFROST_UPSTREAM_*` 只用于 `claude-runner` 内的 `bifrost -> 宿主机 api-proxy` 链路，不应放真实上游 token
-- `API_PROXY_UPSTREAM_BASE_URL` 和 `API_PROXY_UPSTREAM_TOKEN` 才是真实模型网关入口，只保留在宿主机上的 `agent-runner`
-- `API_PROXY_AUTH_TOKEN` 要和 `BIFROST_UPSTREAM_API_KEY` 保持一致，用来保护本地 `bifrost -> api-proxy` 调用
-- `API_PROXY_UPSTREAM_MODEL` 可选；如果需要把容器内模型别名重写成真实上游模型名，就在这里配置
+- `BIFROST_MODEL` 是 Claude Code 在容器内看到的模型名。
+- `API_PROXY_UPSTREAM_MODEL` 是真实上游模型名。
+- `API_PROXY_AUTH_TOKEN` 必须和 `BIFROST_UPSTREAM_API_KEY` 一致。
+- 真实 token 只写在 `API_PROXY_UPSTREAM_TOKEN`。
 
-### 5.6 调度配置
+### 5.2 OpenAI-compatible 示例
 
-```env
-MAX_CONCURRENT_RUNS=10
-MAX_QUEUE_DEPTH=20
-```
-
-说明：
-
-- `MAX_CONCURRENT_RUNS` 控制全局最多同时运行的 Agent 任务数
-- 同一个私聊或群聊同一时间只会运行一个任务，后续消息进入该会话 FIFO 队列
-- `MAX_QUEUE_DEPTH` 控制全局等待任务上限；队列满时会直接回复忙碌提示
-- 平台入口收到可执行消息后会立即返回；等待中的消息只收到排队提示，真正开始执行时才发 reaction
-- 不再使用分钟级限流，也不再用 wall-clock timeout 直接 kill 正在运行的 Agent 任务
-
-### 5.7 上游配置
-
-常见切换方式：
+如果上游是 OpenAI-compatible 网关，通常需要：
 
 ```env
 BIFROST_MODEL=primary/gpt-5
+BIFROST_UPSTREAM_PROVIDER_TYPE=openai
 API_PROXY_UPSTREAM_BASE_URL=https://api.openai.com/v1
-API_PROXY_UPSTREAM_TOKEN=你的 OpenAI key
+API_PROXY_UPSTREAM_TOKEN=你的真实 token
+API_PROXY_UPSTREAM_AUTH_HEADER=authorization
+API_PROXY_UPSTREAM_AUTH_SCHEME=Bearer
 API_PROXY_UPSTREAM_MODEL=gpt-5
 ```
 
-```env
-BIFROST_MODEL=primary/kimi-k2-0711-preview
-API_PROXY_UPSTREAM_BASE_URL=https://api.moonshot.cn/v1
-API_PROXY_UPSTREAM_TOKEN=你的 Kimi key
-API_PROXY_UPSTREAM_MODEL=kimi-k2-0711-preview
-```
+具体是否可用取决于上游是否完整支持 Claude Code 需要的工具调用语义。
 
-```env
-BIFROST_MODEL=primary/minimax-text-01
-API_PROXY_UPSTREAM_BASE_URL=https://api.minimax.chat/v1
-API_PROXY_UPSTREAM_TOKEN=你的 Minimax key
-API_PROXY_UPSTREAM_MODEL=minimax-text-01
-```
+### 5.3 切换模型后的 session
 
-如果你的上游是 `anthropic-compatible` 网关，则保持 `BIFROST_UPSTREAM_PROVIDER_TYPE=anthropic`，并把 `API_PROXY_UPSTREAM_BASE_URL`、`API_PROXY_UPSTREAM_TOKEN`、`API_PROXY_UPSTREAM_MODEL` 改成该网关需要的真实值。
-
-## 6. NapCat 配置
-
-### 6.1 WebUI
-
-默认端口：
+切换模型后，旧 Claude session 可能带有旧模型的 thinking 状态。如果出现：
 
 ```text
-http://127.0.0.1:6099
+The content[].thinking in the thinking mode must be passed back to the API.
 ```
 
-### 6.2 登录 QQ
+处理方式：
 
-- 打开 NapCat WebUI
-- 扫码登录
-- 部署脚本也会自动准备 NapCat 登录二维码：
-  - 如果本机安装了 `qrencode`，会直接在终端打印二维码
-  - 同时保留二维码图片和原始登录链接
-  - 脚本会阻塞等待扫码；若 100 秒内未完成扫码会退出
+- 更新 PostgreSQL 中对应会话的 `claude_session_id`，让它生成新会话。
+- 或删除/重置对应会话映射。
 
-### 6.3 反向 WebSocket
+这是 session 状态不兼容，不是 QQ/NapCat 本身的问题。
 
-当前工程要求 `NapCat` 直接把 OneBot 事件推给宿主机上的 `agent-runner`。
+## 6. 启动流程做了什么
 
-目标地址：
+`./deploy_stack.sh` 会按顺序执行：
+
+1. 读取 `deploy/dogbot.env`。
+2. 创建和修复运行态目录权限。
+3. 同步 `claude-prompt/` 到 `DOGBOT_CLAUDE_PROMPT_ROOT`。
+4. 生成 `claude-runner` 运行时 launch script。
+5. 启动 PostgreSQL。
+6. 编译并启动宿主机 `agent-runner`。
+7. 启动 `claude-runner`。
+8. 按选择启动 NapCat 和/或 WeChatPadPro。
+9. 等待扫码登录。
+10. 自动配置 NapCat HTTP callback / WeChatPadPro webhook。
+11. 如果 `APPLY_NETWORK_POLICY=1`，为 `claude-runner` 应用网络限制。
+
+## 7. 日志和状态
+
+常用位置：
 
 ```text
-http://host.docker.internal:8787/v1/platforms/qq/napcat/events
+${AGENT_STATE_DIR}/logs/agent-runner.log
+${AGENT_STATE_DIR}/bifrost/bifrost.log
+${AGENT_STATE_DIR}/bifrost/logs.db
+${AGENT_STATE_DIR}/claude/
+${AGENT_STATE_DIR}/postgres/
+${AGENT_STATE_DIR}/napcat-login/
+${AGENT_STATE_DIR}/wechatpadpro-login/
 ```
 
-这部分现在由脚本自动写入：
-
-- `scripts/configure_napcat_ingress.sh`
-
-正常情况下不需要你手动改容器内配置。
-
-## 7. QQ 平台入口配置
-
-QQ 链路为：
-
-```text
-NapCat -> agent-runner
-```
-
-关键配置：
-
-```env
-PLATFORM_QQ_BOT_ID=你的QQ号
-PLATFORM_QQ_ACCOUNT_ID=qq:bot_uin:你的机器人QQ号
-```
-
-## 8. 触发规则
-
-当前项目统一规则如下：
-
-- QQ 私聊：任意非空文本
-- QQ 群聊：必须 `@机器人 + 正文`
-- 微信私聊：任意非空文本
-- 微信群聊：必须 `@机器人名 + 正文`
-- `/agent-status` 保留
-
-补充说明：
-
-- `agent-runner` 当前直接执行平台侧 trigger gate
-- 群聊仍保留显式 mention gate，reply 本身不会单独触发执行
-- 部署和联调请按上面的现态规则验收
-
-## 9. WeChatPadPro 配置
-
-### 9.1 启用
-
-```env
-ENABLE_WECHATPADPRO=1
-```
-
-### 9.2 容器
-
-会额外启动：
-
-- `wechatpadpro`
-- `wechatpadpro_mysql`
-- `wechatpadpro_redis`
-
-### 9.3 登录
-
-部署脚本会自动：
-
-- 生成 `WECHATPADPRO_ACCOUNT_KEY`
-- 拉取登录二维码
-- 如果二维码过期，脚本会刷新本地二维码文件
-- 如果本机安装了 `qrencode`，会直接在终端打印二维码
-- 把二维码图片和元信息写到：
-  - `WECHATPADPRO_LOGIN_OUTPUT_DIR`
-- 阻塞等待扫码；若 100 秒内未完成扫码会退出
-
-### 9.4 微信平台入口
-
-微信链路为：
-
-```text
-WeChatPadPro -> agent-runner
-```
-
-关键配置：
-
-```env
-PLATFORM_WECHATPADPRO_ACCOUNT_ID=wechatpadpro:account:你的机器人账号
-PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES=DogDu
-WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK=1
-WECHATPADPRO_WEBHOOK_URL=http://host.docker.internal:8787/v1/platforms/wechatpadpro/events
-WECHATPADPRO_REQUIRE_MENTION_IN_GROUP=1
-```
-
-说明：
-
-- 示例配置默认会自动向 WeChatPadPro 注册 webhook
-- 如果关闭 `WECHATPADPRO_AUTO_CONFIGURE_WEBHOOK`，必须手动配置 webhook，否则 `agent-runner` 不会收到消息
-- 示例配置默认启用 `WECHATPADPRO_REQUIRE_MENTION_IN_GROUP=1`
-- 启用群聊 mention 门禁时，`PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES` 不能为空
-
-## 10. Docker 资源限制
-
-关键字段：
-
-```env
-CLAUDE_CONTAINER_CPU_CORES=4
-CLAUDE_CONTAINER_MEMORY_MB=4096
-CLAUDE_CONTAINER_DISK_GB=50
-CLAUDE_CONTAINER_PIDS_LIMIT=256
-```
-
-当前实际情况：
-
-- CPU / memory / pids 限制生效
-- `disk=50` 只是目标值，不一定是宿主机上的硬限制
-- 如果宿主机文件系统不支持 Docker 层磁盘配额，仍需要宿主机级别的限额方案
-
-## 11. 如何修改 API key 和模型
-
-### 11.1 改 key
-
-直接修改你的真实环境文件：
-
-```env
-API_PROXY_UPSTREAM_TOKEN=新的 token
-```
-
-### 11.2 改模型源地址
-
-如果要切到另一个模型源，改这里：
-
-```env
-API_PROXY_UPSTREAM_BASE_URL=https://example.com
-```
-
-### 11.3 改模型
-
-如果要同时修改 Claude 看到的默认模型别名和真实上游模型名，通常一起改：
-
-```env
-BIFROST_MODEL=primary/gpt-5
-API_PROXY_UPSTREAM_MODEL=gpt-5
-```
-
-### 11.4 重新生效
-
-改完后重启：
+查看容器：
 
 ```bash
-./stop_stack.sh
-sudo ./deploy_stack.sh
+docker ps
+docker logs claude-runner
+docker logs napcat
+docker logs wechatpadpro
+docker logs dogbot-postgres
 ```
 
-## 12. 需要特别注意的事情
-
-### 12.1 Claude 只认 Anthropic，Bifrost 负责转换
-
-现在 Docker 里的 Claude Code 仍然只调用 Claude 协议接口。
-
-但这不代表你的真实上游必须是 Anthropic 协议。
-
-当前链路是：
-
-- `Claude Code -> http://127.0.0.1:${BIFROST_PORT}/anthropic`
-- `Bifrost -> 你配置的真实上游`
-
-所以只要 `Bifrost` 知道上游协议类型，你可以把真实上游切到 `openai-compatible`、`anthropic-compatible` 等不同协议族。
-
-### 12.2 真实 key 不进 Docker
-
-`Claude Code` 自己不需要真实 provider key。  
-Docker 里的 `claude-runner` 中，`Claude Code` 只拿到：
-
-- `ANTHROPIC_BASE_URL=http://127.0.0.1:8080/anthropic`
-- `ANTHROPIC_API_KEY=dummy`
-
-真实 key 会进入 `claude-runner` 容器环境，但只供 `bifrost` 使用，不直接暴露给 `Claude Code`。
-
-### 12.3 QQ 登录态容易受重建影响
-
-避免无意义地重建 `napcat`。  
-只要 `napcat` 容器和数据目录不乱动，就不应该频繁要求重新扫码。
-
-### 12.4 WeChatPadPro 仍有自身稳定性问题
-
-当前已经确认过：
-
-- webhook 群聊链路可用
-- 某些场景下 DNS 和长连接稳定性会影响消息同步
-
-如果后续继续遇到微信私聊推送异常，优先排查：
-
-- `wechatpadpro` 容器 DNS
-- `GetSyncMsg / HttpSyncMsg` 是否能拿到消息
-
-## 13. 常用命令
-
-### 13.1 启动
-
-```bash
-./deploy_stack.sh
-```
-
-### 13.2 停止
-
-```bash
-./stop_stack.sh
-```
-
-### 13.3 检查 runner
+健康检查：
 
 ```bash
 curl http://127.0.0.1:8787/healthz
 ```
 
-### 13.4 主动向已有会话发消息
+如果你改了 `AGENT_RUNNER_BIND_ADDR` 端口，把 `8787` 替换成新端口。
 
-```bash
-./scripts/send_session_message.sh \
-  --env-file deploy/dogbot.env \
-  --session-id qq:private:123456 \
-  --text "hello from cron"
+## 8. 更新 prompt / 人格
+
+修改源文件：
+
+```text
+claude-prompt/CLAUDE.md
+claude-prompt/persona.md
+claude-prompt/skills/
 ```
 
-## 14. 环境文件
+重新部署会同步到运行时目录：
 
-当前仓库统一使用：
+```bash
+./deploy_stack.sh --qq
+```
 
-- `deploy/dogbot.env`
+不要直接修改 `${DOGBOT_CLAUDE_PROMPT_ROOT}` 下的文件；它是部署产物，下次部署会被覆盖。
 
-## 15. Control Plane 联调
+## 9. 常见问题
 
-本轮控制面 A/B/C 改造的联调和验收说明单独整理在：
+### 9.1 `address already in use`
 
-- `docs/control-plane-integration.md`
+先看冲突端口。常见改法：
 
-建议先按本文完成部署，再按该文档做：
+- Postgres 冲突：改 `POSTGRES_PORT`。
+- agent-runner 冲突：改 `AGENT_RUNNER_BIND_ADDR`，并同步改平台回调 URL。
+- api-proxy 冲突：改 `API_PROXY_BIND_ADDR` 和 `API_PROXY_PORT`。
+- NapCat 冲突：改 `NAPCAT_WEBUI_PORT` / `NAPCAT_ONEBOT_PORT`。
+- WeChatPadPro 冲突：改 `WECHATPADPRO_HOST_PORT`。
 
-- 健康检查
-- QQ / WeChat 平台侧手工回归
-- PostgreSQL history / session 核对
-- Rust / Python 回归命令
+### 9.2 `host.docker.internal connection refused`
+
+通常是宿主机服务绑定到了 `127.0.0.1`，容器无法访问。需要绑定 `0.0.0.0`：
+
+```env
+API_PROXY_BIND_ADDR=0.0.0.0:9000
+AGENT_RUNNER_BIND_ADDR=0.0.0.0:8787
+```
+
+还要确认 `APPLY_NETWORK_POLICY=1` 时 `API_PROXY_PORT` 和真实端口一致。
+
+### 9.3 Docker 拉镜像失败
+
+检查 Docker daemon 网络。`HTTP_PROXY` / `HTTPS_PROXY` 只会注入容器，不能替代 Docker daemon 自身代理配置。
+
+### 9.4 QQ 私聊有回复，群聊没回复
+
+群聊必须显式 `@机器人`。同时确认：
+
+```env
+PLATFORM_QQ_BOT_ID=<实际登录 QQ 号>
+```
+
+### 9.5 微信群聊没回复
+
+确认群聊消息里使用的昵称在：
+
+```env
+PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES=DogDu,另一个昵称
+```
+
+如果不想要求 mention，可改：
+
+```env
+WECHATPADPRO_REQUIRE_MENTION_IN_GROUP=0
+```
+
+### 9.6 NapCat reaction 失败
+
+NapCat 有时会返回 reaction 业务失败。DogBot 会记录 warning 并继续执行任务；这通常不影响最终文本回复。
+
+### 9.7 Claude 容器里手动运行正常，平台消息失败
+
+优先看：
+
+- 平台消息是否复用了旧 Claude session。
+- `agent-runner.log` 里的 `scheduled runner completed` exit code。
+- `bifrost/logs.db` 里的上游错误。
+- 是否改了模型但没有重置对应会话。
+
+### 9.8 如何重建 claude-runner 镜像
+
+改了 `CLAUDE_CODE_VERSION` 或 Dockerfile 后：
+
+```bash
+docker compose \
+  --project-name dogbot \
+  --project-directory . \
+  --env-file deploy/dogbot.env \
+  -f deploy/docker/docker-compose.yml \
+  build claude-runner
+
+./stop_stack.sh --keep-qq --keep-wechat
+./deploy_stack.sh --qq --wechat
+```
+
+### 9.9 如何临时关闭网络限制
+
+调试时可在 `deploy/dogbot.env` 中设置：
+
+```env
+APPLY_NETWORK_POLICY=0
+```
+
+确认问题后再改回 `1`。
