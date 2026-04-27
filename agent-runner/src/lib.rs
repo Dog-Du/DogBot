@@ -13,6 +13,7 @@ pub mod pipeline;
 pub mod platforms;
 pub mod protocol;
 pub mod provenance_store;
+pub mod scheduler;
 pub mod server;
 pub mod session_store;
 pub mod trigger_resolver;

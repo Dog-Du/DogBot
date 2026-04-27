@@ -1,4 +1,6 @@
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use agent_runner::models::{ErrorResponse, RunRequest, RunResponse, ValidatedRunRequest};
 use agent_runner::server::{Runner, build_test_app_with_settings};
@@ -11,6 +13,7 @@ use axum::{
 };
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
+use tokio::sync::Notify;
 use tower::ServiceExt;
 
 #[derive(Clone, Default)]
@@ -23,12 +26,23 @@ impl Capture {
         self.requests.lock().unwrap().push((path, body));
     }
 
-    fn last(&self) -> Option<(String, Value)> {
-        self.requests.lock().unwrap().last().cloned()
-    }
-
     fn all(&self) -> Vec<(String, Value)> {
         self.requests.lock().unwrap().clone()
+    }
+
+    async fn wait_for_len(&self, expected: usize) -> Vec<(String, Value)> {
+        for _ in 0..50 {
+            let requests = self.all();
+            if requests.len() >= expected {
+                return requests;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        self.all()
+    }
+
+    async fn wait_for_last(&self) -> Option<(String, Value)> {
+        self.wait_for_len(1).await.last().cloned()
     }
 }
 
@@ -74,6 +88,61 @@ impl Runner for FixedOutputRunner {
     }
 }
 
+#[derive(Clone)]
+struct RunGate {
+    entered: Arc<Notify>,
+    release: Arc<Notify>,
+    stdout: &'static str,
+}
+
+impl RunGate {
+    fn new(stdout: &'static str) -> Self {
+        Self {
+            entered: Arc::new(Notify::new()),
+            release: Arc::new(Notify::new()),
+            stdout,
+        }
+    }
+}
+
+struct SequencedBlockingRunner {
+    gates: Mutex<VecDeque<RunGate>>,
+}
+
+impl SequencedBlockingRunner {
+    fn new(gates: Vec<RunGate>) -> Self {
+        Self {
+            gates: Mutex::new(gates.into()),
+        }
+    }
+}
+
+#[async_trait]
+impl Runner for SequencedBlockingRunner {
+    async fn run(
+        &self,
+        _request: RunRequest,
+        _validated: ValidatedRunRequest,
+    ) -> Result<RunResponse, ErrorResponse> {
+        let gate = self
+            .gates
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("unexpected runner call");
+        gate.entered.notify_one();
+        gate.release.notified().await;
+        Ok(RunResponse {
+            status: "ok".into(),
+            stdout: gate.stdout.into(),
+            stderr: String::new(),
+            exit_code: 0,
+            timed_out: false,
+            duration_ms: 1,
+        })
+    }
+}
+
 fn test_settings() -> agent_runner::config::Settings {
     let root = std::env::temp_dir().join(format!(
         "agent-runner-platform-http-tests-{}-{}",
@@ -107,9 +176,6 @@ fn test_settings() -> agent_runner::config::Settings {
         platform_wechatpadpro_bot_mention_names: vec!["DogDu".into()],
         max_concurrent_runs: 1,
         max_queue_depth: 1,
-        global_rate_limit_per_minute: 10,
-        user_rate_limit_per_minute: 3,
-        conversation_rate_limit_per_minute: 5,
         session_db_path: root.join("state/runner.db").display().to_string(),
         history_db_path: root.join("state/history.db").display().to_string(),
         database_url: "postgres://dogbot_admin:change-me@127.0.0.1:5432/dogbot".into(),
@@ -247,6 +313,200 @@ async fn spawn_mock_server(capture: Capture, response: Value) -> String {
     format!("http://{addr}")
 }
 
+fn qq_group_mention_payload(message_id: i64, text: &str) -> Value {
+    json!({
+        "time": 1_710_000_000,
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 5566,
+        "user_id": 42,
+        "message_id": message_id,
+        "raw_message": format!("[CQ:at,qq=123] {text}"),
+        "message": [
+            {"type":"at","data":{"qq":"123"}},
+            {"type":"text","data":{"text": format!(" {text}")}}
+        ]
+    })
+}
+
+async fn post_qq_event(app: Router, payload: Value) -> axum::response::Response {
+    app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/v1/platforms/qq/napcat/events")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn qq_ingress_returns_before_blocking_runner_completes() {
+    let capture = Capture::default();
+    let base_url = spawn_mock_server(
+        capture.clone(),
+        json!({"status": "ok", "data": {"message_id": 201}}),
+    )
+    .await;
+    let mut settings = test_settings();
+    settings.napcat_api_base_url = base_url;
+    settings.max_concurrent_runs = 1;
+    settings.max_queue_depth = 4;
+
+    let gate = RunGate::new("后台完成");
+    let app = build_test_app_with_settings(
+        Arc::new(SequencedBlockingRunner::new(vec![gate.clone()])),
+        settings,
+    );
+
+    let response = tokio::time::timeout(
+        Duration::from_millis(200),
+        post_qq_event(app.clone(), qq_group_mention_payload(201, "跑 benchmark")),
+    )
+    .await
+    .expect("ingress should return before the runner is released")
+    .status();
+
+    assert_eq!(response, StatusCode::OK);
+    tokio::time::timeout(Duration::from_secs(1), gate.entered.notified())
+        .await
+        .expect("runner should start in the background");
+    let requests = capture.wait_for_len(1).await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0, "/set_msg_emoji_like");
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(capture.all().len(), 1);
+
+    gate.release.notify_one();
+    let requests = capture.wait_for_len(2).await;
+    assert_eq!(requests[1].0, "/send_group_msg");
+    assert_eq!(
+        requests[1].1["message"],
+        "[CQ:reply,id=201][CQ:at,qq=42] 后台完成"
+    );
+}
+
+#[tokio::test]
+async fn queued_same_conversation_replies_with_tasks_ahead_without_reaction() {
+    let capture = Capture::default();
+    let base_url = spawn_mock_server(
+        capture.clone(),
+        json!({"status": "ok", "data": {"message_id": 202}}),
+    )
+    .await;
+    let mut settings = test_settings();
+    settings.napcat_api_base_url = base_url;
+    settings.max_concurrent_runs = 1;
+    settings.max_queue_depth = 4;
+
+    let first = RunGate::new("第一条完成");
+    let second = RunGate::new("第二条完成");
+    let app = build_test_app_with_settings(
+        Arc::new(SequencedBlockingRunner::new(vec![
+            first.clone(),
+            second.clone(),
+        ])),
+        settings,
+    );
+
+    let first_response = post_qq_event(app.clone(), qq_group_mention_payload(202, "第一条")).await;
+    assert_eq!(first_response.status(), StatusCode::OK);
+    tokio::time::timeout(Duration::from_secs(1), first.entered.notified())
+        .await
+        .expect("first task should start");
+    let requests = capture.wait_for_len(1).await;
+    assert_eq!(requests[0].0, "/set_msg_emoji_like");
+
+    let second_response = post_qq_event(app.clone(), qq_group_mention_payload(203, "第二条")).await;
+    assert_eq!(second_response.status(), StatusCode::OK);
+    let requests = capture.wait_for_len(2).await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].0, "/send_group_msg");
+    assert!(
+        requests[1].1["message"]
+            .as_str()
+            .unwrap()
+            .contains("前面还有 1 个任务")
+    );
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(capture.all().len(), 2);
+
+    first.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), second.entered.notified())
+        .await
+        .expect("second task should be promoted");
+    second.release.notify_one();
+    let _ = capture.wait_for_len(5).await;
+}
+
+#[tokio::test]
+async fn queued_task_reacts_only_when_promoted() {
+    let capture = Capture::default();
+    let base_url = spawn_mock_server(
+        capture.clone(),
+        json!({"status": "ok", "data": {"message_id": 204}}),
+    )
+    .await;
+    let mut settings = test_settings();
+    settings.napcat_api_base_url = base_url;
+    settings.max_concurrent_runs = 1;
+    settings.max_queue_depth = 4;
+
+    let first = RunGate::new("第一条完成");
+    let second = RunGate::new("第二条完成");
+    let app = build_test_app_with_settings(
+        Arc::new(SequencedBlockingRunner::new(vec![
+            first.clone(),
+            second.clone(),
+        ])),
+        settings,
+    );
+
+    assert_eq!(
+        post_qq_event(app.clone(), qq_group_mention_payload(204, "第一条"))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    tokio::time::timeout(Duration::from_secs(1), first.entered.notified())
+        .await
+        .expect("first task should start");
+    assert_eq!(
+        post_qq_event(app.clone(), qq_group_mention_payload(205, "第二条"))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let requests = capture.wait_for_len(2).await;
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|(path, _)| path == "/set_msg_emoji_like")
+            .count(),
+        1
+    );
+
+    first.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), second.entered.notified())
+        .await
+        .expect("second task should start after promotion");
+    let requests = capture.wait_for_len(4).await;
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|(path, _)| path == "/set_msg_emoji_like")
+            .count(),
+        2
+    );
+
+    second.release.notify_one();
+    let _ = capture.wait_for_len(5).await;
+}
+
 #[tokio::test]
 async fn wechat_message_endpoint_uses_registered_platform_adapter() {
     let Some(database_url) = std::env::var("DOGBOT_TEST_DATABASE_URL").ok() else {
@@ -297,7 +557,7 @@ async fn wechat_message_endpoint_uses_registered_platform_adapter() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let (path, payload) = capture.last().expect("captured request");
+    let (path, payload) = capture.wait_for_last().await.expect("captured request");
     assert_eq!(path, "/message/SendTextMessage?key=test-key");
     assert_eq!(payload["MsgItem"][0]["ToUserName"], "wxid_user_1");
     assert_eq!(payload["MsgItem"][0]["TextContent"], "hello from outbox");
@@ -338,7 +598,7 @@ async fn wechat_ingress_uses_registered_platform_adapter_for_delivery() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let (path, body) = capture.last().expect("captured request");
+    let (path, body) = capture.wait_for_last().await.expect("captured request");
     assert_eq!(path, "/message/SendTextMessage?key=test-key");
     assert_eq!(body["MsgItem"][0]["ToUserName"], "wxid_user_1");
     assert_eq!(body["MsgItem"][0]["TextContent"], "收到");
@@ -383,7 +643,7 @@ async fn qq_ingress_group_message_uses_registered_platform_adapter_for_delivery(
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let (path, body) = capture.last().expect("captured request");
+    let (path, body) = capture.wait_for_last().await.expect("captured request");
     assert_eq!(path, "/send_group_msg");
     assert_eq!(body["group_id"], 5566);
     assert_eq!(body["message"], "[CQ:reply,id=99][CQ:at,qq=42] 收到");
@@ -431,7 +691,7 @@ async fn qq_ingress_converts_plain_numeric_at_text_to_native_mention() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let (path, body) = capture.last().expect("captured request");
+    let (path, body) = capture.wait_for_last().await.expect("captured request");
     assert_eq!(path, "/send_group_msg");
     assert_eq!(
         body["message"],
@@ -476,7 +736,7 @@ async fn qq_private_ingress_uses_send_private_msg_for_delivery() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let (path, body) = capture.last().expect("captured request");
+    let (path, body) = capture.wait_for_last().await.expect("captured request");
     assert_eq!(path, "/send_private_msg");
     assert_eq!(body["user_id"], 42);
     assert_eq!(body["message"], "[CQ:reply,id=100]收到");
@@ -527,7 +787,7 @@ async fn qq_ingress_can_disable_default_reply_via_action_block() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let (path, body) = capture.last().expect("captured request");
+    let (path, body) = capture.wait_for_last().await.expect("captured request");
     assert_eq!(path, "/send_group_msg");
     assert_eq!(body["message"], "[CQ:at,qq=42] 收到");
 }
@@ -577,7 +837,7 @@ async fn qq_ingress_can_override_reply_target_via_action_block() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let (path, body) = capture.last().expect("captured request");
+    let (path, body) = capture.wait_for_last().await.expect("captured request");
     assert_eq!(path, "/send_group_msg");
     assert_eq!(body["message"], "[CQ:reply,id=777][CQ:at,qq=42] 收到");
 }
@@ -627,7 +887,7 @@ async fn qq_ingress_can_send_structured_mentions_from_action_block() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let (path, body) = capture.last().expect("captured request");
+    let (path, body) = capture.wait_for_last().await.expect("captured request");
     assert_eq!(path, "/send_group_msg");
     assert_eq!(
         body["message"],
@@ -676,7 +936,7 @@ async fn wechat_ingress_image_action_uses_send_file_endpoint_and_caption_text() 
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let requests = capture.all();
+    let requests = capture.wait_for_len(2).await;
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].0, "/api/v1/message/sendFile?key=test-key");
     assert_eq!(requests[0].1["toUserName"], "wxid_user_1");
@@ -733,7 +993,7 @@ async fn wechat_ingress_video_and_file_actions_use_send_file_endpoint() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let requests = capture.all();
+    let requests = capture.wait_for_len(2).await;
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].0, "/api/v1/message/sendFile?key=test-key");
     assert_eq!(requests[0].1["filePath"], "/workspace/outbox/demo.mp4");
@@ -786,7 +1046,7 @@ async fn wechat_ingress_voice_action_degrades_to_file_delivery() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let requests = capture.all();
+    let requests = capture.wait_for_len(1).await;
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].0, "/api/v1/message/sendFile?key=test-key");
     assert_eq!(requests[0].1["filePath"], "/workspace/outbox/note.mp3");
@@ -834,7 +1094,7 @@ async fn wechat_ingress_sticker_action_degrades_to_image_delivery() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let requests = capture.all();
+    let requests = capture.wait_for_len(1).await;
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].0, "/api/v1/message/sendFile?key=test-key");
     assert_eq!(requests[0].1["filePath"], "/workspace/outbox/sticker.webp");
@@ -890,17 +1150,19 @@ async fn qq_ingress_reaction_add_uses_native_napcat_endpoint() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let requests = capture.all();
-    assert_eq!(requests.len(), 3);
+    let requests = capture.wait_for_len(4).await;
+    assert_eq!(requests.len(), 4);
     assert_eq!(requests[0].0, "/set_msg_emoji_like");
     assert_eq!(requests[0].1["message_id"], 99);
-    assert_eq!(requests[0].1["emoji_id"], "128077");
     assert_eq!(requests[1].0, "/set_msg_emoji_like");
     assert_eq!(requests[1].1["message_id"], 99);
-    assert_eq!(requests[1].1["emoji_id"], "128591");
-    assert_eq!(requests[2].0, "/send_group_msg");
+    assert_eq!(requests[1].1["emoji_id"], "128077");
+    assert_eq!(requests[2].0, "/set_msg_emoji_like");
+    assert_eq!(requests[2].1["message_id"], 99);
+    assert_eq!(requests[2].1["emoji_id"], "128591");
+    assert_eq!(requests[3].0, "/send_group_msg");
     assert_eq!(
-        requests[2].1["message"],
+        requests[3].1["message"],
         "[CQ:reply,id=99][CQ:at,qq=42] 收到"
     );
 }
@@ -952,11 +1214,12 @@ async fn qq_reaction_business_error_returns_bad_gateway() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-    let requests = capture.all();
-    assert_eq!(requests.len(), 1);
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = capture.wait_for_len(2).await;
+    assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].0, "/set_msg_emoji_like");
-    assert_eq!(requests[0].1["emoji_id"], "128077");
+    assert_eq!(requests[1].0, "/set_msg_emoji_like");
+    assert_eq!(requests[1].1["emoji_id"], "128077");
 }
 
 #[tokio::test]
@@ -1043,7 +1306,7 @@ async fn wechat_ingress_reaction_add_is_noop_when_platform_lacks_reaction_suppor
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let requests = capture.all();
+    let requests = capture.wait_for_len(1).await;
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].0, "/message/SendTextMessage?key=test-key");
     assert_eq!(requests[0].1["MsgItem"][0]["ToUserName"], "wxid_user_6");

@@ -28,20 +28,7 @@ pub struct RunRequest {
 impl RunRequest {
     const ALLOWED_PREFIXES: [&'static str; 2] = ["/workspace", "/state"];
 
-    pub fn effective_timeout(&self, default_timeout: u64, max_timeout: u64) -> Result<u64, String> {
-        let timeout = self.timeout_secs.unwrap_or(default_timeout);
-        if timeout > max_timeout {
-            return Err("timeout exceeds configured max".to_string());
-        }
-        Ok(timeout)
-    }
-
-    pub fn validate(
-        &self,
-        default_timeout: u64,
-        max_timeout: u64,
-    ) -> Result<ValidatedRunRequest, String> {
-        let timeout_secs = self.effective_timeout(default_timeout, max_timeout)?;
+    pub fn validate(&self) -> Result<ValidatedRunRequest, String> {
         let cwd = Self::validate_cwd(&self.cwd)?;
         let system_prompt = SystemPromptContext {
             platform: self.platform.clone(),
@@ -63,7 +50,6 @@ impl RunRequest {
         .render_with_user_prompt(&self.prompt);
 
         Ok(ValidatedRunRequest {
-            timeout_secs,
             cwd,
             prompt,
             system_prompt,
@@ -94,7 +80,6 @@ impl RunRequest {
 
 #[derive(Debug, Clone)]
 pub struct ValidatedRunRequest {
-    pub timeout_secs: u64,
     pub cwd: String,
     pub prompt: String,
     pub system_prompt: String,

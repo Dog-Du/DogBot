@@ -22,6 +22,16 @@ impl CapturingRunner {
     fn captured_request(&self) -> Option<RunRequest> {
         self.request.lock().expect("lock request").clone()
     }
+
+    async fn wait_for_request(&self) -> Option<RunRequest> {
+        for _ in 0..50 {
+            if let Some(request) = self.captured_request() {
+                return Some(request);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        self.captured_request()
+    }
 }
 
 #[async_trait]
@@ -156,7 +166,7 @@ async fn wechat_webhook_private_text_enters_run_pipeline() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let request = runner.captured_request().expect("captured request");
+    let request = runner.wait_for_request().await.expect("captured request");
     assert_eq!(request.platform, "wechatpadpro");
     assert_eq!(request.chat_type, "private");
     assert_eq!(request.prompt, "帮我总结一下");

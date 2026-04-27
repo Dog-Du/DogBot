@@ -120,6 +120,16 @@ if grep -q '^SESSION_DB_PATH=' "$env_example" || grep -q '^HISTORY_DB_PATH=' "$e
   exit 1
 fi
 
+if grep -q '^DEFAULT_TIMEOUT_SECS=' "$env_example" || grep -q '^MAX_TIMEOUT_SECS=' "$env_example"; then
+  echo "FAIL: dogbot.env.example must not configure deprecated run timeout limits" >&2
+  exit 1
+fi
+
+if grep -q 'RATE_LIMIT_PER_MINUTE' "$env_example" || grep -q 'RATE_LIMIT_PER_MINUTE' "$start_script"; then
+  echo "FAIL: minute-level rate limit settings must not be exported or documented" >&2
+  exit 1
+fi
+
 if ! grep -q '^PLATFORM_QQ_ACCOUNT_ID=qq:bot_uin:unknown$' "$env_example"; then
   echo "FAIL: dogbot.env.example must define PLATFORM_QQ_ACCOUNT_ID with the direct-ingress default" >&2
   exit 1

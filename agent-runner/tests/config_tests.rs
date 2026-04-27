@@ -26,9 +26,6 @@ fn settings_use_expected_defaults() {
     assert_eq!(settings.napcat_access_token, None);
     assert_eq!(settings.max_concurrent_runs, 10);
     assert_eq!(settings.max_queue_depth, 20);
-    assert_eq!(settings.global_rate_limit_per_minute, 10);
-    assert_eq!(settings.user_rate_limit_per_minute, 3);
-    assert_eq!(settings.conversation_rate_limit_per_minute, 5);
     assert_eq!(settings.claude_prompt_root, "./claude-prompt");
     assert_eq!(
         settings.database_url,
@@ -167,17 +164,15 @@ fn settings_ignore_legacy_content_root_override() {
 }
 
 #[test]
-fn settings_reject_default_timeout_above_max() {
+fn settings_accept_legacy_timeout_bounds_without_enforcing_them() {
     let env = std::collections::HashMap::from([
         ("DEFAULT_TIMEOUT_SECS".to_string(), "400".to_string()),
         ("MAX_TIMEOUT_SECS".to_string(), "300".to_string()),
     ]);
 
-    let err = Settings::from_env_map(env).unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("DEFAULT_TIMEOUT_SECS must be <= MAX_TIMEOUT_SECS")
-    );
+    let settings = Settings::from_env_map(env).unwrap();
+    assert_eq!(settings.default_timeout_secs, 400);
+    assert_eq!(settings.max_timeout_secs, 300);
 }
 
 #[test]
@@ -233,12 +228,6 @@ fn settings_allow_runner_limit_overrides() {
         ),
         ("MAX_CONCURRENT_RUNS".to_string(), "4".to_string()),
         ("MAX_QUEUE_DEPTH".to_string(), "9".to_string()),
-        ("GLOBAL_RATE_LIMIT_PER_MINUTE".to_string(), "15".to_string()),
-        ("USER_RATE_LIMIT_PER_MINUTE".to_string(), "6".to_string()),
-        (
-            "CONVERSATION_RATE_LIMIT_PER_MINUTE".to_string(),
-            "7".to_string(),
-        ),
     ]);
 
     let settings = Settings::from_env_map(env).unwrap();
@@ -261,9 +250,6 @@ fn settings_allow_runner_limit_overrides() {
     );
     assert_eq!(settings.max_concurrent_runs, 4);
     assert_eq!(settings.max_queue_depth, 9);
-    assert_eq!(settings.global_rate_limit_per_minute, 15);
-    assert_eq!(settings.user_rate_limit_per_minute, 6);
-    assert_eq!(settings.conversation_rate_limit_per_minute, 7);
 }
 
 #[test]

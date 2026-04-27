@@ -256,8 +256,6 @@ fi
 env \
   RUST_LOG=warn \
   BIND_ADDR="127.0.0.1:$runner_port" \
-  DEFAULT_TIMEOUT_SECS=30 \
-  MAX_TIMEOUT_SECS=30 \
   CLAUDE_CONTAINER_NAME="$container_name" \
   CLAUDE_IMAGE_NAME="$mock_image" \
   AGENT_WORKSPACE_DIR="$workspace_dir" \
@@ -289,9 +287,6 @@ env \
   PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES=DogDu \
   MAX_CONCURRENT_RUNS=1 \
   MAX_QUEUE_DEPTH=1 \
-  GLOBAL_RATE_LIMIT_PER_MINUTE=10 \
-  USER_RATE_LIMIT_PER_MINUTE=10 \
-  CONVERSATION_RATE_LIMIT_PER_MINUTE=10 \
   "$repo_root/agent-runner/target/release/agent-runner" \
   >"$runner_log" 2>&1 &
 runner_pid=$!

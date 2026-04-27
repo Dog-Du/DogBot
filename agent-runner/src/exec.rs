@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use async_trait::async_trait;
-use tokio::time::{Duration, timeout};
 
 use crate::config::Settings;
 use crate::docker_client::{ContainerSpec, DockerRuntime};
@@ -119,14 +118,10 @@ impl DockerRunner {
                 timed_out: false,
             })?;
 
-        let result = timeout(
-            Duration::from_secs(validated.timeout_secs),
-            self.runtime.collect_exec_output(&exec.id),
-        )
-        .await;
+        let result = self.runtime.collect_exec_output(&exec.id).await;
 
         match result {
-            Ok(Ok((stdout, stderr, exit_code))) => Ok(RunResponse {
+            Ok((stdout, stderr, exit_code)) => Ok(RunResponse {
                 status: "ok".into(),
                 stdout,
                 stderr,
@@ -134,35 +129,12 @@ impl DockerRunner {
                 timed_out: false,
                 duration_ms: 0,
             }),
-            Ok(Err(err)) => Err(ErrorResponse {
+            Err(err) => Err(ErrorResponse {
                 status: "error".into(),
                 error_code: "exec_failed".into(),
                 message: err.to_string(),
                 timed_out: false,
             }),
-            Err(_) => {
-                if let Ok(Some(pid)) = self.runtime.exec_pid(&exec.id).await {
-                    let _ = self
-                        .runtime
-                        .kill_pid(&self.container_spec.container_name, pid, "TERM")
-                        .await;
-                    let _ = self
-                        .runtime
-                        .kill_pid(&self.container_spec.container_name, pid, "KILL")
-                        .await;
-                }
-                let _ = self
-                    .runtime
-                    .kill_claude_execs(&self.container_spec.container_name)
-                    .await;
-
-                Err(ErrorResponse {
-                    status: "error".into(),
-                    error_code: "timeout".into(),
-                    message: "command exceeded timeout".into(),
-                    timed_out: true,
-                })
-            }
         }
     }
 

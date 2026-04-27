@@ -1,4 +1,5 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -14,8 +15,9 @@ use axum::{
     routing::{get, post},
 };
 use serde_json::{Value, json};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::Mutex;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 use crate::{
     config::Settings,
@@ -32,7 +34,11 @@ use crate::{
     normalizer::normalize_agent_output,
     pipeline::MentionRef,
     platforms::{PlatformRegistry, delivery_context_from_event, run_response_output},
-    protocol::{CanonicalEvent, CanonicalMessage, MessagePart, OutboundMessage, OutboundPlan},
+    protocol::{
+        CanonicalEvent, CanonicalMessage, MessagePart, OutboundAction, OutboundMessage,
+        OutboundPlan, ReactionAction,
+    },
+    scheduler::{Admission, SchedulerSnapshot, SchedulerState, TaskSummary, TerminalState},
     session_store::SessionStore,
     trigger_resolver::{TriggerDecision, TriggerResolver},
 };
@@ -68,8 +74,8 @@ impl Runner for DockerRunner {
 
 #[derive(Clone)]
 struct AppState {
-    settings: Settings,
-    queue_tx: mpsc::Sender<QueuedRun>,
+    runner: Arc<dyn Runner>,
+    scheduler: Arc<RunScheduler>,
     session_store: SessionStore,
     history_store: Arc<StdMutex<HistoryStore>>,
     history_cleanup_state: Arc<StdMutex<HistoryCleanupState>>,
@@ -77,25 +83,31 @@ struct AppState {
     message_override: Option<Arc<dyn Messenger>>,
 }
 
-struct QueuedRun {
+#[derive(Clone)]
+struct ScheduledRun {
+    event: CanonicalEvent,
     request: RunRequest,
     validated: ValidatedRunRequest,
-    responder: oneshot::Sender<Result<RunResponse, ErrorResponse>>,
+    summary: TaskSummary,
 }
 
-#[derive(Default)]
-struct RateState {
-    global: VecDeque<Instant>,
-    by_user: HashMap<String, VecDeque<Instant>>,
-    by_conversation: HashMap<String, VecDeque<Instant>>,
+struct RunScheduler {
+    inner: Mutex<RunSchedulerInner>,
+    runner: Arc<dyn Runner>,
+    platform_registry: PlatformRegistry,
+    message_override: Option<Arc<dyn Messenger>>,
 }
 
-struct InMemoryRateLimiter {
-    window: Duration,
-    global_limit: usize,
-    user_limit: usize,
-    conversation_limit: usize,
-    state: Mutex<RateState>,
+struct RunSchedulerInner {
+    state: SchedulerState,
+    queued_payloads: HashMap<String, ScheduledRun>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScheduleFeedback {
+    Started,
+    Queued { tasks_ahead: usize },
+    QueueFull,
 }
 
 const DEFAULT_HISTORY_RETENTION_DAYS: i64 = 180;
@@ -123,63 +135,207 @@ impl HistoryCleanupState {
     }
 }
 
-impl InMemoryRateLimiter {
-    fn new(settings: &Settings) -> Self {
-        Self {
-            window: Duration::from_secs(60),
-            global_limit: settings.global_rate_limit_per_minute,
-            user_limit: settings.user_rate_limit_per_minute,
-            conversation_limit: settings.conversation_rate_limit_per_minute,
-            state: Mutex::new(RateState::default()),
+impl RunScheduler {
+    fn new(
+        max_concurrent_runs: usize,
+        max_queue_depth: usize,
+        runner: Arc<dyn Runner>,
+        platform_registry: PlatformRegistry,
+        message_override: Option<Arc<dyn Messenger>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(RunSchedulerInner {
+                state: SchedulerState::new(max_concurrent_runs, max_queue_depth),
+                queued_payloads: HashMap::new(),
+            }),
+            runner,
+            platform_registry,
+            message_override,
+        })
+    }
+
+    async fn submit(
+        self: &Arc<Self>,
+        event: CanonicalEvent,
+        request: RunRequest,
+        validated: ValidatedRunRequest,
+    ) -> ScheduleFeedback {
+        let task_id = Uuid::new_v4().to_string();
+        let trigger_message_id = request.trigger_message_id.clone();
+        let summary = TaskSummary {
+            task_id: task_id.clone(),
+            conversation_key: conversation_key_for_request(&request),
+            actor_id: request.user_id.clone(),
+            trigger_message_id,
+        };
+        let scheduled = ScheduledRun {
+            event,
+            request,
+            validated,
+            summary: summary.clone(),
+        };
+
+        let mut start_now = None;
+        let feedback = {
+            let mut inner = self.inner.lock().await;
+            match inner.state.admit(summary) {
+                Admission::StartNow => {
+                    start_now = Some(scheduled);
+                    ScheduleFeedback::Started
+                }
+                Admission::Queued { tasks_ahead } => {
+                    inner.queued_payloads.insert(task_id, scheduled);
+                    ScheduleFeedback::Queued { tasks_ahead }
+                }
+                Admission::QueueFull => ScheduleFeedback::QueueFull,
+            }
+        };
+
+        if let Some(task) = start_now {
+            self.clone().spawn_task(task);
+        }
+
+        feedback
+    }
+
+    async fn snapshot(&self) -> SchedulerSnapshot {
+        self.inner.lock().await.state.snapshot()
+    }
+
+    fn spawn_task(self: Arc<Self>, task: ScheduledRun) {
+        tokio::spawn(async move {
+            self.run_task(task).await;
+        });
+    }
+
+    async fn run_task(self: Arc<Self>, task: ScheduledRun) {
+        self.send_start_reaction_best_effort(&task).await;
+
+        let result = self
+            .runner
+            .run(task.request.clone(), task.validated.clone())
+            .await;
+        let (terminal, terminal_summary) = match result {
+            Ok(response) => {
+                info!(
+                    task_id = %task.summary.task_id,
+                    conversation = %task.summary.conversation_key,
+                    exit_code = response.exit_code,
+                    timed_out = response.timed_out,
+                    stdout_chars = response.stdout.chars().count(),
+                    stderr_chars = response.stderr.chars().count(),
+                    duration_ms = response.duration_ms,
+                    "scheduled runner completed"
+                );
+                match self.deliver_run_response(&task.event, &response).await {
+                    Ok(summary) => (TerminalState::Completed, summary),
+                    Err(error) => {
+                        warn!(
+                            task_id = %task.summary.task_id,
+                            conversation = %task.summary.conversation_key,
+                            "scheduled run delivery failed: {error}"
+                        );
+                        (TerminalState::Failed, Some(error))
+                    }
+                }
+            }
+            Err(error) => {
+                let summary = format!("runner failed: {}", error.message);
+                warn!(
+                    task_id = %task.summary.task_id,
+                    conversation = %task.summary.conversation_key,
+                    error_code = %error.error_code,
+                    "scheduled runner failed"
+                );
+                self.deliver_error_best_effort(&task.event, &error).await;
+                (TerminalState::Failed, Some(summary))
+            }
+        };
+
+        let promoted = {
+            let mut inner = self.inner.lock().await;
+            let promoted =
+                inner
+                    .state
+                    .finish(&task.summary.conversation_key, terminal, terminal_summary);
+            promoted
+                .into_iter()
+                .filter_map(|summary| inner.queued_payloads.remove(&summary.task_id))
+                .collect::<Vec<_>>()
+        };
+
+        for next in promoted {
+            self.clone().spawn_task(next);
         }
     }
 
-    async fn check_and_record(&self, request: &RunRequest) -> Result<(), ErrorResponse> {
-        let now = Instant::now();
-        let mut state = self.state.lock().await;
-        prune_window(&mut state.global, now, self.window);
-        state.by_user.retain(|_, events| {
-            prune_window(events, now, self.window);
-            !events.is_empty()
-        });
-        state.by_conversation.retain(|_, events| {
-            prune_window(events, now, self.window);
-            !events.is_empty()
-        });
-
-        if is_limit_exhausted(self.global_limit, state.global.len()) {
-            return Err(rate_limit_error("global rate limit exceeded"));
-        }
-
+    async fn send_start_reaction_best_effort(&self, task: &ScheduledRun) {
+        let Some(plan) = start_reaction_plan(&task.event, &task.summary.task_id) else {
+            return;
+        };
+        if let Err(error) = deliver_plan_with(
+            &self.platform_registry,
+            &self.message_override,
+            &task.event,
+            &plan,
+        )
+        .await
         {
-            let user_events = state.by_user.entry(request.user_id.clone()).or_default();
-            if is_limit_exhausted(self.user_limit, user_events.len()) {
-                return Err(rate_limit_error("user rate limit exceeded"));
-            }
+            warn!(
+                task_id = %task.summary.task_id,
+                conversation = %task.summary.conversation_key,
+                "failed to send start reaction: {}",
+                error.message
+            );
+        }
+    }
+
+    async fn deliver_run_response(
+        &self,
+        event: &CanonicalEvent,
+        response: &RunResponse,
+    ) -> Result<Option<String>, String> {
+        let output = run_response_output(response);
+        if output.is_empty() {
+            return Ok(Some("runner produced empty output".to_string()));
         }
 
+        let plan = normalize_agent_output(output)
+            .map_err(|err| format!("failed to normalize agent output: {err}"))?;
+        deliver_plan_with(
+            &self.platform_registry,
+            &self.message_override,
+            event,
+            &plan,
+        )
+        .await
+        .map_err(|err| err.message)?;
+        Ok(Some(short_terminal_summary(output)))
+    }
+
+    async fn deliver_error_best_effort(&self, event: &CanonicalEvent, error: &ErrorResponse) {
+        let plan = OutboundPlan {
+            messages: vec![OutboundMessage::text(&format!(
+                "执行失败：{}",
+                error.message
+            ))],
+            actions: vec![],
+            delivery_report_policy: None,
+        };
+        if let Err(delivery_error) = deliver_plan_with(
+            &self.platform_registry,
+            &self.message_override,
+            event,
+            &plan,
+        )
+        .await
         {
-            let conversation_events = state
-                .by_conversation
-                .entry(request.conversation_id.clone())
-                .or_default();
-            if is_limit_exhausted(self.conversation_limit, conversation_events.len()) {
-                return Err(rate_limit_error("conversation rate limit exceeded"));
-            }
+            warn!(
+                conversation = %event.conversation,
+                "failed to deliver scheduled runner error: {}",
+                delivery_error.message
+            );
         }
-
-        state.global.push_back(now);
-        state
-            .by_user
-            .entry(request.user_id.clone())
-            .or_default()
-            .push_back(now);
-        state
-            .by_conversation
-            .entry(request.conversation_id.clone())
-            .or_default()
-            .push_back(now);
-        Ok(())
     }
 }
 
@@ -209,12 +365,18 @@ pub fn build_test_app_with_settings(runner: Arc<dyn Runner>, settings: Settings)
     let history_store = Arc::new(StdMutex::new(
         HistoryStore::open(&settings).expect("history store"),
     ));
-    let queue_tx = spawn_dispatcher(settings.clone(), runner);
     let platform_registry =
         PlatformRegistry::from_settings(&settings).expect("default platform registry");
+    let scheduler = RunScheduler::new(
+        settings.max_concurrent_runs,
+        settings.max_queue_depth,
+        runner.clone(),
+        platform_registry.clone(),
+        None,
+    );
     router(AppState {
-        settings,
-        queue_tx,
+        runner,
+        scheduler,
         session_store,
         history_store,
         history_cleanup_state: Arc::new(StdMutex::new(HistoryCleanupState::default())),
@@ -232,12 +394,18 @@ pub fn build_test_app_with_message_support(
     let history_store = Arc::new(StdMutex::new(
         HistoryStore::open(&settings).expect("history store"),
     ));
-    let queue_tx = spawn_dispatcher(settings.clone(), runner);
     let platform_registry =
         PlatformRegistry::from_settings(&settings).expect("default platform registry");
+    let scheduler = RunScheduler::new(
+        settings.max_concurrent_runs,
+        settings.max_queue_depth,
+        runner.clone(),
+        platform_registry.clone(),
+        Some(messenger.clone()),
+    );
     router(AppState {
-        settings,
-        queue_tx,
+        runner,
+        scheduler,
         session_store,
         history_store,
         history_cleanup_state: Arc::new(StdMutex::new(HistoryCleanupState::default())),
@@ -265,10 +433,16 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
     let history_store = Arc::new(StdMutex::new(history_store));
     let platform_registry =
         PlatformRegistry::from_settings(&settings).map_err(|err| io::Error::other(err.message))?;
-    let queue_tx = spawn_dispatcher(settings.clone(), runner);
+    let scheduler = RunScheduler::new(
+        settings.max_concurrent_runs,
+        settings.max_queue_depth,
+        runner.clone(),
+        platform_registry.clone(),
+        None,
+    );
     Ok(router(AppState {
-        settings,
-        queue_tx,
+        runner,
+        scheduler,
         session_store,
         history_store,
         history_cleanup_state: Arc::new(StdMutex::new(HistoryCleanupState::default())),
@@ -307,41 +481,6 @@ fn router(state: AppState) -> Router {
     }
 
     router.with_state(state)
-}
-
-fn spawn_dispatcher(settings: Settings, runner: Arc<dyn Runner>) -> mpsc::Sender<QueuedRun> {
-    let (queue_tx, queue_rx) = mpsc::channel::<QueuedRun>(settings.max_queue_depth);
-    let rate_limiter = Arc::new(InMemoryRateLimiter::new(&settings));
-    let queue_rx = Arc::new(Mutex::new(queue_rx));
-
-    for _ in 0..settings.max_concurrent_runs.max(1) {
-        let runner = Arc::clone(&runner);
-        let rate_limiter = Arc::clone(&rate_limiter);
-        let queue_rx = Arc::clone(&queue_rx);
-
-        tokio::spawn(async move {
-            loop {
-                let item = {
-                    let mut receiver = queue_rx.lock().await;
-                    receiver.recv().await
-                };
-
-                let Some(item) = item else {
-                    break;
-                };
-
-                if let Err(error) = rate_limiter.check_and_record(&item.request).await {
-                    let _ = item.responder.send(Err(error));
-                    continue;
-                }
-
-                let result = runner.run(item.request, item.validated).await;
-                let _ = item.responder.send(result);
-            }
-        });
-    }
-
-    queue_tx
 }
 
 async fn healthz() -> Json<Value> {
@@ -523,7 +662,7 @@ async fn handle_canonical_event(state: &AppState, event: CanonicalEvent) -> Resp
     match decision {
         TriggerDecision::Ignore => accepted_response("ignored"),
         TriggerDecision::Status => {
-            let plan = status_outbound_plan();
+            let plan = status_outbound_plan(&state.scheduler.snapshot().await);
             info!(
                 platform = %event.platform,
                 conversation = %event.conversation,
@@ -564,60 +703,70 @@ async fn handle_canonical_event(state: &AppState, event: CanonicalEvent) -> Resp
                     .unwrap_or(0),
                 "built run request from canonical event"
             );
-            let run_response = match execute_run_request(state, request).await {
-                Ok(response) => response,
-                Err(error) => return map_run_result_to_response(Err(error)),
-            };
-            info!(
-                exit_code = run_response.exit_code,
-                timed_out = run_response.timed_out,
-                stdout_chars = run_response.stdout.chars().count(),
-                stderr_chars = run_response.stderr.chars().count(),
-                duration_ms = run_response.duration_ms,
-                "runner completed"
-            );
-
-            let output = run_response_output(&run_response);
-            if output.is_empty() {
-                info!("runner produced empty output; nothing to deliver");
-                return accepted_response("accepted");
-            }
-
-            let plan = match normalize_agent_output(output) {
-                Ok(plan) => plan,
-                Err(err) => {
-                    error!("failed to normalize agent output: {err}");
+            let validated = match request.validate() {
+                Ok(validated) => validated,
+                Err(message) => {
                     return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(to_internal_error_message(&format!(
-                            "failed to normalize agent output: {err}"
-                        ))),
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse {
+                            status: "error".into(),
+                            error_code: "invalid_request".into(),
+                            message,
+                            timed_out: false,
+                        }),
                     )
                         .into_response();
                 }
             };
-            info!(summary = %summarize_plan_for_log(&plan), "normalized runner output into outbound plan");
-
-            match deliver_plan_for_event(state, &event, &plan).await {
-                Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-                Err(error) if error.error_code == "unsupported_platform" => {
-                    (StatusCode::BAD_REQUEST, Json(error)).into_response()
+            match state
+                .scheduler
+                .submit(event.clone(), request, validated)
+                .await
+            {
+                ScheduleFeedback::Started => accepted_response("accepted"),
+                ScheduleFeedback::Queued { tasks_ahead } => {
+                    let plan = queue_wait_plan(tasks_ahead);
+                    deliver_plan_best_effort(state, &event, &plan).await;
+                    accepted_response("queued")
                 }
-                Err(error) if error.error_code.starts_with("delivery_") => {
-                    (StatusCode::BAD_GATEWAY, Json(error)).into_response()
+                ScheduleFeedback::QueueFull => {
+                    let plan = queue_full_plan();
+                    deliver_plan_best_effort(state, &event, &plan).await;
+                    accepted_response("queue_full")
                 }
-                Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(error)).into_response(),
             }
         }
     }
 }
 
-fn status_outbound_plan() -> OutboundPlan {
+fn status_outbound_plan(snapshot: &SchedulerSnapshot) -> OutboundPlan {
+    let recent = snapshot
+        .recent_terminal
+        .last()
+        .map(|item| format!("{} {:?}", item.conversation_key, item.state))
+        .unwrap_or_else(|| "none".to_string());
+    let running = if snapshot.running.is_empty() {
+        "none".to_string()
+    } else {
+        snapshot
+            .running
+            .iter()
+            .map(|task| format!("{} {}", task.conversation_key, task.task_id))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let text = format!(
+        "agent-runner ok\nrunning: {}/{}\nqueued: {}/{}\nrunning detail: {}\nrecent: {}",
+        snapshot.active_count,
+        snapshot.max_concurrent,
+        snapshot.waiting_count,
+        snapshot.max_queue_depth,
+        running,
+        recent
+    );
     OutboundPlan {
         messages: vec![OutboundMessage {
-            parts: vec![MessagePart::Text {
-                text: "agent-runner ok".into(),
-            }],
+            parts: vec![MessagePart::Text { text }],
             reply_to: None,
             suppress_default_reply: false,
             delivery_policy: None,
@@ -625,6 +774,75 @@ fn status_outbound_plan() -> OutboundPlan {
         actions: vec![],
         delivery_report_policy: None,
     }
+}
+
+fn queue_wait_plan(tasks_ahead: usize) -> OutboundPlan {
+    OutboundPlan {
+        messages: vec![OutboundMessage::text(&format!(
+            "前面还有 {tasks_ahead} 个任务，轮到这条时我会给你一个反应。"
+        ))],
+        actions: vec![],
+        delivery_report_policy: None,
+    }
+}
+
+fn queue_full_plan() -> OutboundPlan {
+    OutboundPlan {
+        messages: vec![OutboundMessage::text("现在等待队列满了，稍后再发一次。")],
+        actions: vec![],
+        delivery_report_policy: None,
+    }
+}
+
+async fn deliver_plan_best_effort(state: &AppState, event: &CanonicalEvent, plan: &OutboundPlan) {
+    if let Err(error) = deliver_plan_for_event(state, event, plan).await {
+        warn!(
+            platform = %event.platform,
+            conversation = %event.conversation,
+            error_code = %error.error_code,
+            message = %error.message,
+            "best-effort feedback delivery failed"
+        );
+    }
+}
+
+fn start_reaction_plan(event: &CanonicalEvent, task_id: &str) -> Option<OutboundPlan> {
+    if event.platform != "qq" {
+        return None;
+    }
+    let target_message_id = event.message()?.message_id.clone();
+    Some(OutboundPlan {
+        messages: vec![],
+        actions: vec![OutboundAction::ReactionAdd(ReactionAction {
+            target_message_id,
+            emoji: random_start_reaction(task_id).to_string(),
+        })],
+        delivery_report_policy: None,
+    })
+}
+
+fn random_start_reaction(seed: &str) -> &'static str {
+    const REACTIONS: [&str; 6] = ["👍", "🙏", "🫡", "😂", "❤", "👏"];
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    seed.hash(&mut hasher);
+    let index = (hasher.finish() as usize) % REACTIONS.len();
+    REACTIONS[index]
+}
+
+fn conversation_key_for_request(request: &RunRequest) -> String {
+    format!(
+        "{}::{}",
+        request.platform_account_id, request.conversation_id
+    )
+}
+
+fn short_terminal_summary(output: &str) -> String {
+    let trimmed = output.trim();
+    if trimmed.chars().count() <= 80 {
+        return trimmed.to_string();
+    }
+    let preview = trimmed.chars().take(80).collect::<String>();
+    format!("{preview}...")
 }
 
 fn build_run_request_from_event(event: &CanonicalEvent) -> Option<RunRequest> {
@@ -702,10 +920,7 @@ async fn execute_run_request(
     state: &AppState,
     request: RunRequest,
 ) -> Result<RunResponse, ErrorResponse> {
-    let validated = match request.validate(
-        state.settings.default_timeout_secs,
-        state.settings.max_timeout_secs,
-    ) {
+    let validated = match request.validate() {
         Ok(validated) => validated,
         Err(message) => {
             return Err(ErrorResponse {
@@ -717,35 +932,12 @@ async fn execute_run_request(
         }
     };
 
-    let (responder, receiver) = oneshot::channel();
     info!(
         conversation = %request.conversation_id,
         actor = %request.user_id,
-        "queueing run request"
+        "running direct run request"
     );
-    match state.queue_tx.try_send(QueuedRun {
-        request,
-        validated,
-        responder,
-    }) {
-        Ok(()) => {}
-        Err(mpsc::error::TrySendError::Full(_)) => {
-            return Err(ErrorResponse {
-                status: "error".into(),
-                error_code: "queue_full".into(),
-                message: "run queue is full".into(),
-                timed_out: false,
-            });
-        }
-        Err(mpsc::error::TrySendError::Closed(_)) => {
-            return Err(to_internal_error_message("run queue is closed"));
-        }
-    }
-
-    match receiver.await {
-        Ok(result) => result,
-        Err(_) => Err(to_internal_error_message("dispatcher dropped run result")),
-    }
+    state.runner.run(request, validated).await
 }
 
 fn ensure_history_ingest_state_for_trigger(
@@ -816,9 +1008,6 @@ fn map_run_result_to_response(result: Result<RunResponse, ErrorResponse>) -> Res
         Err(error) if error.error_code == "invalid_request" => {
             (StatusCode::BAD_REQUEST, Json(error)).into_response()
         }
-        Err(error) if error.error_code == "queue_full" || error.error_code == "rate_limited" => {
-            (StatusCode::TOO_MANY_REQUESTS, Json(error)).into_response()
-        }
         Err(error) if error.timed_out => (StatusCode::REQUEST_TIMEOUT, Json(error)).into_response(),
         Err(error) if error.error_code == "session_conflict" => {
             (StatusCode::CONFLICT, Json(error)).into_response()
@@ -884,6 +1073,21 @@ async fn deliver_plan_for_event(
     event: &CanonicalEvent,
     plan: &OutboundPlan,
 ) -> Result<MessageResponse, ErrorResponse> {
+    deliver_plan_with(
+        &state.platform_registry,
+        &state.message_override,
+        event,
+        plan,
+    )
+    .await
+}
+
+async fn deliver_plan_with(
+    platform_registry: &PlatformRegistry,
+    message_override: &Option<Arc<dyn Messenger>>,
+    event: &CanonicalEvent,
+    plan: &OutboundPlan,
+) -> Result<MessageResponse, ErrorResponse> {
     info!(
         platform = %event.platform,
         conversation = %event.conversation,
@@ -891,7 +1095,14 @@ async fn deliver_plan_for_event(
         summary = %summarize_plan_for_log(plan),
         "delivering outbound plan for canonical event"
     );
-    if let Some(override_messenger) = &state.message_override {
+    if let Some(override_messenger) = message_override {
+        if plan.messages.is_empty() {
+            return Ok(MessageResponse {
+                status: "ok".into(),
+                message_id: None,
+            });
+        }
+
         let text = plan
             .messages
             .iter()
@@ -914,7 +1125,7 @@ async fn deliver_plan_for_event(
         return override_messenger.send(request, session).await;
     }
 
-    let Some(adapter) = state.platform_registry.get(&event.platform) else {
+    let Some(adapter) = platform_registry.get(&event.platform) else {
         return Err(ErrorResponse {
             status: "error".into(),
             error_code: "unsupported_platform".into(),
@@ -1037,29 +1248,6 @@ fn summarize_plan_for_log(plan: &OutboundPlan) -> String {
 
 fn accepted_response(status: &str) -> Response {
     (StatusCode::OK, Json(json!({ "status": status }))).into_response()
-}
-
-fn is_limit_exhausted(limit: usize, current_len: usize) -> bool {
-    limit > 0 && current_len >= limit
-}
-
-fn prune_window(events: &mut VecDeque<Instant>, now: Instant, window: Duration) {
-    while let Some(front) = events.front() {
-        if now.duration_since(*front) >= window {
-            events.pop_front();
-        } else {
-            break;
-        }
-    }
-}
-
-fn rate_limit_error(message: &str) -> ErrorResponse {
-    ErrorResponse {
-        status: "error".into(),
-        error_code: "rate_limited".into(),
-        message: message.into(),
-        timed_out: false,
-    }
 }
 
 fn to_internal_error_message(message: &str) -> ErrorResponse {

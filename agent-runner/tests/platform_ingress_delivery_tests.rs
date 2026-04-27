@@ -17,8 +17,23 @@ struct CapturingMessenger {
 }
 
 impl CapturingMessenger {
-    fn last_request(&self) -> Option<MessageRequest> {
-        self.sent.lock().unwrap().last().cloned()
+    fn all_requests(&self) -> Vec<MessageRequest> {
+        self.sent.lock().unwrap().clone()
+    }
+
+    async fn wait_for_len(&self, expected: usize) -> Vec<MessageRequest> {
+        for _ in 0..50 {
+            let requests = self.all_requests();
+            if requests.len() >= expected {
+                return requests;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        self.all_requests()
+    }
+
+    async fn wait_for_last(&self) -> Option<MessageRequest> {
+        self.wait_for_len(1).await.last().cloned()
     }
 }
 
@@ -120,9 +135,6 @@ fn test_settings() -> agent_runner::config::Settings {
         platform_wechatpadpro_bot_mention_names: vec!["DogDu".into()],
         max_concurrent_runs: 1,
         max_queue_depth: 1,
-        global_rate_limit_per_minute: 10,
-        user_rate_limit_per_minute: 3,
-        conversation_rate_limit_per_minute: 5,
         session_db_path: root.join("state/runner.db").display().to_string(),
         history_db_path: root.join("state/history.db").display().to_string(),
         database_url: "postgres://dogbot_admin:change-me@127.0.0.1:5432/dogbot".into(),
@@ -170,7 +182,7 @@ async fn wechat_ingress_runs_and_delivers_reply_message() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        messenger.last_request(),
+        messenger.wait_for_last().await,
         Some(MessageRequest {
             session_id: "wechatpadpro:private:wxid_user_1".into(),
             text: "收到".into(),
@@ -212,13 +224,10 @@ async fn qq_private_status_command_bypasses_runner_and_returns_health_reply() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(runner.call_count(), 0);
-    assert_eq!(
-        messenger.last_request(),
-        Some(MessageRequest {
-            session_id: "qq:private:42".into(),
-            text: "agent-runner ok".into(),
-            reply_to_message_id: None,
-            mention_user_id: None,
-        })
-    );
+    let request = messenger.wait_for_last().await.expect("status reply");
+    assert_eq!(request.session_id, "qq:private:42");
+    assert!(request.text.starts_with("agent-runner ok\nrunning: 0/1"));
+    assert!(request.text.contains("\nqueued: 0/1"));
+    assert_eq!(request.reply_to_message_id, None);
+    assert_eq!(request.mention_user_id, None);
 }

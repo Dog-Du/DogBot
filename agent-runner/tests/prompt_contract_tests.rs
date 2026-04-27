@@ -27,6 +27,23 @@ fn claude_prompt_lists_history_read_skill_in_claude_md() {
 }
 
 #[test]
+fn claude_prompt_guides_long_running_commands_to_background() {
+    let claude_md =
+        fs::read_to_string("../claude-prompt/CLAUDE.md").expect("failed to read CLAUDE.md");
+
+    assert!(
+        claude_md.contains("Long-running commands"),
+        "CLAUDE.md must document long-running command behavior"
+    );
+    assert!(
+        claude_md.contains("nohup <command>")
+            && claude_md.contains("/workspace/.run/logs")
+            && claude_md.contains("Return early"),
+        "CLAUDE.md must tell the agent to background long tasks and return early"
+    );
+}
+
+#[test]
 fn reply_format_skill_exists_and_mentions_no_markdown_rule() {
     let skill = fs::read_to_string("../claude-prompt/skills/reply-format/SKILL.md")
         .expect("failed to read reply-format skill");

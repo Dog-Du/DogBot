@@ -1,5 +1,4 @@
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use agent_runner::models::{
     ErrorResponse, MessageRequest, MessageResponse, RunRequest, RunResponse,
@@ -74,9 +73,6 @@ fn test_settings() -> agent_runner::config::Settings {
         platform_wechatpadpro_bot_mention_names: vec!["DogDu".into()],
         max_concurrent_runs: 1,
         max_queue_depth: 1,
-        global_rate_limit_per_minute: 10,
-        user_rate_limit_per_minute: 3,
-        conversation_rate_limit_per_minute: 5,
         session_db_path: root.join("state/runner.db").display().to_string(),
         history_db_path: root.join("state/history.db").display().to_string(),
         database_url: "postgres://dogbot_admin:change-me@127.0.0.1:5432/dogbot".into(),
@@ -94,20 +90,19 @@ fn test_settings() -> agent_runner::config::Settings {
 }
 
 #[test]
-fn run_request_validation_returns_timeout_and_cwd() {
+fn run_request_validation_returns_cwd() {
     let request = base_request();
-    let validated = request.validate(120, 300).unwrap();
-    assert_eq!(validated.timeout_secs, 120);
+    let validated = request.validate().unwrap();
     assert_eq!(validated.cwd, "/workspace");
 }
 
 #[test]
-fn run_request_rejects_timeout_over_max() {
+fn run_request_validation_ignores_timeout_secs() {
     let mut request = base_request();
-    request.timeout_secs = Some(500);
+    request.timeout_secs = Some(500_000);
 
-    let err = request.validate(120, 300).unwrap_err();
-    assert!(err.contains("timeout exceeds configured max"));
+    let validated = request.validate().unwrap();
+    assert_eq!(validated.cwd, "/workspace");
 }
 
 #[test]
@@ -116,7 +111,7 @@ fn run_request_validation_accepts_exact_allowed_cwds() {
         let mut request = base_request();
         request.cwd = cwd.into();
 
-        let validated = request.validate(120, 300).unwrap();
+        let validated = request.validate().unwrap();
         assert_eq!(validated.cwd, cwd);
     }
 }
@@ -127,7 +122,7 @@ fn run_request_validation_rejects_disallowed_cwds() {
         let mut request = base_request();
         request.cwd = cwd.into();
 
-        let err = request.validate(120, 300).unwrap_err();
+        let err = request.validate().unwrap_err();
         assert!(err.contains(cwd), "error should mention {cwd}: {err}");
     }
 }
@@ -297,197 +292,6 @@ async fn run_endpoint_normalizes_invalid_json_errors() {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let json: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["error_code"], "invalid_json");
-}
-
-#[tokio::test]
-async fn run_endpoint_queues_one_waiting_request_before_overflowing() {
-    let settings = test_settings();
-    let app = agent_runner::server::build_test_app_with_settings(
-        Arc::new(MockRunner::sleeping()),
-        settings,
-    );
-    let payload = serde_json::to_vec(&base_request()).unwrap();
-
-    let first_app = app.clone();
-    let first_payload = payload.clone();
-    let first = tokio::spawn(async move {
-        first_app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/runs")
-                    .header("content-type", "application/json")
-                    .body(Body::from(first_payload))
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-    });
-
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let second_app = app.clone();
-    let second_payload = payload.clone();
-    let second = tokio::spawn(async move {
-        second_app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/runs")
-                    .header("content-type", "application/json")
-                    .body(Body::from(second_payload))
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-    });
-
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/runs")
-                .header("content-type", "application/json")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(first.await.unwrap().status(), StatusCode::OK);
-    assert_eq!(second.await.unwrap().status(), StatusCode::OK);
-}
-
-#[tokio::test]
-async fn run_endpoint_rate_limits_after_global_budget_is_exhausted() {
-    let mut settings = test_settings();
-    settings.max_concurrent_runs = 2;
-    settings.max_queue_depth = 2;
-    settings.global_rate_limit_per_minute = 1;
-    settings.user_rate_limit_per_minute = 10;
-    settings.conversation_rate_limit_per_minute = 10;
-    let app = agent_runner::server::build_test_app_with_settings(
-        Arc::new(MockRunner::success()),
-        settings,
-    );
-    let payload = serde_json::to_vec(&base_request()).unwrap();
-
-    let first = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/runs")
-                .header("content-type", "application/json")
-                .body(Body::from(payload.clone()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(first.status(), StatusCode::OK);
-
-    let second = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/runs")
-                .header("content-type", "application/json")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
-    let body = to_bytes(second.into_body(), usize::MAX).await.unwrap();
-    let json: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["error_code"], "rate_limited");
-}
-
-#[tokio::test]
-async fn run_endpoint_rate_limits_per_user() {
-    let mut settings = test_settings();
-    settings.max_concurrent_runs = 2;
-    settings.max_queue_depth = 2;
-    settings.global_rate_limit_per_minute = 10;
-    settings.user_rate_limit_per_minute = 1;
-    settings.conversation_rate_limit_per_minute = 10;
-    let app = agent_runner::server::build_test_app_with_settings(
-        Arc::new(MockRunner::success()),
-        settings,
-    );
-    let payload = serde_json::to_vec(&base_request()).unwrap();
-
-    let first = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/runs")
-                .header("content-type", "application/json")
-                .body(Body::from(payload.clone()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(first.status(), StatusCode::OK);
-
-    let second = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/runs")
-                .header("content-type", "application/json")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
-}
-
-#[tokio::test]
-async fn run_endpoint_rate_limits_per_conversation() {
-    let mut settings = test_settings();
-    settings.max_concurrent_runs = 2;
-    settings.max_queue_depth = 2;
-    settings.global_rate_limit_per_minute = 10;
-    settings.user_rate_limit_per_minute = 10;
-    settings.conversation_rate_limit_per_minute = 1;
-    let app = agent_runner::server::build_test_app_with_settings(
-        Arc::new(MockRunner::success()),
-        settings,
-    );
-    let payload = serde_json::to_vec(&base_request()).unwrap();
-
-    let first = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/runs")
-                .header("content-type", "application/json")
-                .body(Body::from(payload.clone()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(first.status(), StatusCode::OK);
-
-    let second = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/runs")
-                .header("content-type", "application/json")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]
@@ -722,19 +526,6 @@ impl MockRunner {
             }),
         }
     }
-
-    fn sleeping() -> Self {
-        Self {
-            outcome: Ok(RunResponse {
-                status: "ok".into(),
-                stdout: "slow".into(),
-                stderr: String::new(),
-                exit_code: 0,
-                timed_out: false,
-                duration_ms: 1,
-            }),
-        }
-    }
 }
 
 #[derive(Default)]
@@ -759,9 +550,6 @@ impl agent_runner::server::Runner for MockRunner {
         _request: RunRequest,
         _validated: agent_runner::models::ValidatedRunRequest,
     ) -> Result<RunResponse, ErrorResponse> {
-        if self.outcome.as_ref().ok().map(|resp| resp.stdout.as_str()) == Some("slow") {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }
         self.outcome.clone()
     }
 }

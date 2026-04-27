@@ -9,7 +9,7 @@
 
 目标：
 
-1. 资源控制：把 CLI Agent 放进 Docker，限制 CPU、内存、进程数和宿主机暴露面，用统一的宿主机控制层管理超时、队列、限流、会话和消息回发。
+1. 资源控制：把 CLI Agent 放进 Docker，限制 CPU、内存、进程数和宿主机暴露面，用统一的宿主机控制层管理并发、会话队列、历史隔离和消息回发。
 2. 多平台接入：接入 QQ、微信、飞书等多平台
 3. 易用性：开箱即用的体验，运行脚本即可一键部署
 4. 上下文管理：为 Agent 提供 memory、skills、system prompt 等内容
@@ -37,6 +37,7 @@ QQ
 - identity / session 归一化
 - Claude prompt 轻量内容加载
 - inbound trigger 解析
+- 平台触发任务的异步调度
 - 历史消息采集和 retention cleanup
 
 ## Claude Prompt
@@ -170,6 +171,8 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
 - [x] Agent 运行主干
   - PostgreSQL 保存 Claude session 映射与文本历史消息
   - history 读取通过 `history-read` skill + Postgres RLS + 短期 run token 隔离
+  - 平台触发后进入异步调度：全局并发上限、同会话 FIFO 队列、等待提示和开始 reaction
+  - Agent 执行不再由 wall-clock timeout 直接 kill，也不再使用分钟级限流
   - `claude-prompt/` 承载仓库管理的静态 `CLAUDE.md` 与轻量 skills
   - `claude-runner` 运行时会把 `/state/claude-prompt` 暴露给 Claude 作为 additional directory
 - [x] 触发识别与基础回复链路
@@ -202,13 +205,8 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
 ## 后续 TODO
 
 - [ ] 主动消息 / automation / outbox
-- [ ] 历史记录读取 skill 与管理权限
-  - 为 Agent 提供明确的历史读取 skill，说明如何按平台、群聊/私聊、消息时间读取历史记录
-  - 对静态白名单配置中的 admin 开放特殊命令，可查询更大范围或全部历史记录
-- [ ] 长任务超时与同会话并发治理
-  - 支持长时间运行的任务，例如周期性汇报、长耗时整理，不应被当前严格超时机制直接 kill 掉
-  - 会话模型应统一为“一个私聊/一个群聊对应一个 `session_id`”，不再按群成员拆分子 session
-  - 同一会话在长任务进行时再次发消息，需要会话级队列、状态查询、取消和重试机制，避免 turn 串扰或冲突
+- [ ] 主动消息 / 长任务状态管理
+  - 已有异步调度和同会话队列，后续补主动完成通知、取消、重试和更细的状态查询
 - [ ] 图片链路做到与 `codex-bridge` 同等程度
   - 重点是图片发送和结构化回复中的图片 segment，而不是完整视觉链路
   - 支持读取当前消息或最近一小段会话窗口里的图片附件，并在同会话内继续发送

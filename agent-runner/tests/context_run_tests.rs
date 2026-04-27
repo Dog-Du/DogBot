@@ -32,6 +32,18 @@ impl CapturingRunner {
     fn captured_validated(&self) -> Option<ValidatedRunRequest> {
         self.validated.lock().expect("lock validated").clone()
     }
+
+    async fn wait_for_capture(&self) -> Option<(RunRequest, ValidatedRunRequest)> {
+        for _ in 0..50 {
+            if let (Some(request), Some(validated)) =
+                (self.captured_request(), self.captured_validated())
+            {
+                return Some((request, validated));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        self.captured_request().zip(self.captured_validated())
+    }
 }
 
 #[async_trait]
@@ -117,9 +129,6 @@ fn test_settings() -> Settings {
         platform_wechatpadpro_bot_mention_names: Vec::new(),
         max_concurrent_runs: 1,
         max_queue_depth: 1,
-        global_rate_limit_per_minute: 10,
-        user_rate_limit_per_minute: 3,
-        conversation_rate_limit_per_minute: 5,
         session_db_path: root.join("state/runner.db").display().to_string(),
         history_db_path: root.join("state/history.db").display().to_string(),
         database_url: "postgres://dogbot_admin:change-me@127.0.0.1:5432/dogbot".into(),
@@ -155,10 +164,7 @@ async fn run_endpoint_builds_prompt_envelope_for_runner() {
         .expect("run request");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let captured_request = runner.captured_request().expect("captured request");
-    let validated = runner
-        .captured_validated()
-        .expect("captured validated request");
+    let (captured_request, validated) = runner.wait_for_capture().await.expect("captured request");
 
     assert_eq!(captured_request.prompt, "hello");
     assert!(validated.system_prompt.contains("qq"));
@@ -365,10 +371,7 @@ async fn qq_ingress_builds_trigger_context_with_message_ids_and_mention_refs() {
         .expect("run request");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let captured_request = runner.captured_request().expect("captured request");
-    let validated = runner
-        .captured_validated()
-        .expect("captured validated request");
+    let (captured_request, validated) = runner.wait_for_capture().await.expect("captured request");
 
     assert_eq!(captured_request.prompt, "@123 请你给 @77 发消息");
     assert_eq!(captured_request.trigger_message_id.as_deref(), Some("99"));

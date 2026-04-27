@@ -33,9 +33,6 @@ pub struct Settings {
     pub platform_wechatpadpro_bot_mention_names: Vec<String>,
     pub max_concurrent_runs: usize,
     pub max_queue_depth: usize,
-    pub global_rate_limit_per_minute: usize,
-    pub user_rate_limit_per_minute: usize,
-    pub conversation_rate_limit_per_minute: usize,
     pub session_db_path: String,
     pub history_db_path: String,
     pub database_url: String,
@@ -55,8 +52,6 @@ pub struct Settings {
 pub enum ConfigError {
     #[error("invalid integer for {0}")]
     InvalidInt(&'static str),
-    #[error("DEFAULT_TIMEOUT_SECS must be <= MAX_TIMEOUT_SECS")]
-    InvalidTimeoutBounds,
 }
 
 impl Settings {
@@ -113,12 +108,6 @@ impl Settings {
                 })
                 .unwrap_or_default();
         let max_queue_depth = parse_or_default(&env_map, "MAX_QUEUE_DEPTH", 20)?;
-        let global_rate_limit_per_minute =
-            parse_or_default(&env_map, "GLOBAL_RATE_LIMIT_PER_MINUTE", 10)?;
-        let user_rate_limit_per_minute =
-            parse_or_default(&env_map, "USER_RATE_LIMIT_PER_MINUTE", 3)?;
-        let conversation_rate_limit_per_minute =
-            parse_or_default(&env_map, "CONVERSATION_RATE_LIMIT_PER_MINUTE", 5)?;
         let session_db_path = optional_trimmed(&env_map, "SESSION_DB_PATH")
             .unwrap_or_else(|| format!("{state_dir}/runner.db"));
         let history_db_path = optional_trimmed(&env_map, "HISTORY_DB_PATH")
@@ -170,10 +159,6 @@ impl Settings {
         let container_disk_gb = parse_or_default(&env_map, "CLAUDE_CONTAINER_DISK_GB", 50)?;
         let container_pids_limit = parse_or_default(&env_map, "CLAUDE_CONTAINER_PIDS_LIMIT", 256)?;
 
-        if default_timeout_secs > max_timeout_secs {
-            return Err(ConfigError::InvalidTimeoutBounds);
-        }
-
         Ok(Self {
             bind_addr,
             default_timeout_secs,
@@ -201,9 +186,6 @@ impl Settings {
             platform_wechatpadpro_bot_mention_names,
             max_concurrent_runs,
             max_queue_depth,
-            global_rate_limit_per_minute,
-            user_rate_limit_per_minute,
-            conversation_rate_limit_per_minute,
             session_db_path,
             history_db_path,
             database_url,

@@ -335,7 +335,22 @@ API_PROXY_UPSTREAM_MODEL=
 - `API_PROXY_AUTH_TOKEN` 要和 `BIFROST_UPSTREAM_API_KEY` 保持一致，用来保护本地 `bifrost -> api-proxy` 调用
 - `API_PROXY_UPSTREAM_MODEL` 可选；如果需要把容器内模型别名重写成真实上游模型名，就在这里配置
 
-### 5.6 上游配置
+### 5.6 调度配置
+
+```env
+MAX_CONCURRENT_RUNS=10
+MAX_QUEUE_DEPTH=20
+```
+
+说明：
+
+- `MAX_CONCURRENT_RUNS` 控制全局最多同时运行的 Agent 任务数
+- 同一个私聊或群聊同一时间只会运行一个任务，后续消息进入该会话 FIFO 队列
+- `MAX_QUEUE_DEPTH` 控制全局等待任务上限；队列满时会直接回复忙碌提示
+- 平台入口收到可执行消息后会立即返回；等待中的消息只收到排队提示，真正开始执行时才发 reaction
+- 不再使用分钟级限流，也不再用 wall-clock timeout 直接 kill 正在运行的 Agent 任务
+
+### 5.7 上游配置
 
 常见切换方式：
 
