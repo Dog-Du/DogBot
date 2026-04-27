@@ -27,6 +27,9 @@ EOF
 state_dir="$state_dir"
 case_name="$case_name"
 case "\$1" in
+  inspect)
+    printf '2026-04-27T02:23:57Z\n'
+    ;;
   logs)
     count=\$((\$(cat "\$state_dir/log_count" 2>/dev/null || echo 0) + 1))
     echo "\$count" >"\$state_dir/log_count"
@@ -64,6 +67,11 @@ case "\$1" in
         ;;
       bounded-request-timeout-recovers)
         printf 'scan https://txz.qq.com/p?k=bounded-link\n'
+        ;;
+      existing-qr-rerun-times-out)
+        if [[ "\$*" == *"--since"* ]]; then
+          printf 'scan https://txz.qq.com/p?k=existing-link\n'
+        fi
         ;;
     esac
     ;;
@@ -158,6 +166,9 @@ PY
       else
         printf '{"status":"ok","retcode":0,"data":{"user_id":3472283357}}\n'
       fi
+      ;;
+    existing-qr-rerun-times-out)
+      printf '{"status":"failed","retcode":1,"data":{}}\n'
       ;;
   esac
 EOF
@@ -287,6 +298,11 @@ if not (0.0 < value <= 1.0):
 PY
       grep -q 'NapCat login URL: https://txz.qq.com/p?k=bounded-link' <<<"$output"
       ;;
+    existing-qr-rerun-times-out)
+      grep -q 'NapCat login URL: https://txz.qq.com/p?k=existing-link' <<<"$output"
+      grep -q 'login_url=https://txz.qq.com/p?k=existing-link' "$login_dir/napcat-login-meta.txt"
+      grep -q 'fresh-qr' "$login_dir/napcat-login-qr.png"
+      ;;
     runtime-log-during-login-times-out)
       if grep -q 'NapCat login confirmed.' <<<"$output"; then
         echo "FAIL: case '$case_name' should not confirm login from runtime log activity alone" >&2
@@ -319,6 +335,7 @@ run_case historical-log-filtering 0 "NapCat login confirmed."
 run_case already-logged-in 0 "NapCat login confirmed."
 run_case slow-login-budget 1 "NapCat login did not complete within 1 seconds." 1 0.05
 run_case bounded-request-timeout-recovers 0 "NapCat login confirmed." 2 0.05
+run_case existing-qr-rerun-times-out 1 "NapCat login did not complete within 5 seconds."
 run_case runtime-log-during-login-times-out 1 "NapCat login did not complete within 5 seconds."
 run_case preexisting-runtime-state-times-out 1 "NapCat login QR was not refreshed within 5 seconds."
 run_case stale-runtime-state-times-out 1 "NapCat login QR was not refreshed within 5 seconds."

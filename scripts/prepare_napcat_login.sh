@@ -26,9 +26,19 @@ mkdir -p "$login_dir"
 deadline_epoch="$(dogbot_deadline_in "$login_timeout_secs")"
 deadline_epoch_ns="$(( $(date +%s%N) + login_timeout_secs * 1000000000 ))"
 login_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+log_window_started_at="$login_started_at"
 last_login_url=""
 
 rm -f "$qr_png_path" "$meta_path"
+
+napcat_container_started_at() {
+  docker inspect --format '{{.State.StartedAt}}' "$container_name" 2>/dev/null | head -n1 || true
+}
+
+container_started_at="$(napcat_container_started_at)"
+if [[ -n "$container_started_at" ]]; then
+  log_window_started_at="$container_started_at"
+fi
 
 napcat_remaining_request_timeout() {
   local remaining_ns=$(( deadline_epoch_ns - $(date +%s%N) ))
@@ -62,7 +72,7 @@ napcat_extract_login_url_from_logs() {
 
 napcat_fetch_login_url() {
   local login_url
-  login_url="$(napcat_extract_login_url_from_logs --since "$login_started_at" "$container_name")"
+  login_url="$(napcat_extract_login_url_from_logs --since "$log_window_started_at" "$container_name")"
   [[ -n "$login_url" ]] || return 1
   printf '%s\n' "$login_url"
 }
