@@ -18,6 +18,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+postgres = "0.19"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

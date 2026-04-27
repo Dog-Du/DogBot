@@ -30,26 +30,76 @@ fn settings_use_expected_defaults() {
     assert_eq!(settings.user_rate_limit_per_minute, 3);
     assert_eq!(settings.conversation_rate_limit_per_minute, 5);
     assert_eq!(settings.claude_prompt_root, "./claude-prompt");
-    assert_eq!(settings.session_db_path, "/srv/agent-state/runner.db");
-    assert_eq!(settings.history_db_path, "/srv/agent-state/history.db");
+    assert_eq!(
+        settings.database_url,
+        "postgres://dogbot_admin:change-me@127.0.0.1:5432/dogbot"
+    );
+    assert_eq!(settings.postgres_agent_reader_user, "dogbot_agent_reader");
+    assert_eq!(settings.postgres_agent_reader_password, "change-me-reader");
+    assert_eq!(settings.history_run_token_ttl_secs, 1800);
+    assert_eq!(settings.history_retention_days, 180);
+    assert!(settings.admin_actor_ids.is_empty());
 }
 
 #[test]
-fn settings_parse_prompt_and_history_fields() {
+fn settings_parse_prompt_and_postgres_fields() {
     let env = std::collections::HashMap::from([
         (
             "DOGBOT_CLAUDE_PROMPT_ROOT".to_string(),
             "./custom-claude-prompt".to_string(),
         ),
+        ("POSTGRES_HOST".to_string(), "db.internal".to_string()),
+        ("POSTGRES_PORT".to_string(), "15432".to_string()),
+        ("POSTGRES_DB".to_string(), "dogbot_prod".to_string()),
+        ("POSTGRES_ADMIN_USER".to_string(), "dogbot_owner".to_string()),
         (
-            "HISTORY_DB_PATH".to_string(),
-            "/tmp/custom/history.db".to_string(),
+            "POSTGRES_ADMIN_PASSWORD".to_string(),
+            "owner-password".to_string(),
+        ),
+        (
+            "POSTGRES_AGENT_READER_USER".to_string(),
+            "reader".to_string(),
+        ),
+        (
+            "POSTGRES_AGENT_READER_PASSWORD".to_string(),
+            "reader-password".to_string(),
+        ),
+        ("HISTORY_RUN_TOKEN_TTL_SECS".to_string(), "900".to_string()),
+        ("HISTORY_RETENTION_DAYS".to_string(), "90".to_string()),
+        (
+            "DOGBOT_ADMIN_ACTOR_IDS".to_string(),
+            "qq:user:1,wechat:user:wxid_admin".to_string(),
         ),
     ]);
 
     let settings = Settings::from_env_map(env).unwrap();
     assert_eq!(settings.claude_prompt_root, "./custom-claude-prompt");
-    assert_eq!(settings.history_db_path, "/tmp/custom/history.db");
+    assert_eq!(
+        settings.database_url,
+        "postgres://dogbot_owner:owner-password@db.internal:15432/dogbot_prod"
+    );
+    assert_eq!(settings.postgres_agent_reader_user, "reader");
+    assert_eq!(settings.postgres_agent_reader_password, "reader-password");
+    assert_eq!(settings.history_run_token_ttl_secs, 900);
+    assert_eq!(settings.history_retention_days, 90);
+    assert_eq!(
+        settings.admin_actor_ids,
+        vec!["qq:user:1".to_string(), "wechat:user:wxid_admin".to_string()]
+    );
+}
+
+#[test]
+fn settings_allow_database_url_override() {
+    let env = std::collections::HashMap::from([(
+        "DATABASE_URL".to_string(),
+        "postgres://custom:secret@db.example:5432/customdb".to_string(),
+    )]);
+
+    let settings = Settings::from_env_map(env).unwrap();
+    assert_eq!(
+        settings.database_url,
+        "postgres://custom:secret@db.example:5432/customdb"
+    );
 }
 
 #[test]
@@ -174,10 +224,6 @@ fn settings_allow_runner_limit_overrides() {
             "CONVERSATION_RATE_LIMIT_PER_MINUTE".to_string(),
             "7".to_string(),
         ),
-        (
-            "SESSION_DB_PATH".to_string(),
-            "/tmp/state/runner.db".to_string(),
-        ),
     ]);
 
     let settings = Settings::from_env_map(env).unwrap();
@@ -203,7 +249,6 @@ fn settings_allow_runner_limit_overrides() {
     assert_eq!(settings.global_rate_limit_per_minute, 15);
     assert_eq!(settings.user_rate_limit_per_minute, 6);
     assert_eq!(settings.conversation_rate_limit_per_minute, 7);
-    assert_eq!(settings.session_db_path, "/tmp/state/runner.db");
 }
 
 #[test]

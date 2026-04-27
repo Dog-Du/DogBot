@@ -38,6 +38,12 @@ pub struct Settings {
     pub conversation_rate_limit_per_minute: usize,
     pub session_db_path: String,
     pub history_db_path: String,
+    pub database_url: String,
+    pub postgres_agent_reader_user: String,
+    pub postgres_agent_reader_password: String,
+    pub history_run_token_ttl_secs: i64,
+    pub history_retention_days: i64,
+    pub admin_actor_ids: Vec<String>,
     pub container_cpu_cores: u64,
     pub container_memory_mb: u64,
     pub container_disk_gb: u64,
@@ -116,6 +122,46 @@ impl Settings {
             .unwrap_or_else(|| format!("{state_dir}/runner.db"));
         let history_db_path = optional_trimmed(&env_map, "HISTORY_DB_PATH")
             .unwrap_or_else(|| format!("{state_dir}/history.db"));
+        let postgres_host = string_or_default(&env_map, "POSTGRES_HOST", "127.0.0.1");
+        let postgres_port: u16 = parse_or_default(&env_map, "POSTGRES_PORT", 5432)?;
+        let postgres_db = string_or_default(&env_map, "POSTGRES_DB", "dogbot");
+        let postgres_admin_user =
+            string_or_default(&env_map, "POSTGRES_ADMIN_USER", "dogbot_admin");
+        let postgres_admin_password =
+            string_or_default(&env_map, "POSTGRES_ADMIN_PASSWORD", "change-me");
+        let database_url = optional_trimmed(&env_map, "DATABASE_URL").unwrap_or_else(|| {
+            format!(
+                "postgres://{}:{}@{}:{}/{}",
+                postgres_admin_user,
+                postgres_admin_password,
+                postgres_host,
+                postgres_port,
+                postgres_db
+            )
+        });
+        let postgres_agent_reader_user = string_or_default(
+            &env_map,
+            "POSTGRES_AGENT_READER_USER",
+            "dogbot_agent_reader",
+        );
+        let postgres_agent_reader_password = string_or_default(
+            &env_map,
+            "POSTGRES_AGENT_READER_PASSWORD",
+            "change-me-reader",
+        );
+        let history_run_token_ttl_secs =
+            parse_or_default(&env_map, "HISTORY_RUN_TOKEN_TTL_SECS", 1800)?;
+        let history_retention_days = parse_or_default(&env_map, "HISTORY_RETENTION_DAYS", 180)?;
+        let admin_actor_ids = optional_trimmed(&env_map, "DOGBOT_ADMIN_ACTOR_IDS")
+            .map(|value| {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|item| !item.is_empty())
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let container_cpu_cores = parse_or_default(&env_map, "CLAUDE_CONTAINER_CPU_CORES", 4)?;
         let container_memory_mb = parse_or_default(&env_map, "CLAUDE_CONTAINER_MEMORY_MB", 4096)?;
         let container_disk_gb = parse_or_default(&env_map, "CLAUDE_CONTAINER_DISK_GB", 50)?;
@@ -157,6 +203,12 @@ impl Settings {
             conversation_rate_limit_per_minute,
             session_db_path,
             history_db_path,
+            database_url,
+            postgres_agent_reader_user,
+            postgres_agent_reader_password,
+            history_run_token_ttl_secs,
+            history_retention_days,
+            admin_actor_ids,
             container_cpu_cores,
             container_memory_mb,
             container_disk_gb,
