@@ -21,7 +21,10 @@ use crate::{
     config::Settings,
     docker_client::DockerRuntime,
     exec::{DockerRunner, ExecutionBackend},
-    history::{cleanup::purge_expired_history, store::HistoryStore},
+    history::{
+        cleanup::purge_expired_history,
+        store::{HistoryStore, HistoryStoreError},
+    },
     models::{
         ErrorResponse, MessageRequest, MessageResponse, RunRequest, RunResponse,
         ValidatedRunRequest,
@@ -204,7 +207,7 @@ pub fn build_test_app(runner: Arc<dyn Runner>) -> Router {
 pub fn build_test_app_with_settings(runner: Arc<dyn Runner>, settings: Settings) -> Router {
     let session_store = SessionStore::open(&settings.session_db_path).expect("session store");
     let history_store = Arc::new(StdMutex::new(
-        HistoryStore::open(&settings.history_db_path).expect("history store"),
+        HistoryStore::open(&settings).expect("history store"),
     ));
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
     let platform_registry =
@@ -227,7 +230,7 @@ pub fn build_test_app_with_message_support(
 ) -> Router {
     let session_store = SessionStore::open(&settings.session_db_path).expect("session store");
     let history_store = Arc::new(StdMutex::new(
-        HistoryStore::open(&settings.history_db_path).expect("history store"),
+        HistoryStore::open(&settings).expect("history store"),
     ));
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
     let platform_registry =
@@ -251,10 +254,12 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
     );
     let session_store = SessionStore::open(&settings.session_db_path)
         .map_err(|err| io::Error::other(err.to_string()))?;
-    let history_store = Arc::new(StdMutex::new(
-        HistoryStore::open(&settings.history_db_path)
-            .map_err(|err| io::Error::other(err.to_string()))?,
-    ));
+    let history_store =
+        HistoryStore::open(&settings).map_err(|err| io::Error::other(err.to_string()))?;
+    history_store
+        .initialize_schema()
+        .map_err(|err| io::Error::other(err.to_string()))?;
+    let history_store = Arc::new(StdMutex::new(history_store));
     let platform_registry =
         PlatformRegistry::from_settings(&settings).map_err(|err| io::Error::other(err.message))?;
     let queue_tx = spawn_dispatcher(settings.clone(), runner);
@@ -744,7 +749,7 @@ fn ensure_history_ingest_state_for_trigger(
     state: &AppState,
     event: &CanonicalEvent,
     decision: &TriggerDecision,
-) -> rusqlite::Result<()> {
+) -> Result<(), HistoryStoreError> {
     if matches!(decision, TriggerDecision::Ignore) {
         return Ok(());
     }
@@ -768,7 +773,7 @@ fn ensure_history_ingest_state_for_trigger(
 fn mirror_history_event_if_enabled(
     state: &AppState,
     event: &CanonicalEvent,
-) -> rusqlite::Result<()> {
+) -> Result<(), HistoryStoreError> {
     let store = state
         .history_store
         .lock()

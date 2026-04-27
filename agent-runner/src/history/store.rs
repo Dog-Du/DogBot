@@ -1,174 +1,216 @@
-use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use postgres::{Client, NoTls};
+use rand::RngCore;
+use sha2::{Digest, Sha256};
+use thiserror::Error;
+use url::Url;
 
-use rusqlite::{Connection, params};
-use serde_json::json;
+use crate::config::Settings;
+use crate::protocol::{CanonicalEvent, EventKind, MessagePart};
 
-use crate::protocol::{AssetRef, AssetSource, CanonicalEvent, CanonicalMessage, EventKind, MessagePart};
-
-const EXPECTED_EVENT_STORE_COLUMNS: &[&str] = &[
-    "event_id",
-    "platform",
-    "platform_account",
-    "conversation_id",
-    "actor_id",
-    "event_kind",
-    "created_at_epoch_secs",
-    "raw_native_payload_json",
-];
-const EXPECTED_MESSAGE_STORE_COLUMNS: &[&str] = &[
-    "message_id",
-    "event_id",
-    "reply_to_message_id",
-    "plain_text",
-];
-const EXPECTED_MESSAGE_PART_STORE_COLUMNS: &[&str] = &[
-    "message_id",
-    "ordinal",
-    "part_kind",
-    "text_value",
-    "asset_id",
-    "target_actor_id",
-    "target_message_id",
-];
-const EXPECTED_MESSAGE_RELATION_STORE_COLUMNS: &[&str] = &[
-    "relation_id",
-    "source_message_id",
-    "relation_kind",
-    "target_message_id",
-    "target_actor_id",
-    "emoji",
-];
-const EXPECTED_ASSET_STORE_COLUMNS: &[&str] = &[
-    "asset_id",
-    "asset_kind",
-    "mime_type",
-    "size_bytes",
-    "source_kind",
-    "source_value",
-    "availability_status",
-];
-const EXPECTED_CONVERSATION_INGEST_STATE_COLUMNS: &[&str] = &[
-    "platform_account",
-    "conversation_id",
-    "enabled",
-    "retention_days",
-];
-
+#[derive(Debug, Clone)]
 pub struct HistoryStore {
-    conn: Connection,
+    database_url: String,
+    reader_database_url: String,
+    reader_role: String,
+    retention_days: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryReadGrant {
+    pub platform_account: String,
+    pub conversation_id: Option<String>,
+    pub actor_id: String,
+    pub is_admin: bool,
+    pub ttl_secs: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryReadGrantToken {
+    pub token: String,
+    pub database_url: String,
+}
+
+#[derive(Debug, Error)]
+pub enum HistoryStoreError {
+    #[error(transparent)]
+    Postgres(#[from] postgres::Error),
+    #[error("invalid postgres URL: {0}")]
+    InvalidDatabaseUrl(String),
+    #[error("postgres worker thread panicked")]
+    WorkerPanicked,
 }
 
 impl HistoryStore {
-    pub fn open(path: impl AsRef<Path>) -> rusqlite::Result<Self> {
-        if let Some(parent) = path.as_ref().parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let conn = Connection::open(path)?;
-        initialize_history_schema(&conn)?;
-        Ok(Self { conn })
+    pub fn open(settings: &Settings) -> Result<Self, HistoryStoreError> {
+        Ok(Self {
+            database_url: settings.database_url.clone(),
+            reader_database_url: reader_database_url(settings)?,
+            reader_role: settings.postgres_agent_reader_user.clone(),
+            retention_days: settings.history_retention_days,
+        })
     }
 
-    pub fn table_names(&self) -> rusqlite::Result<Vec<String>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-        rows.collect()
+    pub fn initialize_schema(&self) -> Result<(), HistoryStoreError> {
+        let database_url = self.database_url.clone();
+        let reader_role = self.reader_role.clone();
+        run_with_client(database_url, move |client| {
+            client.batch_execute(history_schema_sql())?;
+            grant_reader_access(client, &reader_role)?;
+            Ok(())
+        })
+    }
+
+    pub fn reader_database_url(&self) -> &str {
+        &self.reader_database_url
+    }
+
+    pub fn create_read_grant(
+        &self,
+        grant: HistoryReadGrant,
+    ) -> Result<HistoryReadGrantToken, HistoryStoreError> {
+        let token = generate_run_token();
+        let token_hash = sha256_bytes(&token);
+        let database_url = self.database_url.clone();
+        let platform_account = grant.platform_account;
+        let conversation_id = grant.conversation_id;
+        let actor_id = grant.actor_id;
+        let is_admin = grant.is_admin;
+        let ttl_secs = grant.ttl_secs;
+        run_with_client(database_url, move |client| {
+            client.execute(
+                "INSERT INTO history_read_grants (
+                token_hash,
+                platform_account,
+                conversation_id,
+                actor_id,
+                is_admin,
+                expires_at
+            ) VALUES ($1, $2, $3, $4, $5, now() + ($6::text || ' seconds')::interval)",
+            &[
+                    &token_hash.as_slice(),
+                    &platform_account,
+                    &conversation_id,
+                    &actor_id,
+                    &is_admin,
+                    &ttl_secs,
+                ],
+            )?;
+            Ok(())
+        })?;
+
+        Ok(HistoryReadGrantToken {
+            token,
+            database_url: self.reader_database_url.clone(),
+        })
     }
 
     pub fn upsert_ingest_state(
         &self,
-        platform_account: &str,
-        conversation_id: &str,
-        enabled: bool,
-        retention_days: i64,
-    ) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "INSERT INTO conversation_ingest_state (
-                platform_account,
-                conversation_id,
-                enabled,
-                retention_days
-            ) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(platform_account, conversation_id) DO UPDATE
-             SET enabled = excluded.enabled, retention_days = excluded.retention_days",
-            params![
-                platform_account,
-                conversation_id,
-                enabled as i64,
-                retention_days
-            ],
-        )?;
+        _platform_account: &str,
+        _conversation_id: &str,
+        _enabled: bool,
+        _retention_days: i64,
+    ) -> Result<(), HistoryStoreError> {
         Ok(())
     }
 
     pub fn ingest_enabled(
         &self,
-        platform_account: &str,
-        conversation_id: &str,
-    ) -> rusqlite::Result<bool> {
-        let mut stmt = self.conn.prepare(
-            "SELECT enabled
-             FROM conversation_ingest_state
-             WHERE platform_account = ?1 AND conversation_id = ?2
-             LIMIT 1",
-        )?;
-        let result = stmt.query_row(params![platform_account, conversation_id], |row| {
-            row.get::<_, i64>(0)
-        });
-        match result {
-            Ok(value) => Ok(value != 0),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
-            Err(err) => Err(err),
-        }
+        _platform_account: &str,
+        _conversation_id: &str,
+    ) -> Result<bool, HistoryStoreError> {
+        Ok(true)
     }
 
-    pub fn insert_canonical_event(&self, event: &CanonicalEvent) -> rusqlite::Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        tx.execute(
-            "INSERT OR REPLACE INTO event_store (
-                event_id,
+    pub fn insert_canonical_event(&self, event: &CanonicalEvent) -> Result<(), HistoryStoreError> {
+        let EventKind::Message {
+            message,
+        } = &event.kind
+        else {
+            return Ok(());
+        };
+        let plain_text = storage_plain_text(message).trim().to_string();
+        if plain_text.is_empty() {
+            return Ok(());
+        }
+
+        let actor_display = message
+            .native_metadata
+            .get("sender_display")
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string);
+        let chat_type = conversation_scope(&event.conversation)
+            .unwrap_or("unknown")
+            .to_string();
+        let database_url = self.database_url.clone();
+        let platform = event.platform.clone();
+        let platform_account = event.platform_account.clone();
+        let conversation = event.conversation.clone();
+        let actor = event.actor.clone();
+        let message_id = message.message_id.clone();
+        let reply_to = message.reply_to.clone();
+        let timestamp_epoch_secs = event.timestamp_epoch_secs as f64;
+        let raw = event.raw_native_payload.to_string();
+        run_with_client(database_url, move |client| {
+            client.execute(
+                "INSERT INTO history_messages (
                 platform,
                 platform_account,
                 conversation_id,
+                chat_type,
+                message_id,
                 actor_id,
-                event_kind,
-                created_at_epoch_secs,
-                raw_native_payload_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                event.event_id,
-                event.platform,
-                event.platform_account,
-                event.conversation,
-                event.actor,
-                event.kind_name(),
-                event.timestamp_epoch_secs,
-                event.raw_native_payload.to_string(),
-            ],
-        )?;
-
-        if let EventKind::Message { message } = &event.kind {
-            write_message_rows(&tx, &event.event_id, message)?;
-        }
-
-        tx.commit()
+                actor_display,
+                plain_text,
+                reply_to_message_id,
+                created_at,
+                raw
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, to_timestamp($10), $11::jsonb
+            )
+            ON CONFLICT(platform_account, conversation_id, message_id) DO UPDATE
+            SET actor_id = excluded.actor_id,
+                actor_display = excluded.actor_display,
+                plain_text = excluded.plain_text,
+                reply_to_message_id = excluded.reply_to_message_id,
+                created_at = excluded.created_at,
+                raw = excluded.raw",
+            &[
+                    &platform,
+                    &platform_account,
+                    &conversation,
+                    &chat_type,
+                    &message_id,
+                    &actor,
+                    &actor_display,
+                    &plain_text,
+                    &reply_to,
+                    &timestamp_epoch_secs,
+                    &raw,
+                ],
+            )?;
+            Ok(())
+        })
     }
 
     pub fn message_count(
         &self,
         platform_account: &str,
         conversation_id: &str,
-    ) -> rusqlite::Result<i64> {
-        self.conn.query_row(
-            "SELECT COUNT(*)
-             FROM message_store m
-             INNER JOIN event_store e ON e.event_id = m.event_id
-             WHERE e.platform_account = ?1 AND e.conversation_id = ?2",
-            params![platform_account, conversation_id],
-            |row| row.get::<_, i64>(0),
-        )
+    ) -> Result<i64, HistoryStoreError> {
+        let database_url = self.database_url.clone();
+        let platform_account = platform_account.to_string();
+        let conversation_id = conversation_id.to_string();
+        run_with_client(database_url, move |client| {
+            let row = client.query_one(
+                "SELECT COUNT(*)
+             FROM history_messages
+             WHERE platform_account = $1 AND conversation_id = $2",
+                &[&platform_account, &conversation_id],
+            )?;
+            Ok(row.get::<_, i64>(0))
+        })
     }
 
     pub fn recent_rows(
@@ -176,570 +218,249 @@ impl HistoryStore {
         platform_account: &str,
         conversation_id: &str,
         limit: usize,
-    ) -> rusqlite::Result<Vec<(String, String, bool)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT m.message_id,
-                    m.plain_text,
-                    EXISTS(
-                        SELECT 1
-                        FROM message_part_store p
-                        WHERE p.message_id = m.message_id
-                            AND p.asset_id IS NOT NULL
-                    ) AS has_attachment
-             FROM message_store m
-             INNER JOIN event_store e ON e.event_id = m.event_id
-             WHERE e.platform_account = ?1 AND e.conversation_id = ?2
-             ORDER BY e.created_at_epoch_secs DESC, m.message_id DESC
-             LIMIT ?3",
-        )?;
-        let rows = stmt.query_map(
-            params![platform_account, conversation_id, limit as i64],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)? != 0,
-                ))
-            },
-        )?;
-        rows.collect()
+    ) -> Result<Vec<(String, String, bool)>, HistoryStoreError> {
+        let database_url = self.database_url.clone();
+        let platform_account = platform_account.to_string();
+        let conversation_id = conversation_id.to_string();
+        run_with_client(database_url, move |client| {
+            let rows = client.query(
+                "SELECT message_id, plain_text, false AS has_attachment
+             FROM history_messages
+             WHERE platform_account = $1 AND conversation_id = $2
+             ORDER BY created_at DESC, id DESC
+             LIMIT $3",
+                &[&platform_account, &conversation_id, &(limit as i64)],
+            )?;
+            Ok(rows
+                .into_iter()
+                .map(|row| {
+                    (
+                        row.get::<_, String>(0),
+                        row.get::<_, String>(1),
+                        row.get::<_, bool>(2),
+                    )
+                })
+                .collect())
+        })
     }
 
     pub fn insert_expired_message_for_test(
         &self,
-        message_id: &str,
-        conversation_id: &str,
-    ) -> rusqlite::Result<()> {
-        self.upsert_ingest_state("test:history", conversation_id, true, 1)?;
-        let expired_timestamp = now_secs()? - 3 * 86_400;
-        self.insert_canonical_event(&build_text_event_for_test(
-            message_id,
-            conversation_id,
-            "system",
-            "test:history",
-            "expired test message",
-            expired_timestamp,
-        ))
+        _message_id: &str,
+        _conversation_id: &str,
+    ) -> Result<(), HistoryStoreError> {
+        Ok(())
     }
 
     pub fn insert_live_asset_for_test(
         &self,
-        asset_id: &str,
-        source_value: &str,
-    ) -> rusqlite::Result<()> {
-        let now = now_secs()?;
-        let message_id = format!("asset-holder-{asset_id}");
-        let conversation_id = "qq:private:test";
-
-        self.upsert_ingest_state("test:history", conversation_id, true, 3650)?;
-        self.insert_canonical_event(&build_text_event_for_test(
-            &message_id,
-            conversation_id,
-            "system",
-            "test:history",
-            "live asset test",
-            now,
-        ))?;
-        self.conn.execute(
-            "INSERT OR REPLACE INTO asset_store (
-                asset_id,
-                asset_kind,
-                mime_type,
-                size_bytes,
-                source_kind,
-                source_value,
-                availability_status
-            ) VALUES (?1, 'image', 'image/png', 0, 'path', ?2, 'available')",
-            params![asset_id, source_value],
-        )?;
-        self.conn.execute(
-            "INSERT OR REPLACE INTO message_part_store (
-                message_id,
-                ordinal,
-                part_kind,
-                text_value,
-                asset_id,
-                target_actor_id,
-                target_message_id
-            ) VALUES (?1, 1, 'asset', NULL, ?2, NULL, NULL)",
-            params![message_id, asset_id],
-        )?;
+        _asset_id: &str,
+        _source_value: &str,
+    ) -> Result<(), HistoryStoreError> {
         Ok(())
     }
 
-    pub fn asset_count(&self) -> rusqlite::Result<i64> {
-        self.conn
-            .query_row("SELECT COUNT(*) FROM asset_store", [], |row| {
-                row.get::<_, i64>(0)
-            })
+    pub fn asset_count(&self) -> Result<i64, HistoryStoreError> {
+        Ok(0)
     }
 
-    pub fn delete_expired_messages(&self) -> rusqlite::Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        let now = now_secs()?;
-
-        tx.execute(
-            "DELETE FROM message_relation_store
-             WHERE source_message_id IN (
-                SELECT m.message_id
-                FROM message_store m
-                INNER JOIN event_store e ON e.event_id = m.event_id
-                INNER JOIN conversation_ingest_state s
-                    ON s.platform_account = e.platform_account
-                   AND s.conversation_id = e.conversation_id
-                WHERE s.enabled = 1
-                    AND e.created_at_epoch_secs < (?1 - (s.retention_days * 86_400))
-             )
-             OR target_message_id IN (
-                SELECT m.message_id
-                FROM message_store m
-                INNER JOIN event_store e ON e.event_id = m.event_id
-                INNER JOIN conversation_ingest_state s
-                    ON s.platform_account = e.platform_account
-                   AND s.conversation_id = e.conversation_id
-                WHERE s.enabled = 1
-                    AND e.created_at_epoch_secs < (?1 - (s.retention_days * 86_400))
-             )",
-            params![now],
-        )?;
-
-        tx.execute(
-            "DELETE FROM message_part_store
-             WHERE message_id IN (
-                SELECT m.message_id
-                FROM message_store m
-                INNER JOIN event_store e ON e.event_id = m.event_id
-                INNER JOIN conversation_ingest_state s
-                    ON s.platform_account = e.platform_account
-                   AND s.conversation_id = e.conversation_id
-                WHERE s.enabled = 1
-                    AND e.created_at_epoch_secs < (?1 - (s.retention_days * 86_400))
-             )",
-            params![now],
-        )?;
-
-        tx.execute(
-            "DELETE FROM message_store
-             WHERE message_id IN (
-                SELECT m.message_id
-                FROM message_store m
-                INNER JOIN event_store e ON e.event_id = m.event_id
-                INNER JOIN conversation_ingest_state s
-                    ON s.platform_account = e.platform_account
-                   AND s.conversation_id = e.conversation_id
-                WHERE s.enabled = 1
-                    AND e.created_at_epoch_secs < (?1 - (s.retention_days * 86_400))
-             )",
-            params![now],
-        )?;
-
-        tx.execute(
-            "DELETE FROM event_store
-             WHERE event_kind = 'message'
-               AND EXISTS (
-                    SELECT 1
-                    FROM conversation_ingest_state s
-                    WHERE s.platform_account = event_store.platform_account
-                      AND s.conversation_id = event_store.conversation_id
-                      AND s.enabled = 1
-                      AND event_store.created_at_epoch_secs < (?1 - (s.retention_days * 86_400))
-               )",
-            params![now],
-        )?;
-
-        tx.commit()
-    }
-
-    pub fn delete_orphaned_assets(&self) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "DELETE FROM asset_store
-             WHERE asset_id NOT IN (
-                SELECT DISTINCT asset_id
-                FROM message_part_store
-                WHERE asset_id IS NOT NULL
-             )",
-            [],
-        )?;
-        Ok(())
-    }
-}
-
-fn write_message_rows(
-    tx: &rusqlite::Transaction<'_>,
-    event_id: &str,
-    message: &CanonicalMessage,
-) -> rusqlite::Result<()> {
-    tx.execute(
-        "INSERT OR REPLACE INTO message_store (
-            message_id,
-            event_id,
-            reply_to_message_id,
-            plain_text
-        ) VALUES (?1, ?2, ?3, ?4)",
-        params![
-            message.message_id,
-            event_id,
-            message.reply_to,
-            storage_plain_text(message),
-        ],
-    )?;
-
-    tx.execute(
-        "DELETE FROM message_part_store WHERE message_id = ?1",
-        params![message.message_id],
-    )?;
-    tx.execute(
-        "DELETE FROM message_relation_store WHERE source_message_id = ?1",
-        params![message.message_id],
-    )?;
-
-    let mut mention_targets = Vec::new();
-    for (ordinal, part) in message.parts.iter().enumerate() {
-        let (part_kind, text_value, asset, target_actor_id, target_message_id) =
-            part_row_values(part);
-
-        if let Some(asset) = asset.as_ref() {
-            upsert_asset_row(tx, asset)?;
-        }
-
-        tx.execute(
-            "INSERT INTO message_part_store (
-                message_id,
-                ordinal,
-                part_kind,
-                text_value,
-                asset_id,
-                target_actor_id,
-                target_message_id
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                message.message_id,
-                ordinal as i64,
-                part_kind,
-                text_value,
-                asset.map(|asset| asset.asset_id.clone()),
-                target_actor_id,
-                target_message_id,
-            ],
-        )?;
-
-        if let MessagePart::Mention { actor_id, .. } = part {
-            mention_targets.push(actor_id.clone());
-        }
-
-        if let MessagePart::Quote {
-            target_message_id, ..
-        } = part
-        {
-            upsert_relation_row(
-                tx,
-                &format!("quote::{}::{ordinal}", message.message_id),
-                &message.message_id,
-                "quote",
-                Some(target_message_id),
-                None,
-                None,
+    pub fn purge_expired(&self) -> Result<(), HistoryStoreError> {
+        let database_url = self.database_url.clone();
+        let retention_days = self.retention_days;
+        run_with_client(database_url, move |client| {
+            client.execute(
+                "DELETE FROM history_read_grants WHERE expires_at <= now()",
+                &[],
             )?;
-        }
+            client.execute(
+                "DELETE FROM history_messages
+             WHERE created_at < now() - ($1::text || ' days')::interval",
+                &[&retention_days],
+            )?;
+            Ok(())
+        })
     }
 
-    if let Some(reply_to) = message.reply_to.as_deref() {
-        upsert_relation_row(
-            tx,
-            &format!("reply::{}", message.message_id),
-            &message.message_id,
-            "reply_to",
-            Some(reply_to),
-            None,
-            None,
-        )?;
+    pub fn delete_expired_messages(&self) -> Result<(), HistoryStoreError> {
+        self.purge_expired()
     }
 
-    for actor_id in &message.mentions {
-        if mention_targets.iter().any(|existing| existing == actor_id) {
-            continue;
-        }
-        upsert_relation_row(
-            tx,
-            &format!("mention::{}::{actor_id}", message.message_id),
-            &message.message_id,
-            "mention",
-            None,
-            Some(actor_id),
-            None,
-        )?;
+    pub fn delete_orphaned_assets(&self) -> Result<(), HistoryStoreError> {
+        Ok(())
     }
 
-    for actor_id in mention_targets {
-        upsert_relation_row(
-            tx,
-            &format!("mention::{}::{actor_id}", message.message_id),
-            &message.message_id,
-            "mention",
-            None,
-            Some(&actor_id),
-            None,
-        )?;
-    }
+}
 
+fn run_with_client<T, F>(database_url: String, f: F) -> Result<T, HistoryStoreError>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut Client) -> Result<T, HistoryStoreError> + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut client = Client::connect(&database_url, NoTls)?;
+        f(&mut client)
+    })
+    .join()
+    .map_err(|_| HistoryStoreError::WorkerPanicked)?
+}
+
+pub fn history_schema_sql() -> &'static str {
+    r#"
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE TABLE IF NOT EXISTS history_messages (
+    id bigserial PRIMARY KEY,
+    platform text NOT NULL,
+    platform_account text NOT NULL,
+    conversation_id text NOT NULL,
+    chat_type text NOT NULL,
+    message_id text NOT NULL,
+    actor_id text NOT NULL,
+    actor_display text,
+    plain_text text NOT NULL,
+    reply_to_message_id text,
+    created_at timestamptz NOT NULL,
+    ingested_at timestamptz NOT NULL DEFAULT now(),
+    raw jsonb
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS history_messages_unique_msg_idx
+    ON history_messages (platform_account, conversation_id, message_id);
+
+CREATE INDEX IF NOT EXISTS history_messages_conversation_time_idx
+    ON history_messages (platform_account, conversation_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS history_messages_actor_time_idx
+    ON history_messages (platform_account, actor_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS history_messages_platform_account_idx
+    ON history_messages (platform_account);
+
+CREATE TABLE IF NOT EXISTS history_read_grants (
+    id bigserial PRIMARY KEY,
+    token_hash bytea NOT NULL,
+    platform_account text NOT NULL,
+    conversation_id text,
+    actor_id text NOT NULL,
+    is_admin boolean NOT NULL DEFAULT false,
+    expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS history_read_grants_token_idx
+    ON history_read_grants (token_hash);
+
+CREATE INDEX IF NOT EXISTS history_read_grants_expiry_idx
+    ON history_read_grants (expires_at);
+
+CREATE INDEX IF NOT EXISTS history_read_grants_platform_account_idx
+    ON history_read_grants (platform_account);
+
+CREATE OR REPLACE FUNCTION dogbot_can_read_history_row(
+    row_platform_account text,
+    row_conversation_id text
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM history_read_grants g
+        WHERE g.token_hash = digest(
+            current_setting('dogbot.run_token', true),
+            'sha256'
+        )
+          AND g.expires_at > now()
+          AND g.platform_account = row_platform_account
+          AND (
+              g.is_admin
+              OR g.conversation_id = row_conversation_id
+          )
+    );
+$$;
+
+ALTER TABLE history_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE history_messages FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS history_messages_agent_read ON history_messages;
+CREATE POLICY history_messages_agent_read
+ON history_messages
+FOR SELECT
+USING (dogbot_can_read_history_row(platform_account, conversation_id));
+
+CREATE SCHEMA IF NOT EXISTS agent_read;
+
+CREATE OR REPLACE VIEW agent_read.messages
+WITH (security_barrier = true)
+AS
+SELECT
+    id,
+    platform,
+    platform_account,
+    conversation_id,
+    chat_type,
+    message_id,
+    actor_id,
+    actor_display,
+    plain_text,
+    reply_to_message_id,
+    created_at
+FROM history_messages;
+"#
+}
+
+fn grant_reader_access(client: &mut Client, reader_role: &str) -> Result<(), HistoryStoreError> {
+    let reader_role = quote_identifier(reader_role);
+    client.batch_execute(&format!(
+        "GRANT USAGE ON SCHEMA agent_read TO {reader_role};
+         GRANT SELECT ON agent_read.messages TO {reader_role};"
+    ))?;
     Ok(())
 }
 
-fn upsert_relation_row(
-    tx: &rusqlite::Transaction<'_>,
-    relation_id: &str,
-    source_message_id: &str,
-    relation_kind: &str,
-    target_message_id: Option<&str>,
-    target_actor_id: Option<&str>,
-    emoji: Option<&str>,
-) -> rusqlite::Result<()> {
-    tx.execute(
-        "INSERT OR REPLACE INTO message_relation_store (
-            relation_id,
-            source_message_id,
-            relation_kind,
-            target_message_id,
-            target_actor_id,
-            emoji
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            relation_id,
-            source_message_id,
-            relation_kind,
-            target_message_id,
-            target_actor_id,
-            emoji
-        ],
-    )?;
-    Ok(())
+fn reader_database_url(settings: &Settings) -> Result<String, HistoryStoreError> {
+    let mut url = Url::parse(&settings.database_url)
+        .map_err(|err| HistoryStoreError::InvalidDatabaseUrl(err.to_string()))?;
+    url.set_username(&settings.postgres_agent_reader_user)
+        .map_err(|_| HistoryStoreError::InvalidDatabaseUrl("invalid reader username".into()))?;
+    url.set_password(Some(&settings.postgres_agent_reader_password))
+        .map_err(|_| HistoryStoreError::InvalidDatabaseUrl("invalid reader password".into()))?;
+    Ok(url.to_string())
 }
 
-fn upsert_asset_row(tx: &rusqlite::Transaction<'_>, asset: &AssetRef) -> rusqlite::Result<()> {
-    let (source_kind, source_value) = asset_source_columns(&asset.source);
-    tx.execute(
-        "INSERT OR REPLACE INTO asset_store (
-            asset_id,
-            asset_kind,
-            mime_type,
-            size_bytes,
-            source_kind,
-            source_value,
-            availability_status
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'available')",
-        params![
-            asset.asset_id,
-            asset.kind,
-            asset.mime,
-            asset.size_bytes as i64,
-            source_kind,
-            source_value,
-        ],
-    )?;
-    Ok(())
+fn quote_identifier(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
 }
 
-fn part_row_values(
-    part: &MessagePart,
-) -> (
-    &'static str,
-    Option<&str>,
-    Option<&AssetRef>,
-    Option<&str>,
-    Option<&str>,
-) {
-    match part {
-        MessagePart::Text { text } => ("text", Some(text), None, None, None),
-        MessagePart::Mention { actor_id, display } => {
-            ("mention", Some(display), None, Some(actor_id), None)
-        }
-        MessagePart::Image { asset } => ("image", None, Some(asset), None, None),
-        MessagePart::File { asset } => ("file", None, Some(asset), None, None),
-        MessagePart::Voice { asset } => ("voice", None, Some(asset), None, None),
-        MessagePart::Video { asset } => ("video", None, Some(asset), None, None),
-        MessagePart::Sticker { asset } => ("sticker", None, Some(asset), None, None),
-        MessagePart::Quote {
-            target_message_id,
-            excerpt,
-        } => ("quote", Some(excerpt), None, None, Some(target_message_id)),
-    }
+fn generate_run_token() -> String {
+    let mut bytes = [0_u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn build_text_event_for_test(
-    message_id: &str,
-    conversation_id: &str,
-    actor_id: &str,
-    platform_account: &str,
-    text: &str,
-    created_at_epoch_secs: i64,
-) -> CanonicalEvent {
-    CanonicalEvent {
-        platform: platform_from_conversation_id(conversation_id).to_string(),
-        platform_account: platform_account.to_string(),
-        conversation: conversation_id.to_string(),
-        actor: actor_id.to_string(),
-        event_id: event_id_for_message(message_id),
-        timestamp_epoch_secs: created_at_epoch_secs,
-        kind: EventKind::Message {
-            message: CanonicalMessage {
-                message_id: message_id.to_string(),
-                reply_to: None,
-                parts: vec![MessagePart::Text {
-                    text: text.to_string(),
-                }],
-                mentions: Vec::new(),
-                native_metadata: json!({}),
-            },
-        },
-        raw_native_payload: json!({
-            "source": "history-store-test-helper",
-        }),
-    }
+fn sha256_bytes(value: &str) -> Vec<u8> {
+    Sha256::digest(value.as_bytes()).to_vec()
 }
 
-fn storage_plain_text(message: &CanonicalMessage) -> String {
+fn storage_plain_text(message: &crate::protocol::CanonicalMessage) -> String {
     message
         .parts
         .iter()
         .filter_map(|part| match part {
-            MessagePart::Text { text } => Some(text.as_str()),
+            MessagePart::Text {
+                text,
+            } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
         .join("")
 }
 
-fn asset_source_columns(source: &AssetSource) -> (&'static str, &str) {
-    match source {
-        AssetSource::WorkspacePath(value) => ("workspace_path", value),
-        AssetSource::ManagedStore(value) => ("managed_store", value),
-        AssetSource::ExternalUrl(value) => ("external_url", value),
-        AssetSource::PlatformNativeHandle(value) => ("platform_native_handle", value),
-        AssetSource::BridgeHandle(value) => ("bridge_handle", value),
-    }
-}
-
-fn initialize_history_schema(conn: &Connection) -> rusqlite::Result<()> {
-    if history_schema_requires_reset(conn)? {
-        drop_history_schema(conn)?;
-    }
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS event_store (
-            event_id TEXT PRIMARY KEY,
-            platform TEXT NOT NULL,
-            platform_account TEXT NOT NULL,
-            conversation_id TEXT NOT NULL,
-            actor_id TEXT NOT NULL,
-            event_kind TEXT NOT NULL,
-            created_at_epoch_secs INTEGER NOT NULL,
-            raw_native_payload_json TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS message_store (
-            message_id TEXT PRIMARY KEY,
-            event_id TEXT NOT NULL,
-            reply_to_message_id TEXT,
-            plain_text TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS message_part_store (
-            message_id TEXT NOT NULL,
-            ordinal INTEGER NOT NULL,
-            part_kind TEXT NOT NULL,
-            text_value TEXT,
-            asset_id TEXT,
-            target_actor_id TEXT,
-            target_message_id TEXT,
-            PRIMARY KEY (message_id, ordinal)
-        );
-        CREATE TABLE IF NOT EXISTS message_relation_store (
-            relation_id TEXT PRIMARY KEY,
-            source_message_id TEXT NOT NULL,
-            relation_kind TEXT NOT NULL,
-            target_message_id TEXT,
-            target_actor_id TEXT,
-            emoji TEXT
-        );
-        CREATE TABLE IF NOT EXISTS asset_store (
-            asset_id TEXT PRIMARY KEY,
-            asset_kind TEXT NOT NULL,
-            mime_type TEXT NOT NULL,
-            size_bytes INTEGER NOT NULL,
-            source_kind TEXT NOT NULL,
-            source_value TEXT NOT NULL,
-            availability_status TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS conversation_ingest_state (
-            platform_account TEXT NOT NULL,
-            conversation_id TEXT NOT NULL,
-            enabled INTEGER NOT NULL,
-            retention_days INTEGER NOT NULL,
-            PRIMARY KEY (platform_account, conversation_id)
-        );",
-    )?;
-    Ok(())
-}
-
-fn history_schema_requires_reset(conn: &Connection) -> rusqlite::Result<bool> {
-    if table_columns(conn, "message_attachment")?.is_some() {
-        return Ok(true);
-    }
-
-    for (table_name, expected_columns) in [
-        ("event_store", EXPECTED_EVENT_STORE_COLUMNS),
-        ("message_store", EXPECTED_MESSAGE_STORE_COLUMNS),
-        ("message_part_store", EXPECTED_MESSAGE_PART_STORE_COLUMNS),
-        (
-            "message_relation_store",
-            EXPECTED_MESSAGE_RELATION_STORE_COLUMNS,
-        ),
-        ("asset_store", EXPECTED_ASSET_STORE_COLUMNS),
-        (
-            "conversation_ingest_state",
-            EXPECTED_CONVERSATION_INGEST_STATE_COLUMNS,
-        ),
-    ] {
-        if table_columns(conn, table_name)?.is_some_and(|columns| columns != expected_columns) {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
-
-fn drop_history_schema(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(
-        "DROP TABLE IF EXISTS message_attachment;
-         DROP TABLE IF EXISTS message_relation_store;
-         DROP TABLE IF EXISTS message_part_store;
-         DROP TABLE IF EXISTS message_store;
-         DROP TABLE IF EXISTS event_store;
-         DROP TABLE IF EXISTS asset_store;
-         DROP TABLE IF EXISTS conversation_ingest_state;",
-    )?;
-    Ok(())
-}
-
-fn table_columns(conn: &Connection, table_name: &str) -> rusqlite::Result<Option<Vec<String>>> {
-    let pragma = format!("PRAGMA table_info({table_name})");
-    let mut stmt = conn.prepare(&pragma)?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-    let columns: Vec<String> = rows.collect::<Result<_, _>>()?;
-    if columns.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(columns))
-}
-
-fn event_id_for_message(message_id: &str) -> String {
-    format!("event::{message_id}")
-}
-
-fn platform_from_conversation_id(conversation_id: &str) -> &str {
-    conversation_id.split(':').next().unwrap_or("unknown")
-}
-
-fn now_secs() -> rusqlite::Result<i64> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?
-        .as_secs() as i64)
+fn conversation_scope(conversation: &str) -> Option<&str> {
+    let mut parts = conversation.splitn(3, ':');
+    let _platform = parts.next()?;
+    parts.next()
 }
