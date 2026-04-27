@@ -116,8 +116,13 @@ if ! grep -Fq 'stripped_model="${default_model#*/}"' "$runtime_launch_dir/launch
   exit 1
 fi
 
-if ! grep -Fq '[$default_model, $stripped_model]' "$runtime_launch_dir/launch.sh"; then
-  echo "FAIL: generated claude-runner launch.sh must emit an explicit Bifrost model allowlist" >&2
+if ! grep -Fq 'bracketless_stripped_model="${stripped_model%%[*}"' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must derive a bracketless model alias" >&2
+  exit 1
+fi
+
+if ! grep -Fq '$bracketless_stripped_model' "$runtime_launch_dir/launch.sh"; then
+  echo "FAIL: generated claude-runner launch.sh must emit bracketless Bifrost model aliases" >&2
   exit 1
 fi
 

@@ -7,10 +7,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BROWSER_PROFILE_DIR=/state/browser-profile \
     BROWSER_DOWNLOADS_DIR=/workspace/downloads
 
-ARG CLAUDE_CODE_VERSION=2.1.104
+ARG CLAUDE_CODE_VERSION=latest
 ARG PLAYWRIGHT_CLI_VERSION=0.1.8
 ARG PLAYWRIGHT_MCP_VERSION=0.0.70
-ARG BIFROST_VERSION=1.6.2
+ARG BIFROST_VERSION=latest
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \

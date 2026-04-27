@@ -148,6 +148,75 @@ async fn proxy_deduplicates_version_prefix_when_base_url_already_contains_it() {
 }
 
 #[tokio::test]
+async fn proxy_strips_anthropic_custom_tool_type_for_compatible_upstreams() {
+    let captured = Arc::new(Mutex::new(None::<CapturedRequest>));
+    let upstream_app = upstream_router(captured.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, upstream_app).await.unwrap();
+    });
+
+    let settings = ApiProxySettings {
+        bind_addr: "127.0.0.1:9000".into(),
+        local_auth_token: "local-proxy-token".into(),
+        upstream: ProviderConfig {
+            base_url: format!("http://{upstream_addr}"),
+            upstream_token: "upstream-secret".into(),
+            upstream_auth_header: "x-api-key".into(),
+            upstream_auth_scheme: None,
+            model: Some("upstream-model".into()),
+        },
+    };
+
+    let app = build_test_app(settings);
+    let payload = json!({
+        "model": "should-be-replaced",
+        "max_tokens": 32,
+        "tools": [
+            {
+                "type": "custom",
+                "name": "noop",
+                "description": "No-op test tool",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                }
+            },
+            {
+                "type": "web_search_20250305",
+                "name": "web_search"
+            }
+        ],
+        "messages": [{"role": "user", "content": "hello"}]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages?beta=true")
+                .header("content-type", "application/json")
+                .header("x-api-key", "local-proxy-token")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let forwarded = captured.lock().unwrap().clone().expect("captured request");
+    assert_eq!(forwarded.body["tools"][0].get("type"), None);
+    assert_eq!(forwarded.body["tools"][0]["name"], "noop");
+    assert_eq!(
+        forwarded.body["tools"][1]["type"],
+        Value::String("web_search_20250305".into())
+    );
+}
+
+#[tokio::test]
 async fn proxy_rejects_invalid_local_auth_token() {
     let settings = ApiProxySettings::from_env_map_optional(HashMap::from([
         (

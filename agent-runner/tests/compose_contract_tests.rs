@@ -96,7 +96,9 @@ fn claude_runner_entrypoint_execs_runtime_launch_script() {
         "config.json",
         "default_model=\"${BIFROST_MODEL:-primary/model-id}\"",
         "stripped_model=\"${default_model#*/}\"",
-        "[$default_model, $stripped_model]",
+        "bracketless_default_model=\"${default_model%%[*}\"",
+        "bracketless_stripped_model=\"${stripped_model%%[*}\"",
+        "$bracketless_stripped_model",
     ];
 
     for item in helper_required {

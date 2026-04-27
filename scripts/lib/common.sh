@@ -372,6 +372,8 @@ port="${BIFROST_PORT:-8080}"
 provider_name="${BIFROST_PROVIDER_NAME:-primary}"
 default_model="${BIFROST_MODEL:-primary/model-id}"
 stripped_model="${default_model#*/}"
+bracketless_default_model="${default_model%%[*}"
+bracketless_stripped_model="${stripped_model%%[*}"
 upstream_base_url="${BIFROST_UPSTREAM_BASE_URL:-https://example.com}"
 upstream_provider_type="${BIFROST_UPSTREAM_PROVIDER_TYPE:-openai}"
 upstream_api_key="${BIFROST_UPSTREAM_API_KEY:-replace-me}"
@@ -390,6 +392,8 @@ jq -n \
   --arg provider_name "$provider_name" \
   --arg default_model "$default_model" \
   --arg stripped_model "$stripped_model" \
+  --arg bracketless_default_model "$bracketless_default_model" \
+  --arg bracketless_stripped_model "$bracketless_stripped_model" \
   --arg upstream_base_url "$upstream_base_url" \
   --arg upstream_provider_type "$upstream_provider_type" \
   '{
@@ -414,7 +418,12 @@ jq -n \
             "name": "default-key",
             "value": "env.BIFROST_UPSTREAM_API_KEY",
             "models": (
-              [$default_model, $stripped_model]
+              [
+                $default_model,
+                $stripped_model,
+                $bracketless_default_model,
+                $bracketless_stripped_model
+              ]
               | map(select(length > 0))
               | unique
             ),

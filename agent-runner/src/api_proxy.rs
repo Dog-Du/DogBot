@@ -152,13 +152,31 @@ async fn rewrite_body_if_needed(
     let mut payload: Value =
         serde_json::from_slice(&body).map_err(|_| "invalid JSON request body")?;
     if let Some(object) = payload.as_object_mut() {
-        object.insert(
-            "model".to_string(),
-            Value::String(provider.model.clone().expect("checked model")),
-        );
+        if let Some(model) = &provider.model {
+            object.insert("model".to_string(), Value::String(model.clone()));
+        }
+        strip_anthropic_custom_tool_types(object);
     }
 
     serde_json::to_vec(&payload).map_err(|_| "failed to serialize JSON request body")
+}
+
+fn strip_anthropic_custom_tool_types(object: &mut serde_json::Map<String, Value>) {
+    let Some(tools) = object.get_mut("tools").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    for tool in tools {
+        let Some(tool_object) = tool.as_object_mut() else {
+            continue;
+        };
+        if matches!(
+            tool_object.get("type").and_then(Value::as_str),
+            Some("custom")
+        ) {
+            tool_object.remove("type");
+        }
+    }
 }
 
 fn is_json(headers: &HeaderMap) -> bool {
