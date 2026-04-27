@@ -50,18 +50,18 @@ if [[ ! -w "$readonly_runtime_dir" ]]; then
   exit 1
 fi
 
-db_parent_dir="$tmp_permissions_root/db-parent"
-db_path="$db_parent_dir/runner.db"
-mkdir -p "$db_parent_dir"
-touch "$db_path"
-chmod u-w "$db_parent_dir" "$db_path"
-if ! dogbot_ensure_user_writable_file_path "$db_path"; then
-  echo "FAIL: dogbot_ensure_user_writable_file_path must repair writable database paths" >&2
+file_parent_dir="$tmp_permissions_root/file-parent"
+file_path="$file_parent_dir/runtime.file"
+mkdir -p "$file_parent_dir"
+touch "$file_path"
+chmod u-w "$file_parent_dir" "$file_path"
+if ! dogbot_ensure_user_writable_file_path "$file_path"; then
+  echo "FAIL: dogbot_ensure_user_writable_file_path must repair writable file paths" >&2
   exit 1
 fi
 
-if [[ ! -w "$db_parent_dir" || ! -w "$db_path" ]]; then
-  echo "FAIL: dogbot_ensure_user_writable_file_path must leave database file paths writable" >&2
+if [[ ! -w "$file_parent_dir" || ! -w "$file_path" ]]; then
+  echo "FAIL: dogbot_ensure_user_writable_file_path must leave file paths writable" >&2
   exit 1
 fi
 

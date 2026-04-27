@@ -41,6 +41,7 @@ pub struct Settings {
     pub database_url: String,
     pub postgres_agent_reader_user: String,
     pub postgres_agent_reader_password: String,
+    pub postgres_agent_reader_database_url: Option<String>,
     pub history_run_token_ttl_secs: i64,
     pub history_retention_days: i64,
     pub admin_actor_ids: Vec<String>,
@@ -149,6 +150,8 @@ impl Settings {
             "POSTGRES_AGENT_READER_PASSWORD",
             "change-me-reader",
         );
+        let postgres_agent_reader_database_url =
+            optional_trimmed(&env_map, "POSTGRES_AGENT_READER_DATABASE_URL");
         let history_run_token_ttl_secs =
             parse_or_default(&env_map, "HISTORY_RUN_TOKEN_TTL_SECS", 1800)?;
         let history_retention_days = parse_or_default(&env_map, "HISTORY_RETENTION_DAYS", 180)?;
@@ -206,6 +209,7 @@ impl Settings {
             database_url,
             postgres_agent_reader_user,
             postgres_agent_reader_password,
+            postgres_agent_reader_database_url,
             history_run_token_ttl_secs,
             history_retention_days,
             admin_actor_ids,

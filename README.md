@@ -168,8 +168,8 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
 ## 当前已落地
 
 - [x] Agent 运行主干
-  - `runner.db` 保存 Claude session 映射
-  - `history.db` 保存 history ingest / retrieval 基础数据
+  - PostgreSQL 保存 Claude session 映射与文本历史消息
+  - history 读取通过 `history-read` skill + Postgres RLS + 短期 run token 隔离
   - `claude-prompt/` 承载仓库管理的静态 `CLAUDE.md` 与轻量 skills
   - `claude-runner` 运行时会把 `/state/claude-prompt` 暴露给 Claude 作为 additional directory
 - [x] 触发识别与基础回复链路
@@ -180,6 +180,8 @@ DogBot 现在改为轻量的 Claude 原生内容方案：
   - QQ / WeChat 的 reply / mention 回发链路已整理
 - [x] 历史消息基础版
   - 首次有效触发会启用当前会话的 history ingest
+  - 普通 agent 只能读取当前会话历史
+  - 白名单 admin 在私聊中可读取配置平台账号范围内的历史
   - QQ 群聊支持有限 backfill
   - WeChat 支持启用后的 realtime mirror
 

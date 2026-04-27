@@ -50,16 +50,13 @@ claude_runner_runtime_dir="${DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR:-$(dogbot_claude_r
 bind_addr="${AGENT_RUNNER_BIND_ADDR:-0.0.0.0:8787}"
 bind_port="$(dogbot_bind_addr_port "$bind_addr")"
 healthz_url="http://127.0.0.1:${bind_port}/healthz"
-session_db_path="${SESSION_DB_PATH:-$AGENT_STATE_DIR/runner.db}"
-history_db_path="${HISTORY_DB_PATH:-$AGENT_STATE_DIR/history.db}"
+postgres_agent_reader_database_url="${POSTGRES_AGENT_READER_DATABASE_URL:-postgres://${POSTGRES_AGENT_READER_USER:-dogbot_agent_reader}:${POSTGRES_AGENT_READER_PASSWORD:-change-me-reader}@postgres:5432/${POSTGRES_DB:-dogbot}}"
 
 dogbot_ensure_user_writable_dir "$AGENT_WORKSPACE_DIR"
 dogbot_ensure_user_writable_dir "$AGENT_STATE_DIR"
 dogbot_ensure_user_writable_dir "$log_dir"
 dogbot_ensure_user_writable_dir "$claude_prompt_root"
 dogbot_ensure_user_writable_dir "$claude_runner_runtime_dir"
-dogbot_ensure_user_writable_file_path "${SESSION_DB_PATH:-$AGENT_STATE_DIR/runner.db}"
-dogbot_ensure_user_writable_file_path "${HISTORY_DB_PATH:-$AGENT_STATE_DIR/history.db}"
 dogbot_write_claude_runner_runtime "$claude_runner_runtime_dir"
 
 if [[ -f "$pid_file" ]]; then
@@ -116,10 +113,20 @@ nohup setsid env \
   GLOBAL_RATE_LIMIT_PER_MINUTE="${GLOBAL_RATE_LIMIT_PER_MINUTE:-10}" \
   USER_RATE_LIMIT_PER_MINUTE="${USER_RATE_LIMIT_PER_MINUTE:-3}" \
   CONVERSATION_RATE_LIMIT_PER_MINUTE="${CONVERSATION_RATE_LIMIT_PER_MINUTE:-5}" \
-  SESSION_DB_PATH="$session_db_path" \
+  DATABASE_URL="${DATABASE_URL:-}" \
+  POSTGRES_HOST="${POSTGRES_HOST:-127.0.0.1}" \
+  POSTGRES_PORT="${POSTGRES_PORT:-15432}" \
+  POSTGRES_DB="${POSTGRES_DB:-dogbot}" \
+  POSTGRES_ADMIN_USER="${POSTGRES_ADMIN_USER:-dogbot_admin}" \
+  POSTGRES_ADMIN_PASSWORD="${POSTGRES_ADMIN_PASSWORD:-change-me}" \
+  POSTGRES_AGENT_READER_USER="${POSTGRES_AGENT_READER_USER:-dogbot_agent_reader}" \
+  POSTGRES_AGENT_READER_PASSWORD="${POSTGRES_AGENT_READER_PASSWORD:-change-me-reader}" \
+  POSTGRES_AGENT_READER_DATABASE_URL="$postgres_agent_reader_database_url" \
+  HISTORY_RUN_TOKEN_TTL_SECS="${HISTORY_RUN_TOKEN_TTL_SECS:-1800}" \
+  HISTORY_RETENTION_DAYS="${HISTORY_RETENTION_DAYS:-180}" \
+  DOGBOT_ADMIN_ACTOR_IDS="${DOGBOT_ADMIN_ACTOR_IDS:-}" \
   DOGBOT_CLAUDE_PROMPT_ROOT="${DOGBOT_CLAUDE_PROMPT_ROOT:-$repo_root/claude-prompt}" \
   DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR="${DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR:-$(dogbot_claude_runner_runtime_dir)}" \
-  HISTORY_DB_PATH="$history_db_path" \
   CLAUDE_CONTAINER_CPU_CORES="${CLAUDE_CONTAINER_CPU_CORES:-4}" \
   CLAUDE_CONTAINER_MEMORY_MB="${CLAUDE_CONTAINER_MEMORY_MB:-4096}" \
   CLAUDE_CONTAINER_DISK_GB="${CLAUDE_CONTAINER_DISK_GB:-50}" \

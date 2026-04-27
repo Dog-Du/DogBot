@@ -3,11 +3,7 @@ use std::str::FromStr;
 
 use crate::config::ConfigError;
 
-pub fn string_or_default(
-    env_map: &HashMap<String, String>,
-    key: &str,
-    default: &str,
-) -> String {
+pub fn string_or_default(env_map: &HashMap<String, String>, key: &str, default: &str) -> String {
     optional_trimmed(env_map, key).unwrap_or_else(|| default.to_string())
 }
 

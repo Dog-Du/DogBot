@@ -45,7 +45,10 @@ async fn proxy_request(
     }
 
     let provider = &state.settings.upstream;
-    let request_path_and_query = uri.path_and_query().map(|value| value.as_str()).unwrap_or("/");
+    let request_path_and_query = uri
+        .path_and_query()
+        .map(|value| value.as_str())
+        .unwrap_or("/");
 
     let url = join_upstream_url(&provider.base_url, request_path_and_query);
 
@@ -96,7 +99,10 @@ fn is_authorized(headers: &HeaderMap, expected_token: &str) -> bool {
 }
 
 fn extract_inbound_token(headers: &HeaderMap) -> Option<String> {
-    if let Some(value) = headers.get("x-api-key").and_then(|value| value.to_str().ok()) {
+    if let Some(value) = headers
+        .get("x-api-key")
+        .and_then(|value| value.to_str().ok())
+    {
         return Some(value.to_string());
     }
 
@@ -181,16 +187,17 @@ fn join_upstream_url(base_url: &str, request_path_and_query: &str) -> String {
     parsed_base_url.set_path("");
     parsed_base_url.set_query(None);
     parsed_base_url.set_fragment(None);
-    let origin = parsed_base_url.to_string().trim_end_matches('/').to_string();
+    let origin = parsed_base_url
+        .to_string()
+        .trim_end_matches('/')
+        .to_string();
 
-    let prefix = if !base_path.is_empty()
-        && base_path != "/"
-        && request_path.starts_with(&base_path)
-    {
-        ""
-    } else {
-        base_path.as_str()
-    };
+    let prefix =
+        if !base_path.is_empty() && base_path != "/" && request_path.starts_with(&base_path) {
+            ""
+        } else {
+            base_path.as_str()
+        };
 
     format!("{origin}{prefix}{request_path_and_query}")
 }

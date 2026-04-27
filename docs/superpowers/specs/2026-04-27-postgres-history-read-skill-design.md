@@ -70,7 +70,7 @@ New configuration should replace SQLite paths:
 
 ```env
 POSTGRES_HOST=127.0.0.1
-POSTGRES_PORT=5432
+POSTGRES_PORT=15432
 POSTGRES_DB=dogbot
 POSTGRES_ADMIN_USER=dogbot_admin
 POSTGRES_ADMIN_PASSWORD=change-me
@@ -190,7 +190,7 @@ The primary view is:
 
 ```sql
 CREATE VIEW agent_read.messages
-WITH (security_barrier = true)
+WITH (security_barrier = true, security_invoker = true)
 AS
 SELECT
     id,
@@ -211,22 +211,18 @@ The agent reader role gets:
 
 - `USAGE` on schema `agent_read`
 - `SELECT` on `agent_read.messages`
-- no privileges on `history_messages`
+- column-level `SELECT` on the projected `history_messages` columns required by
+  the view
 - no privileges on `history_read_grants`
 - no privileges on session tables
 
-To avoid giving the agent base-table privileges, `agent_read.messages` should be
-owned by a dedicated view-owner role that:
+PostgreSQL 15 `security_invoker` views check underlying table permissions as
+the caller. The reader therefore needs column-level access to the non-sensitive
+message columns used by the view. It does not receive access to `raw` or grant
+tables.
 
-- can select from `history_messages`
-- does not own `history_messages`
-- does not have `BYPASSRLS`
-- is covered by the same RLS policy
-
-This matters because PostgreSQL view permission checks normally use the view
-owner for underlying tables unless a `security_invoker` view is used. The V1
-design chooses a non-bypass view owner plus RLS, because the agent should only
-hold view privileges.
+RLS remains the isolation boundary: `history_messages` has forced RLS, and the
+policy checks the short-lived run token in `history_read_grants`.
 
 ## RLS Design
 
@@ -238,8 +234,8 @@ ALTER TABLE history_messages FORCE ROW LEVEL SECURITY;
 ```
 
 RLS calls a security-definer function owned by the database owner. The function
-checks `history_read_grants` without granting the agent or view owner direct
-access to that table.
+checks `history_read_grants` without granting the agent reader direct access to
+that table.
 
 Sketch:
 
@@ -339,7 +335,7 @@ does not ask the agent to pass platform or conversation identity.
 Expected environment:
 
 ```env
-DOGBOT_HISTORY_DATABASE_URL=postgres://dogbot_agent_reader:...@host:5432/dogbot
+DOGBOT_HISTORY_DATABASE_URL=postgres://dogbot_agent_reader:...@postgres:5432/dogbot
 DOGBOT_HISTORY_RUN_TOKEN=<high-entropy-token>
 PGOPTIONS=-c dogbot.run_token=<token> -c statement_timeout=5000
 ```

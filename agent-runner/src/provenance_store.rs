@@ -11,4 +11,3 @@ pub struct ProvenanceEntry {
     pub message_id: String,
     pub sender_role: SenderRole,
 }
-

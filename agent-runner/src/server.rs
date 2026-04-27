@@ -205,7 +205,7 @@ pub fn build_test_app(runner: Arc<dyn Runner>) -> Router {
 }
 
 pub fn build_test_app_with_settings(runner: Arc<dyn Runner>, settings: Settings) -> Router {
-    let session_store = SessionStore::open(&settings.session_db_path).expect("session store");
+    let session_store = SessionStore::open(&settings).expect("session store");
     let history_store = Arc::new(StdMutex::new(
         HistoryStore::open(&settings).expect("history store"),
     ));
@@ -228,7 +228,7 @@ pub fn build_test_app_with_message_support(
     messenger: Arc<dyn Messenger>,
     settings: Settings,
 ) -> Router {
-    let session_store = SessionStore::open(&settings.session_db_path).expect("session store");
+    let session_store = SessionStore::open(&settings).expect("session store");
     let history_store = Arc::new(StdMutex::new(
         HistoryStore::open(&settings).expect("history store"),
     ));
@@ -252,7 +252,10 @@ pub fn build_app(settings: Settings) -> io::Result<Router> {
         DockerRunner::new(runtime, settings.clone())
             .map_err(|err| io::Error::other(err.message))?,
     );
-    let session_store = SessionStore::open(&settings.session_db_path)
+    let session_store =
+        SessionStore::open(&settings).map_err(|err| io::Error::other(err.to_string()))?;
+    session_store
+        .initialize_schema()
         .map_err(|err| io::Error::other(err.to_string()))?;
     let history_store =
         HistoryStore::open(&settings).map_err(|err| io::Error::other(err.to_string()))?;
@@ -907,20 +910,7 @@ async fn deliver_plan_for_event(
             reply_to_message_id: None,
             mention_user_id: None,
         };
-        let session = state
-            .session_store
-            .get_or_create_bound_session(
-                &event.conversation,
-                &event.platform,
-                &event.platform_account,
-                &event.conversation,
-            )
-            .map_err(|err| ErrorResponse {
-                status: "error".into(),
-                error_code: "session_store_failed".into(),
-                message: err.to_string(),
-                timed_out: false,
-            })?;
+        let session = session_record_from_event(event);
         return override_messenger.send(request, session).await;
     }
 
@@ -951,6 +941,26 @@ async fn deliver_plan_for_event(
         ),
     }
     response
+}
+
+fn session_record_from_event(event: &CanonicalEvent) -> crate::session_store::SessionRecord {
+    let session_key = format!(
+        "conversation::{}::{}::{}",
+        event.platform, event.platform_account, event.conversation
+    );
+    let timestamp = event.timestamp_epoch_secs;
+    crate::session_store::SessionRecord {
+        session_key,
+        external_session_id: event.conversation.clone(),
+        claude_session_id: String::new(),
+        platform: event.platform.clone(),
+        platform_account: event.platform_account.clone(),
+        conversation_id: event.conversation.clone(),
+        user_id: String::new(),
+        created_at_epoch_secs: timestamp,
+        last_used_at_epoch_secs: timestamp,
+        is_new: false,
+    }
 }
 
 fn summarize_event_for_log(event: &CanonicalEvent) -> String {

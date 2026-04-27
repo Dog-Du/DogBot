@@ -36,6 +36,7 @@ fn settings_use_expected_defaults() {
     );
     assert_eq!(settings.postgres_agent_reader_user, "dogbot_agent_reader");
     assert_eq!(settings.postgres_agent_reader_password, "change-me-reader");
+    assert_eq!(settings.postgres_agent_reader_database_url, None);
     assert_eq!(settings.history_run_token_ttl_secs, 1800);
     assert_eq!(settings.history_retention_days, 180);
     assert!(settings.admin_actor_ids.is_empty());
@@ -51,7 +52,10 @@ fn settings_parse_prompt_and_postgres_fields() {
         ("POSTGRES_HOST".to_string(), "db.internal".to_string()),
         ("POSTGRES_PORT".to_string(), "15432".to_string()),
         ("POSTGRES_DB".to_string(), "dogbot_prod".to_string()),
-        ("POSTGRES_ADMIN_USER".to_string(), "dogbot_owner".to_string()),
+        (
+            "POSTGRES_ADMIN_USER".to_string(),
+            "dogbot_owner".to_string(),
+        ),
         (
             "POSTGRES_ADMIN_PASSWORD".to_string(),
             "owner-password".to_string(),
@@ -63,6 +67,10 @@ fn settings_parse_prompt_and_postgres_fields() {
         (
             "POSTGRES_AGENT_READER_PASSWORD".to_string(),
             "reader-password".to_string(),
+        ),
+        (
+            "POSTGRES_AGENT_READER_DATABASE_URL".to_string(),
+            "postgres://reader:reader-password@host.docker.internal:5432/dogbot_prod".to_string(),
         ),
         ("HISTORY_RUN_TOKEN_TTL_SECS".to_string(), "900".to_string()),
         ("HISTORY_RETENTION_DAYS".to_string(), "90".to_string()),
@@ -80,11 +88,18 @@ fn settings_parse_prompt_and_postgres_fields() {
     );
     assert_eq!(settings.postgres_agent_reader_user, "reader");
     assert_eq!(settings.postgres_agent_reader_password, "reader-password");
+    assert_eq!(
+        settings.postgres_agent_reader_database_url.as_deref(),
+        Some("postgres://reader:reader-password@host.docker.internal:5432/dogbot_prod")
+    );
     assert_eq!(settings.history_run_token_ttl_secs, 900);
     assert_eq!(settings.history_retention_days, 90);
     assert_eq!(
         settings.admin_actor_ids,
-        vec!["qq:user:1".to_string(), "wechat:user:wxid_admin".to_string()]
+        vec![
+            "qq:user:1".to_string(),
+            "wechat:user:wxid_admin".to_string()
+        ]
     );
 }
 

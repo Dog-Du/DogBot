@@ -166,12 +166,14 @@ impl PlatformAdapter for WeChatPadProPlatform {
         };
 
         for (index, message) in plan.messages.iter().enumerate() {
-            let requests = compile_outbound_requests(message, context, index == 0)
-                .map_err(|err| ErrorResponse {
-                    status: "error".into(),
-                    error_code: "delivery_invalid_plan".into(),
-                    message: err,
-                    timed_out: false,
+            let requests =
+                compile_outbound_requests(message, context, index == 0).map_err(|err| {
+                    ErrorResponse {
+                        status: "error".into(),
+                        error_code: "delivery_invalid_plan".into(),
+                        message: err,
+                        timed_out: false,
+                    }
                 })?;
 
             for request in requests {

@@ -82,6 +82,7 @@ fn test_settings() -> agent_runner::config::Settings {
         database_url: "postgres://dogbot_admin:change-me@127.0.0.1:5432/dogbot".into(),
         postgres_agent_reader_user: "dogbot_agent_reader".into(),
         postgres_agent_reader_password: "change-me-reader".into(),
+        postgres_agent_reader_database_url: None,
         history_run_token_ttl_secs: 1800,
         history_retention_days: 180,
         admin_actor_ids: Vec::new(),
@@ -491,19 +492,25 @@ async fn run_endpoint_rate_limits_per_conversation() {
 
 #[tokio::test]
 async fn message_endpoint_sends_to_existing_session() {
-    let temp = tempfile::tempdir().unwrap();
-    let db_path = temp.path().join("runner.db");
-    let store = SessionStore::open(&db_path).unwrap();
+    let Some(scope) = PostgresSessionScope::new() else {
+        return;
+    };
+    let store = SessionStore::open(&scope.settings).unwrap();
+    store.initialize_schema().unwrap();
+    let session_id = scope.external("qq-user-1");
+    let account = scope.account("qq:bot_uin:123");
     store
-        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:private:1")
+        .get_or_create_bound_session(&session_id, "qq", &account, "qq:private:1")
         .unwrap();
 
     let messenger = Arc::new(MockMessenger::success());
     let app = agent_runner::server::build_test_app_with_message_support(
         Arc::new(MockRunner::success()),
         messenger.clone(),
-        test_settings_with_session_db(&db_path),
+        scope.settings,
     );
+    let mut request = base_message_request();
+    request.session_id = session_id.clone();
 
     let response = app
         .oneshot(
@@ -511,9 +518,7 @@ async fn message_endpoint_sends_to_existing_session() {
                 .method("POST")
                 .uri("/v1/messages")
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::to_vec(&base_message_request()).unwrap(),
-                ))
+                .body(Body::from(serde_json::to_vec(&request).unwrap()))
                 .unwrap(),
         )
         .await
@@ -523,7 +528,7 @@ async fn message_endpoint_sends_to_existing_session() {
     assert_eq!(
         messenger.last_request().unwrap(),
         MessageRequest {
-            session_id: "qq-user-1".into(),
+            session_id,
             text: "hello from outbox".into(),
             reply_to_message_id: None,
             mention_user_id: None,
@@ -533,22 +538,26 @@ async fn message_endpoint_sends_to_existing_session() {
 
 #[tokio::test]
 async fn message_endpoint_trims_session_id_before_lookup() {
-    let temp = tempfile::tempdir().unwrap();
-    let db_path = temp.path().join("runner.db");
-    let store = SessionStore::open(&db_path).unwrap();
+    let Some(scope) = PostgresSessionScope::new() else {
+        return;
+    };
+    let store = SessionStore::open(&scope.settings).unwrap();
+    store.initialize_schema().unwrap();
+    let session_id = scope.external("qq-user-1");
+    let account = scope.account("qq:bot_uin:123");
     store
-        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:private:1")
+        .get_or_create_bound_session(&session_id, "qq", &account, "qq:private:1")
         .unwrap();
 
     let messenger = Arc::new(MockMessenger::success());
     let app = agent_runner::server::build_test_app_with_message_support(
         Arc::new(MockRunner::success()),
         messenger.clone(),
-        test_settings_with_session_db(&db_path),
+        scope.settings,
     );
 
     let mut request = base_message_request();
-    request.session_id = "  qq-user-1  ".into();
+    request.session_id = format!("  {session_id}  ");
 
     let response = app
         .oneshot(
@@ -568,13 +577,20 @@ async fn message_endpoint_trims_session_id_before_lookup() {
 
 #[tokio::test]
 async fn message_endpoint_returns_not_found_for_unknown_session() {
-    let temp = tempfile::tempdir().unwrap();
-    let db_path = temp.path().join("runner.db");
+    let Some(scope) = PostgresSessionScope::new() else {
+        return;
+    };
+    let store = SessionStore::open(&scope.settings).unwrap();
+    store.initialize_schema().unwrap();
+    let unknown_session_id = scope.external("unknown-session");
     let app = agent_runner::server::build_test_app_with_message_support(
         Arc::new(MockRunner::success()),
         Arc::new(MockMessenger::success()),
-        test_settings_with_session_db(&db_path),
+        scope.settings,
     );
+
+    let mut request = base_message_request();
+    request.session_id = unknown_session_id;
 
     let response = app
         .oneshot(
@@ -582,9 +598,7 @@ async fn message_endpoint_returns_not_found_for_unknown_session() {
                 .method("POST")
                 .uri("/v1/messages")
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::to_vec(&base_message_request()).unwrap(),
-                ))
+                .body(Body::from(serde_json::to_vec(&request).unwrap()))
                 .unwrap(),
         )
         .await
@@ -595,21 +609,26 @@ async fn message_endpoint_returns_not_found_for_unknown_session() {
 
 #[tokio::test]
 async fn message_endpoint_passes_reply_and_mention_metadata() {
-    let temp = tempfile::tempdir().unwrap();
-    let db_path = temp.path().join("runner.db");
-    let store = SessionStore::open(&db_path).unwrap();
+    let Some(scope) = PostgresSessionScope::new() else {
+        return;
+    };
+    let store = SessionStore::open(&scope.settings).unwrap();
+    store.initialize_schema().unwrap();
+    let session_id = scope.external("qq-user-1");
+    let account = scope.account("qq:bot_uin:123");
     store
-        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:group:100")
+        .get_or_create_bound_session(&session_id, "qq", &account, "qq:group:100")
         .unwrap();
 
     let messenger = Arc::new(MockMessenger::success());
     let app = agent_runner::server::build_test_app_with_message_support(
         Arc::new(MockRunner::success()),
         messenger.clone(),
-        test_settings_with_session_db(&db_path),
+        scope.settings,
     );
 
     let mut request = base_message_request();
+    request.session_id = session_id;
     request.reply_to_message_id = Some("42".into());
     request.mention_user_id = Some("99".into());
 
@@ -633,22 +652,26 @@ async fn message_endpoint_passes_reply_and_mention_metadata() {
 
 #[tokio::test]
 async fn message_endpoint_does_not_infer_group_mention_from_conversation_session() {
-    let temp = tempfile::tempdir().unwrap();
-    let db_path = temp.path().join("runner.db");
-    let store = SessionStore::open(&db_path).unwrap();
+    let Some(scope) = PostgresSessionScope::new() else {
+        return;
+    };
+    let store = SessionStore::open(&scope.settings).unwrap();
+    store.initialize_schema().unwrap();
+    let session_id = scope.external("qq-group-user-1");
+    let account = scope.account("qq:bot_uin:123");
     store
-        .get_or_create_bound_session("qq-group-user-1", "qq", "qq:bot_uin:123", "qq:group:100")
+        .get_or_create_bound_session(&session_id, "qq", &account, "qq:group:100")
         .unwrap();
 
     let messenger = Arc::new(MockMessenger::success());
     let app = agent_runner::server::build_test_app_with_message_support(
         Arc::new(MockRunner::success()),
         messenger.clone(),
-        test_settings_with_session_db(&db_path),
+        scope.settings,
     );
 
     let request = MessageRequest {
-        session_id: "qq-group-user-1".into(),
+        session_id,
         text: "follow-up".into(),
         reply_to_message_id: None,
         mention_user_id: None,
@@ -758,8 +781,30 @@ impl agent_runner::server::Messenger for MockMessenger {
     }
 }
 
-fn test_settings_with_session_db(db_path: &std::path::Path) -> agent_runner::config::Settings {
-    let mut settings = test_settings();
-    settings.session_db_path = db_path.display().to_string();
-    settings
+struct PostgresSessionScope {
+    settings: agent_runner::config::Settings,
+    suffix: String,
+}
+
+impl PostgresSessionScope {
+    fn new() -> Option<Self> {
+        let Some(database_url) = std::env::var("DOGBOT_TEST_DATABASE_URL").ok() else {
+            eprintln!("DOGBOT_TEST_DATABASE_URL unset; skipping postgres integration test");
+            return None;
+        };
+        let mut settings = test_settings();
+        settings.database_url = database_url;
+        Some(Self {
+            settings,
+            suffix: uuid::Uuid::new_v4().to_string(),
+        })
+    }
+
+    fn external(&self, value: &str) -> String {
+        format!("{value}:{}", self.suffix)
+    }
+
+    fn account(&self, value: &str) -> String {
+        format!("{value}:test:{}", self.suffix)
+    }
 }

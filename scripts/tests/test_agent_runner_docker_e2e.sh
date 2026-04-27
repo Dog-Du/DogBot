@@ -15,6 +15,7 @@ ingress_response="$tmp_root/ingress-response.json"
 napcat_log="$tmp_root/napcat-requests.ndjson"
 mock_claude_log="$state_dir/mock-claude-last.json"
 container_name="claude-runner-e2e-$$"
+postgres_container_name="dogbot-postgres-e2e-$$"
 base_image="${CLAUDE_IMAGE_NAME_BASE:-dogbot/claude-runner:local}"
 mock_image="dogbot/claude-runner:e2e-$$"
 mock_server_pid=""
@@ -32,6 +33,7 @@ PY
 
 runner_port="$(reserve_port)"
 napcat_port="$(reserve_port)"
+postgres_port="$(reserve_port)"
 
 cleanup() {
   set +e
@@ -44,6 +46,7 @@ cleanup() {
     wait "$mock_server_pid" 2>/dev/null || true
   fi
   docker rm -f "$container_name" >/dev/null 2>&1 || true
+  docker rm -f "$postgres_container_name" >/dev/null 2>&1 || true
   docker rmi "$mock_image" >/dev/null 2>&1 || true
   rm -rf "$tmp_root"
 }
@@ -225,6 +228,25 @@ docker build -t "$mock_image" "$mock_ctx" >/dev/null
 python3 "$tmp_root/mock_napcat_server.py" --port "$napcat_port" --log "$napcat_log" --scenario "$scenario" &
 mock_server_pid=$!
 
+docker run -d \
+  --name "$postgres_container_name" \
+  -e POSTGRES_DB=dogbot \
+  -e POSTGRES_USER=dogbot_admin \
+  -e POSTGRES_PASSWORD=change-me \
+  -p "127.0.0.1:${postgres_port}:5432" \
+  postgres:15 >/dev/null
+
+for _ in $(seq 1 50); do
+  if docker exec "$postgres_container_name" pg_isready -U dogbot_admin -d dogbot >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.2
+done
+if ! docker exec "$postgres_container_name" pg_isready -U dogbot_admin -d dogbot >/dev/null 2>&1; then
+  echo "Postgres did not become ready for e2e test" >&2
+  exit 1
+fi
+
 if [[ -n "${SUDO_USER:-}" ]]; then
   su -l "$SUDO_USER" -c "export PATH=\"\$HOME/.cargo/bin:\$PATH\"; cd '$repo_root' && cargo build --release --manifest-path '$repo_root/agent-runner/Cargo.toml'" >/dev/null
 else
@@ -242,8 +264,16 @@ env \
   AGENT_STATE_DIR="$state_dir" \
   DOGBOT_CLAUDE_PROMPT_ROOT="$prompt_root" \
   DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR="$state_dir/claude-runner" \
-  SESSION_DB_PATH="$state_dir/runner.db" \
-  HISTORY_DB_PATH="$state_dir/history.db" \
+  POSTGRES_HOST=127.0.0.1 \
+  POSTGRES_PORT="$postgres_port" \
+  POSTGRES_DB=dogbot \
+  POSTGRES_ADMIN_USER=dogbot_admin \
+  POSTGRES_ADMIN_PASSWORD=change-me \
+  POSTGRES_AGENT_READER_USER=dogbot_agent_reader \
+  POSTGRES_AGENT_READER_PASSWORD=change-me-reader \
+  POSTGRES_AGENT_READER_DATABASE_URL="postgres://dogbot_agent_reader:change-me-reader@host.docker.internal:${postgres_port}/dogbot" \
+  HISTORY_RUN_TOKEN_TTL_SECS=1800 \
+  HISTORY_RETENTION_DAYS=180 \
   BIFROST_PORT=8080 \
   BIFROST_PROVIDER_NAME=primary \
   BIFROST_MODEL=primary/model-id \

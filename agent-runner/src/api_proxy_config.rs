@@ -42,7 +42,9 @@ impl ApiProxySettings {
         Self::from_env_map_optional(env_map)?.ok_or(ConfigError::MissingUpstream)
     }
 
-    pub fn from_env_map_optional(env_map: HashMap<String, String>) -> Result<Option<Self>, ConfigError> {
+    pub fn from_env_map_optional(
+        env_map: HashMap<String, String>,
+    ) -> Result<Option<Self>, ConfigError> {
         let upstream = match parse_upstream(&env_map)? {
             Some(upstream) => upstream,
             None => return Ok(None),
@@ -57,7 +59,9 @@ impl ApiProxySettings {
     }
 }
 
-fn parse_upstream(env_map: &HashMap<String, String>) -> Result<Option<ProviderConfig>, ConfigError> {
+fn parse_upstream(
+    env_map: &HashMap<String, String>,
+) -> Result<Option<ProviderConfig>, ConfigError> {
     let base_url = optional_trimmed(env_map, "API_PROXY_UPSTREAM_BASE_URL");
     let upstream_token = optional_trimmed(env_map, "API_PROXY_UPSTREAM_TOKEN");
 

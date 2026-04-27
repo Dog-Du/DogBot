@@ -57,8 +57,7 @@ required_runtime_repairs=(
   'dogbot_ensure_user_writable_dir "$DOGBOT_CLAUDE_PROMPT_ROOT"'
   'dogbot_ensure_user_writable_dir "$DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR"'
   'dogbot_ensure_user_writable_dir "$runner_log_dir"'
-  'dogbot_ensure_user_writable_file_path "$session_db_path"'
-  'dogbot_ensure_user_writable_file_path "$history_db_path"'
+  'dogbot_ensure_user_writable_dir "$postgres_data_dir"'
 )
 
 for pattern in "${required_runtime_repairs[@]}"; do
@@ -67,6 +66,11 @@ for pattern in "${required_runtime_repairs[@]}"; do
     exit 1
   fi
 done
+
+if ! grep -q 'run_compose_up "$repo_root/deploy/docker/docker-compose.yml" postgres' "$repo_root/scripts/deploy_stack.sh"; then
+  echo "FAIL: deploy_stack.sh must start Postgres before agent-runner" >&2
+  exit 1
+fi
 
 if ! grep -q 'DOGBOT_COMPOSE_PROJECT_NAME' "$repo_root/scripts/stop_stack.sh"; then
   echo "FAIL: stop_stack.sh must pin a stable Docker Compose project name" >&2

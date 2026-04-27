@@ -125,6 +125,7 @@ fn test_settings() -> Settings {
         database_url: "postgres://dogbot_admin:change-me@127.0.0.1:5432/dogbot".into(),
         postgres_agent_reader_user: "dogbot_agent_reader".into(),
         postgres_agent_reader_password: "change-me-reader".into(),
+        postgres_agent_reader_database_url: None,
         history_run_token_ttl_secs: 1800,
         history_retention_days: 180,
         admin_actor_ids: Vec::new(),

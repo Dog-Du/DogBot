@@ -43,7 +43,7 @@ RUN apt-get update \
     fd-find \
     jq \
     miller \
-    sqlite3 \
+    postgresql-client \
     csvkit \
     zip \
     unzip \

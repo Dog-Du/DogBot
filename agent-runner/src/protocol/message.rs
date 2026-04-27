@@ -5,14 +5,32 @@ use super::AssetRef;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum MessagePart {
-    Text { text: String },
-    Mention { actor_id: String, display: String },
-    Image { asset: AssetRef },
-    File { asset: AssetRef },
-    Voice { asset: AssetRef },
-    Video { asset: AssetRef },
-    Sticker { asset: AssetRef },
-    Quote { target_message_id: String, excerpt: String },
+    Text {
+        text: String,
+    },
+    Mention {
+        actor_id: String,
+        display: String,
+    },
+    Image {
+        asset: AssetRef,
+    },
+    File {
+        asset: AssetRef,
+    },
+    Voice {
+        asset: AssetRef,
+    },
+    Video {
+        asset: AssetRef,
+    },
+    Sticker {
+        asset: AssetRef,
+    },
+    Quote {
+        target_message_id: String,
+        excerpt: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

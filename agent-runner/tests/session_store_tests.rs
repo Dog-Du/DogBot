@@ -1,20 +1,34 @@
-use agent_runner::session_store::SessionStore;
-use rusqlite::Connection;
+use agent_runner::session_store::{SessionStore, session_schema_sql};
+
+#[test]
+fn session_schema_sql_creates_two_session_tables() {
+    let sql = session_schema_sql();
+
+    assert!(sql.contains("CREATE TABLE IF NOT EXISTS runner_sessions"));
+    assert!(sql.contains("CREATE TABLE IF NOT EXISTS runner_session_aliases"));
+    assert!(sql.contains("runner_sessions_platform_account_conversation_idx"));
+    assert!(!sql.contains("CREATE TABLE IF NOT EXISTS sessions"));
+    assert!(!sql.contains("CREATE TABLE IF NOT EXISTS session_aliases"));
+}
 
 #[test]
 fn session_store_persists_existing_mapping() {
-    let temp = tempfile::tempdir().unwrap();
-    let db_path = temp.path().join("runner.db");
-    let store = SessionStore::open(&db_path).unwrap();
+    let Some(scope) = PostgresSessionScope::new() else {
+        return;
+    };
 
-    let first = store
-        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "private:1")
+    let external = scope.external("qq-user-1");
+    let account = scope.account("qq:bot_uin:123");
+    let first = scope
+        .store
+        .get_or_create_bound_session(&external, "qq", &account, "private:1")
         .unwrap();
-    let second = store
-        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "private:1")
+    let second = scope
+        .store
+        .get_or_create_bound_session(&external, "qq", &account, "private:1")
         .unwrap();
 
-    assert_eq!(first.external_session_id, "qq-user-1");
+    assert_eq!(first.external_session_id, external);
     assert_eq!(first.claude_session_id, second.claude_session_id);
     assert!(first.is_new);
     assert!(!second.is_new);
@@ -22,15 +36,18 @@ fn session_store_persists_existing_mapping() {
 
 #[test]
 fn session_store_uses_distinct_claude_ids_for_distinct_external_sessions() {
-    let temp = tempfile::tempdir().unwrap();
-    let db_path = temp.path().join("runner.db");
-    let store = SessionStore::open(&db_path).unwrap();
+    let Some(scope) = PostgresSessionScope::new() else {
+        return;
+    };
 
-    let first = store
-        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "private:1")
+    let account = scope.account("qq:bot_uin:123");
+    let first = scope
+        .store
+        .get_or_create_bound_session(&scope.external("qq-user-1"), "qq", &account, "private:1")
         .unwrap();
-    let second = store
-        .get_or_create_bound_session("qq-user-2", "qq", "qq:bot_uin:123", "private:2")
+    let second = scope
+        .store
+        .get_or_create_bound_session(&scope.external("qq-user-2"), "qq", &account, "private:2")
         .unwrap();
 
     assert_ne!(first.claude_session_id, second.claude_session_id);
@@ -38,18 +55,37 @@ fn session_store_uses_distinct_claude_ids_for_distinct_external_sessions() {
 
 #[test]
 fn bound_session_api_uses_conversation_scoped_storage() {
-    let temp = tempfile::tempdir().unwrap();
-    let db_path = temp.path().join("runner.db");
-    let store = SessionStore::open(&db_path).unwrap();
+    let Some(scope) = PostgresSessionScope::new() else {
+        return;
+    };
 
-    let first = store
-        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:group:5566")
+    let account = scope.account("qq:bot_uin:123");
+    let first = scope
+        .store
+        .get_or_create_bound_session(
+            &scope.external("qq-user-1"),
+            "qq",
+            &account,
+            "qq:group:5566",
+        )
         .unwrap();
-    let second = store
-        .get_or_create_bound_session("qq-user-2", "qq", "qq:bot_uin:123", "qq:group:5566")
+    let second = scope
+        .store
+        .get_or_create_bound_session(
+            &scope.external("qq-user-2"),
+            "qq",
+            &account,
+            "qq:group:5566",
+        )
         .unwrap();
-    let third = store
-        .get_or_create_bound_session("qq-user-3", "qq", "qq:bot_uin:123", "qq:group:7788")
+    let third = scope
+        .store
+        .get_or_create_bound_session(
+            &scope.external("qq-user-3"),
+            "qq",
+            &account,
+            "qq:group:7788",
+        )
         .unwrap();
 
     assert_eq!(first.claude_session_id, second.claude_session_id);
@@ -58,39 +94,47 @@ fn bound_session_api_uses_conversation_scoped_storage() {
 
 #[test]
 fn external_session_alias_does_not_override_conversation_scoping() {
-    let temp = tempfile::tempdir().unwrap();
-    let db_path = temp.path().join("runner.db");
-    let store = SessionStore::open(&db_path).unwrap();
+    let Some(scope) = PostgresSessionScope::new() else {
+        return;
+    };
 
-    let first = store
-        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:private:1")
+    let external = scope.external("qq-user-1");
+    let account = scope.account("qq:bot_uin:123");
+    let first = scope
+        .store
+        .get_or_create_bound_session(&external, "qq", &account, "qq:private:1")
         .unwrap();
-    let err = store
-        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:private:2")
+    let err = scope
+        .store
+        .get_or_create_bound_session(&external, "qq", &account, "qq:private:2")
         .unwrap_err();
 
     assert!(matches!(
         err,
         agent_runner::session_store::SessionStoreError::SessionConflict { .. }
     ));
-    let fetched = store.get_session("qq-user-1").unwrap().unwrap();
+    let fetched = scope.store.get_session(&external).unwrap().unwrap();
     assert_eq!(fetched.claude_session_id, first.claude_session_id);
     assert_eq!(fetched.conversation_id, "qq:private:1");
 }
 
 #[test]
 fn session_store_reset_session_rotates_claude_session_id() {
-    let temp = tempfile::tempdir().unwrap();
-    let db_path = temp.path().join("runner.db");
-    let store = SessionStore::open(&db_path).unwrap();
+    let Some(scope) = PostgresSessionScope::new() else {
+        return;
+    };
 
-    let first = store
-        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "private:1")
+    let external = scope.external("qq-user-1");
+    let account = scope.account("qq:bot_uin:123");
+    let first = scope
+        .store
+        .get_or_create_bound_session(&external, "qq", &account, "private:1")
         .unwrap();
-    let reset = store
-        .reset_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "private:1")
+    let reset = scope
+        .store
+        .reset_bound_session(&external, "qq", &account, "private:1")
         .unwrap();
-    let fetched = store.get_session("qq-user-1").unwrap().unwrap();
+    let fetched = scope.store.get_session(&external).unwrap().unwrap();
 
     assert_ne!(first.claude_session_id, reset.claude_session_id);
     assert_eq!(reset.claude_session_id, fetched.claude_session_id);
@@ -99,19 +143,24 @@ fn session_store_reset_session_rotates_claude_session_id() {
 
 #[test]
 fn group_sessions_are_keyed_by_conversation_not_actor() {
-    let temp = tempfile::tempdir().unwrap();
-    let store = SessionStore::open(temp.path().join("runner.db")).unwrap();
+    let Some(scope) = PostgresSessionScope::new() else {
+        return;
+    };
 
-    let first = store
-        .get_or_create_conversation_session("qq", "qq:bot_uin:123", "qq:group:5566")
+    let account = scope.account("qq:bot_uin:123");
+    let first = scope
+        .store
+        .get_or_create_conversation_session("qq", &account, "qq:group:5566")
         .unwrap();
 
-    let second = store
-        .get_or_create_conversation_session("qq", "qq:bot_uin:123", "qq:group:5566")
+    let second = scope
+        .store
+        .get_or_create_conversation_session("qq", &account, "qq:group:5566")
         .unwrap();
 
-    let third = store
-        .get_or_create_conversation_session("qq", "qq:bot_uin:123", "qq:group:7788")
+    let third = scope
+        .store
+        .get_or_create_conversation_session("qq", &account, "qq:group:7788")
         .unwrap();
 
     assert_eq!(first.claude_session_id, second.claude_session_id);
@@ -120,59 +169,58 @@ fn group_sessions_are_keyed_by_conversation_not_actor() {
 
 #[test]
 fn conversation_and_bound_session_apis_share_the_same_underlying_session() {
-    let temp = tempfile::tempdir().unwrap();
-    let store = SessionStore::open(temp.path().join("runner.db")).unwrap();
+    let Some(scope) = PostgresSessionScope::new() else {
+        return;
+    };
 
-    let canonical = store
-        .get_or_create_conversation_session("qq", "qq:bot_uin:123", "qq:group:5566")
+    let external = scope.external("qq-user-1");
+    let account = scope.account("qq:bot_uin:123");
+    let canonical = scope
+        .store
+        .get_or_create_conversation_session("qq", &account, "qq:group:5566")
         .unwrap();
-    let bound = store
-        .get_or_create_bound_session("qq-user-1", "qq", "qq:bot_uin:123", "qq:group:5566")
+    let bound = scope
+        .store
+        .get_or_create_bound_session(&external, "qq", &account, "qq:group:5566")
         .unwrap();
 
     assert_eq!(canonical.claude_session_id, bound.claude_session_id);
-    assert_eq!(bound.platform_account, "qq:bot_uin:123");
+    assert_eq!(bound.platform_account, account);
     assert_eq!(
-        store.get_session("qq-user-1").unwrap().unwrap().session_key,
+        scope
+            .store
+            .get_session(&external)
+            .unwrap()
+            .unwrap()
+            .session_key,
         canonical.session_key
     );
 }
 
-#[test]
-fn session_store_recreates_incompatible_legacy_schema() {
-    let temp = tempfile::tempdir().unwrap();
-    let db_path = temp.path().join("runner.db");
-    let conn = Connection::open(&db_path).unwrap();
-    conn.execute_batch(
-        "CREATE TABLE sessions (
-            external_session_id TEXT PRIMARY KEY,
-            claude_session_id TEXT NOT NULL,
-            platform TEXT NOT NULL,
-            conversation_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            created_at_epoch_secs INTEGER NOT NULL,
-            last_used_at_epoch_secs INTEGER NOT NULL
-        );",
-    )
-    .unwrap();
-    drop(conn);
+struct PostgresSessionScope {
+    store: SessionStore,
+    suffix: String,
+}
 
-    let store = SessionStore::open(&db_path).unwrap();
-    let record = store
-        .get_or_create_conversation_session("qq", "qq:bot_uin:123", "qq:group:5566")
-        .unwrap();
+impl PostgresSessionScope {
+    fn new() -> Option<Self> {
+        let Some(url) = std::env::var("DOGBOT_TEST_DATABASE_URL").ok() else {
+            eprintln!("DOGBOT_TEST_DATABASE_URL unset; skipping postgres integration test");
+            return None;
+        };
+        let store = SessionStore::open_database_url(url).unwrap();
+        store.initialize_schema().unwrap();
+        Some(Self {
+            store,
+            suffix: uuid::Uuid::new_v4().to_string(),
+        })
+    }
 
-    let conn = Connection::open(&db_path).unwrap();
-    let columns: Vec<String> = conn
-        .prepare("PRAGMA table_info(sessions)")
-        .unwrap()
-        .query_map([], |row| row.get(1))
-        .unwrap()
-        .collect::<Result<_, _>>()
-        .unwrap();
+    fn external(&self, value: &str) -> String {
+        format!("{value}:{}", self.suffix)
+    }
 
-    assert_eq!(record.conversation_id, "qq:group:5566");
-    assert!(columns.contains(&"session_key".to_string()));
-    assert!(columns.contains(&"platform_account".to_string()));
-    assert!(!columns.contains(&"external_session_id".to_string()));
+    fn account(&self, value: &str) -> String {
+        format!("{value}:test:{}", self.suffix)
+    }
 }

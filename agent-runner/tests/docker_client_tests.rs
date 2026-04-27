@@ -1,6 +1,31 @@
 use agent_runner::config::Settings;
 
 #[test]
+fn claude_exec_options_include_per_exec_env() {
+    let options = agent_runner::docker_client::claude_exec_options(
+        "/workspace",
+        vec!["claude".to_string(), "hello".to_string()],
+        vec![
+            "DOGBOT_HISTORY_RUN_TOKEN=token-1".to_string(),
+            "PGOPTIONS=-c dogbot.run_token=token-1".to_string(),
+        ],
+    );
+
+    assert_eq!(
+        options.env,
+        Some(vec![
+            "DOGBOT_HISTORY_RUN_TOKEN=token-1".to_string(),
+            "PGOPTIONS=-c dogbot.run_token=token-1".to_string(),
+        ])
+    );
+    assert_eq!(options.working_dir.as_deref(), Some("/workspace"));
+    assert_eq!(
+        options.cmd,
+        Some(vec!["claude".to_string(), "hello".to_string()])
+    );
+}
+
+#[test]
 fn container_spec_matches_runner_defaults() {
     let settings = Settings::from_env_map(std::collections::HashMap::new()).unwrap();
     let spec = agent_runner::docker_client::ContainerSpec::from_settings(&settings);
@@ -28,10 +53,7 @@ fn create_container_config_carries_runtime_limits_and_mounts() {
             "BIFROST_UPSTREAM_API_KEY".to_string(),
             "provider-token".to_string(),
         ),
-        (
-            "BIFROST_MODEL".to_string(),
-            "primary/gpt-5".to_string(),
-        ),
+        ("BIFROST_MODEL".to_string(), "primary/gpt-5".to_string()),
         (
             "BIFROST_UPSTREAM_PROVIDER_TYPE".to_string(),
             "openai".to_string(),

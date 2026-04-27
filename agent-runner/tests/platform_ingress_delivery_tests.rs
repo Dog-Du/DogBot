@@ -128,6 +128,7 @@ fn test_settings() -> agent_runner::config::Settings {
         database_url: "postgres://dogbot_admin:change-me@127.0.0.1:5432/dogbot".into(),
         postgres_agent_reader_user: "dogbot_agent_reader".into(),
         postgres_agent_reader_password: "change-me-reader".into(),
+        postgres_agent_reader_database_url: None,
         history_run_token_ttl_secs: 1800,
         history_retention_days: 180,
         admin_actor_ids: Vec::new(),
@@ -183,7 +184,8 @@ async fn wechat_ingress_runs_and_delivers_reply_message() {
 async fn qq_private_status_command_bypasses_runner_and_returns_health_reply() {
     let runner = Arc::new(CountingRunner::default());
     let messenger = Arc::new(CapturingMessenger::default());
-    let app = build_test_app_with_message_support(runner.clone(), messenger.clone(), test_settings());
+    let app =
+        build_test_app_with_message_support(runner.clone(), messenger.clone(), test_settings());
     let payload = serde_json::json!({
         "time": 1_710_000_000,
         "post_type": "message",

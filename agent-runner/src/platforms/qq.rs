@@ -389,7 +389,7 @@ pub fn compile_outbound_message(
 
     for part in &message.parts {
         match part {
-            MessagePart::Text { text } => output.push_str(&escape_cq_text(text)),
+            MessagePart::Text { text } => output.push_str(&encode_qq_text(text)),
             MessagePart::Mention { actor_id, .. } => {
                 let mention_target = normalize_qq_target_id(actor_id)?;
                 output.push_str(&format!("[CQ:at,qq={mention_target}]"));
@@ -617,6 +617,40 @@ fn escape_cq_text(value: &str) -> String {
         .replace('&', "&amp;")
         .replace('[', "&#91;")
         .replace(']', "&#93;")
+}
+
+fn encode_qq_text(value: &str) -> String {
+    let mut output = String::new();
+    let mut plain = String::new();
+    let mut chars = value.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch != '@' {
+            plain.push(ch);
+            continue;
+        }
+
+        let mut digits = String::new();
+        while let Some(next) = chars.peek().copied() {
+            if !next.is_ascii_digit() {
+                break;
+            }
+            digits.push(next);
+            chars.next();
+        }
+
+        if digits.len() >= 5 {
+            output.push_str(&escape_cq_text(&plain));
+            plain.clear();
+            output.push_str(&format!("[CQ:at,qq={digits}]"));
+        } else {
+            plain.push('@');
+            plain.push_str(&digits);
+        }
+    }
+
+    output.push_str(&escape_cq_text(&plain));
+    output
 }
 
 fn strip_reply_tokens(value: &str) -> String {

@@ -16,6 +16,17 @@ fn claude_prompt_lists_reply_format_skill_in_claude_md() {
 }
 
 #[test]
+fn claude_prompt_lists_history_read_skill_in_claude_md() {
+    let claude_md =
+        fs::read_to_string("../claude-prompt/CLAUDE.md").expect("failed to read CLAUDE.md");
+
+    assert!(
+        claude_md.contains("skills/history-read/SKILL.md"),
+        "CLAUDE.md must reference the history-read skill"
+    );
+}
+
+#[test]
 fn reply_format_skill_exists_and_mentions_no_markdown_rule() {
     let skill = fs::read_to_string("../claude-prompt/skills/reply-format/SKILL.md")
         .expect("failed to read reply-format skill");

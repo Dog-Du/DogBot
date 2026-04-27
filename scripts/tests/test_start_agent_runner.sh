@@ -12,8 +12,11 @@ patterns=(
   'PLATFORM_QQ_BOT_ID="${PLATFORM_QQ_BOT_ID:-'
   'PLATFORM_WECHATPADPRO_ACCOUNT_ID="${PLATFORM_WECHATPADPRO_ACCOUNT_ID:-'
   'PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES="${PLATFORM_WECHATPADPRO_BOT_MENTION_NAMES:-'
-  'SESSION_DB_PATH="$session_db_path"'
-  'HISTORY_DB_PATH="$history_db_path"'
+  'DATABASE_URL="${DATABASE_URL:-}"'
+  'POSTGRES_HOST="${POSTGRES_HOST:-127.0.0.1}"'
+  'POSTGRES_AGENT_READER_DATABASE_URL="$postgres_agent_reader_database_url"'
+  'HISTORY_RUN_TOKEN_TTL_SECS="${HISTORY_RUN_TOKEN_TTL_SECS:-1800}"'
+  'DOGBOT_ADMIN_ACTOR_IDS="${DOGBOT_ADMIN_ACTOR_IDS:-}"'
 )
 
 for pattern in "${patterns[@]}"; do
@@ -30,10 +33,9 @@ extra_patterns=(
   'dogbot_ensure_user_writable_dir "$log_dir"'
   'dogbot_ensure_user_writable_dir "$claude_prompt_root"'
   'dogbot_ensure_user_writable_dir "$claude_runner_runtime_dir"'
-  'dogbot_ensure_user_writable_file_path "${SESSION_DB_PATH:-$AGENT_STATE_DIR/runner.db}"'
-  'dogbot_ensure_user_writable_file_path "${HISTORY_DB_PATH:-$AGENT_STATE_DIR/history.db}"'
   'bind_port="$(dogbot_bind_addr_port "$bind_addr")"'
   'healthz_url="http://127.0.0.1:${bind_port}/healthz"'
+  'postgres_agent_reader_database_url="${POSTGRES_AGENT_READER_DATABASE_URL:-postgres://'
   'existing_pid="$(cat "$pid_file")"'
   'dogbot_wait_for_http_ok "$healthz_url" 1'
   'existing_listener_pid="$(dogbot_find_listener_pid "$bind_port" || true)"'
@@ -85,6 +87,36 @@ fi
 
 if ! grep -q '^AGENT_RUNNER_BIND_ADDR=0.0.0.0:8787$' "$env_example"; then
   echo "FAIL: dogbot.env.example must bind agent-runner on 0.0.0.0:8787 so platform containers can reach it" >&2
+  exit 1
+fi
+
+if ! grep -q '^POSTGRES_DB=dogbot$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must define PostgreSQL database settings" >&2
+  exit 1
+fi
+
+if ! grep -q '^POSTGRES_PORT=15432$' "$env_example"; then
+  echo "FAIL: dogbot.env.example must avoid the common host PostgreSQL port 5432 by default" >&2
+  exit 1
+fi
+
+if ! grep -q 'postgres:5432/dogbot' "$env_example"; then
+  echo "FAIL: dogbot.env.example reader URL must use the internal PostgreSQL service address" >&2
+  exit 1
+fi
+
+if ! grep -q '@postgres:5432/${POSTGRES_DB:-dogbot}' "$start_script"; then
+  echo "FAIL: start_agent_runner.sh must default the reader URL to the internal PostgreSQL service address" >&2
+  exit 1
+fi
+
+if ! grep -q 'POSTGRES_PORT="${POSTGRES_PORT:-15432}"' "$start_script"; then
+  echo "FAIL: start_agent_runner.sh must default PostgreSQL host port to 15432" >&2
+  exit 1
+fi
+
+if grep -q '^SESSION_DB_PATH=' "$env_example" || grep -q '^HISTORY_DB_PATH=' "$env_example"; then
+  echo "FAIL: dogbot.env.example must not configure obsolete SQLite paths" >&2
   exit 1
 fi
 

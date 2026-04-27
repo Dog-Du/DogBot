@@ -84,7 +84,10 @@ impl ContainerSpec {
                 "BIFROST_UPSTREAM_PROVIDER_TYPE={}",
                 self.bifrost_upstream_provider_type
             ),
-            format!("BIFROST_UPSTREAM_BASE_URL={}", self.bifrost_upstream_base_url),
+            format!(
+                "BIFROST_UPSTREAM_BASE_URL={}",
+                self.bifrost_upstream_base_url
+            ),
             format!("BIFROST_UPSTREAM_API_KEY={}", self.bifrost_upstream_api_key),
         ];
 
@@ -175,18 +178,10 @@ impl DockerRuntime {
         container_name: &str,
         cwd: &str,
         command: Vec<String>,
+        env: Vec<String>,
     ) -> Result<CreateExecResults, BollardError> {
         self.docker
-            .create_exec(
-                container_name,
-                CreateExecOptions {
-                    attach_stdout: Some(true),
-                    attach_stderr: Some(true),
-                    cmd: Some(command),
-                    working_dir: Some(cwd.to_string()),
-                    ..Default::default()
-                },
-            )
+            .create_exec(container_name, claude_exec_options(cwd, command, env))
             .await
     }
 
@@ -275,5 +270,20 @@ impl DockerRuntime {
 
         let _ = self.docker.start_exec(&exec.id, None).await?;
         Ok(())
+    }
+}
+
+pub fn claude_exec_options(
+    cwd: &str,
+    command: Vec<String>,
+    env: Vec<String>,
+) -> CreateExecOptions<String> {
+    CreateExecOptions {
+        attach_stdout: Some(true),
+        attach_stderr: Some(true),
+        cmd: Some(command),
+        env: Some(env),
+        working_dir: Some(cwd.to_string()),
+        ..Default::default()
     }
 }

@@ -27,10 +27,7 @@ fn proxy_settings_load_when_explicitly_configured() {
             "API_PROXY_UPSTREAM_BASE_URL".into(),
             "https://upstream.example.com".into(),
         ),
-        (
-            "API_PROXY_UPSTREAM_TOKEN".into(),
-            "upstream-secret".into(),
-        ),
+        ("API_PROXY_UPSTREAM_TOKEN".into(), "upstream-secret".into()),
     ]))
     .unwrap();
 
@@ -157,10 +154,7 @@ async fn proxy_rejects_invalid_local_auth_token() {
             "API_PROXY_UPSTREAM_BASE_URL".into(),
             "https://upstream.example.com".into(),
         ),
-        (
-            "API_PROXY_UPSTREAM_TOKEN".into(),
-            "upstream-secret".into(),
-        ),
+        ("API_PROXY_UPSTREAM_TOKEN".into(), "upstream-secret".into()),
     ]))
     .unwrap();
     let settings = settings.expect("proxy settings");

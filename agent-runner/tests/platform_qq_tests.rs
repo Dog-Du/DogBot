@@ -53,6 +53,22 @@ fn qq_group_outbound_uses_reply_and_at_cq_codes_in_order() {
 }
 
 #[test]
+fn qq_outbound_converts_plain_at_numeric_text_to_native_mention() {
+    let outbound = OutboundMessage {
+        parts: vec![MessagePart::Text {
+            text: "请 @773768249 看一下".into(),
+        }],
+        reply_to: None,
+        suppress_default_reply: false,
+        delivery_policy: None,
+    };
+
+    let encoded = compile_outbound_message(&outbound, None, None).unwrap();
+
+    assert_eq!(encoded, "请 [CQ:at,qq=773768249] 看一下");
+}
+
+#[test]
 fn qq_raw_message_fallback_keeps_bot_mentions_when_segments_are_missing() {
     let payload = serde_json::json!({
         "time": 1_710_000_000,

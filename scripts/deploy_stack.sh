@@ -188,8 +188,7 @@ fi
 agent_workspace_dir="${AGENT_WORKSPACE_DIR:-/srv/agent-workdir}"
 agent_state_dir="${AGENT_STATE_DIR:-/srv/agent-state}"
 runner_log_dir="${AGENT_RUNNER_LOG_DIR:-${AGENT_STATE_DIR:-/srv/agent-state}/logs}"
-session_db_path="${SESSION_DB_PATH:-${AGENT_STATE_DIR:-/srv/agent-state}/runner.db}"
-history_db_path="${HISTORY_DB_PATH:-${AGENT_STATE_DIR:-/srv/agent-state}/history.db}"
+postgres_data_dir="${POSTGRES_DATA_DIR:-${AGENT_STATE_DIR:-/srv/agent-state}/postgres}"
 DOGBOT_CLAUDE_PROMPT_ROOT="${DOGBOT_CLAUDE_PROMPT_ROOT:-${AGENT_STATE_DIR:-/srv/agent-state}/claude-prompt}"
 DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR="${DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR:-$(dogbot_claude_runner_runtime_dir)}"
 dogbot_ensure_user_writable_dir "$agent_workspace_dir"
@@ -197,8 +196,7 @@ dogbot_ensure_user_writable_dir "$agent_state_dir"
 dogbot_ensure_user_writable_dir "$DOGBOT_CLAUDE_PROMPT_ROOT"
 dogbot_ensure_user_writable_dir "$DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR"
 dogbot_ensure_user_writable_dir "$runner_log_dir"
-dogbot_ensure_user_writable_file_path "$session_db_path"
-dogbot_ensure_user_writable_file_path "$history_db_path"
+dogbot_ensure_user_writable_dir "$postgres_data_dir"
 
 dogbot_sync_claude_prompt_root "$repo_root/claude-prompt" "$DOGBOT_CLAUDE_PROMPT_ROOT"
 dogbot_write_claude_runner_runtime "$DOGBOT_CLAUDE_RUNNER_RUNTIME_DIR"
@@ -211,6 +209,12 @@ mkdir -p \
   "${WECHATPADPRO_REDIS_DIR:-/srv/wechatpadpro/redis}"
 
 dogbot_save_runtime_state "$runtime_state_file"
+
+remove_legacy_compose_container_if_needed \
+  "${POSTGRES_CONTAINER_NAME:-dogbot-postgres}" \
+  "postgres" \
+  "$repo_root/deploy/docker/docker-compose.yml"
+run_compose_up "$repo_root/deploy/docker/docker-compose.yml" postgres
 
 "$repo_root/scripts/start_agent_runner.sh" "$env_file"
 

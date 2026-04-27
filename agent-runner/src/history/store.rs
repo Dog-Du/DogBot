@@ -13,6 +13,7 @@ pub struct HistoryStore {
     database_url: String,
     reader_database_url: String,
     reader_role: String,
+    reader_password: String,
     retention_days: i64,
 }
 
@@ -47,6 +48,7 @@ impl HistoryStore {
             database_url: settings.database_url.clone(),
             reader_database_url: reader_database_url(settings)?,
             reader_role: settings.postgres_agent_reader_user.clone(),
+            reader_password: settings.postgres_agent_reader_password.clone(),
             retention_days: settings.history_retention_days,
         })
     }
@@ -54,8 +56,10 @@ impl HistoryStore {
     pub fn initialize_schema(&self) -> Result<(), HistoryStoreError> {
         let database_url = self.database_url.clone();
         let reader_role = self.reader_role.clone();
+        let reader_password = self.reader_password.clone();
         run_with_client(database_url, move |client| {
             client.batch_execute(history_schema_sql())?;
+            ensure_reader_role(client, &reader_role, &reader_password)?;
             grant_reader_access(client, &reader_role)?;
             Ok(())
         })
@@ -69,33 +73,37 @@ impl HistoryStore {
         &self,
         grant: HistoryReadGrant,
     ) -> Result<HistoryReadGrantToken, HistoryStoreError> {
+        self.create_read_grants(vec![grant])
+    }
+
+    pub fn create_read_grants(
+        &self,
+        grants: Vec<HistoryReadGrant>,
+    ) -> Result<HistoryReadGrantToken, HistoryStoreError> {
         let token = generate_run_token();
         let token_hash = sha256_bytes(&token);
         let database_url = self.database_url.clone();
-        let platform_account = grant.platform_account;
-        let conversation_id = grant.conversation_id;
-        let actor_id = grant.actor_id;
-        let is_admin = grant.is_admin;
-        let ttl_secs = grant.ttl_secs;
         run_with_client(database_url, move |client| {
-            client.execute(
-                "INSERT INTO history_read_grants (
-                token_hash,
-                platform_account,
-                conversation_id,
-                actor_id,
-                is_admin,
-                expires_at
-            ) VALUES ($1, $2, $3, $4, $5, now() + ($6::text || ' seconds')::interval)",
-            &[
-                    &token_hash.as_slice(),
-                    &platform_account,
-                    &conversation_id,
-                    &actor_id,
-                    &is_admin,
-                    &ttl_secs,
-                ],
-            )?;
+            for grant in grants {
+                client.execute(
+                    "INSERT INTO history_read_grants (
+                    token_hash,
+                    platform_account,
+                    conversation_id,
+                    actor_id,
+                    is_admin,
+                    expires_at
+                ) VALUES ($1, $2, $3, $4, $5, now() + ($6::bigint * interval '1 second'))",
+                    &[
+                        &token_hash.as_slice(),
+                        &grant.platform_account,
+                        &grant.conversation_id,
+                        &grant.actor_id,
+                        &grant.is_admin,
+                        &grant.ttl_secs,
+                    ],
+                )?;
+            }
             Ok(())
         })?;
 
@@ -124,10 +132,7 @@ impl HistoryStore {
     }
 
     pub fn insert_canonical_event(&self, event: &CanonicalEvent) -> Result<(), HistoryStoreError> {
-        let EventKind::Message {
-            message,
-        } = &event.kind
-        else {
+        let EventKind::Message { message } = &event.kind else {
             return Ok(());
         };
         let plain_text = storage_plain_text(message).trim().to_string();
@@ -167,7 +172,7 @@ impl HistoryStore {
                 created_at,
                 raw
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, to_timestamp($10), $11::jsonb
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, to_timestamp($10), $11::text::jsonb
             )
             ON CONFLICT(platform_account, conversation_id, message_id) DO UPDATE
             SET actor_id = excluded.actor_id,
@@ -176,7 +181,7 @@ impl HistoryStore {
                 reply_to_message_id = excluded.reply_to_message_id,
                 created_at = excluded.created_at,
                 raw = excluded.raw",
-            &[
+                &[
                     &platform,
                     &platform_account,
                     &conversation,
@@ -274,7 +279,7 @@ impl HistoryStore {
             )?;
             client.execute(
                 "DELETE FROM history_messages
-             WHERE created_at < now() - ($1::text || ' days')::interval",
+             WHERE created_at < now() - ($1::bigint * interval '1 day')",
                 &[&retention_days],
             )?;
             Ok(())
@@ -288,7 +293,6 @@ impl HistoryStore {
     pub fn delete_orphaned_assets(&self) -> Result<(), HistoryStoreError> {
         Ok(())
     }
-
 }
 
 fn run_with_client<T, F>(database_url: String, f: F) -> Result<T, HistoryStoreError>
@@ -394,7 +398,7 @@ USING (dogbot_can_read_history_row(platform_account, conversation_id));
 CREATE SCHEMA IF NOT EXISTS agent_read;
 
 CREATE OR REPLACE VIEW agent_read.messages
-WITH (security_barrier = true)
+WITH (security_barrier = true, security_invoker = true)
 AS
 SELECT
     id,
@@ -416,12 +420,55 @@ fn grant_reader_access(client: &mut Client, reader_role: &str) -> Result<(), His
     let reader_role = quote_identifier(reader_role);
     client.batch_execute(&format!(
         "GRANT USAGE ON SCHEMA agent_read TO {reader_role};
-         GRANT SELECT ON agent_read.messages TO {reader_role};"
+         GRANT SELECT ON agent_read.messages TO {reader_role};
+         GRANT SELECT (
+             id,
+             platform,
+             platform_account,
+             conversation_id,
+             chat_type,
+             message_id,
+             actor_id,
+             actor_display,
+             plain_text,
+             reply_to_message_id,
+             created_at
+         ) ON history_messages TO {reader_role};"
+    ))?;
+    Ok(())
+}
+
+fn ensure_reader_role(
+    client: &mut Client,
+    reader_role: &str,
+    reader_password: &str,
+) -> Result<(), HistoryStoreError> {
+    let reader_role_ident = quote_identifier(reader_role);
+    let reader_role_literal = quote_literal(reader_role);
+    let reader_password_literal = quote_literal(reader_password);
+    client.batch_execute(&format!(
+        "DO $$
+         BEGIN
+             IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {reader_role_literal}) THEN
+                 CREATE ROLE {reader_role_ident}
+                     WITH LOGIN PASSWORD {reader_password_literal}
+                     NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+             ELSE
+                 ALTER ROLE {reader_role_ident}
+                     WITH LOGIN PASSWORD {reader_password_literal}
+                     NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+             END IF;
+         END
+         $$;"
     ))?;
     Ok(())
 }
 
 fn reader_database_url(settings: &Settings) -> Result<String, HistoryStoreError> {
+    if let Some(url) = settings.postgres_agent_reader_database_url.as_deref() {
+        return Ok(url.to_string());
+    }
+
     let mut url = Url::parse(&settings.database_url)
         .map_err(|err| HistoryStoreError::InvalidDatabaseUrl(err.to_string()))?;
     url.set_username(&settings.postgres_agent_reader_user)
@@ -433,6 +480,10 @@ fn reader_database_url(settings: &Settings) -> Result<String, HistoryStoreError>
 
 fn quote_identifier(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+fn quote_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn generate_run_token() -> String {
@@ -450,9 +501,7 @@ fn storage_plain_text(message: &crate::protocol::CanonicalMessage) -> String {
         .parts
         .iter()
         .filter_map(|part| match part {
-            MessagePart::Text {
-                text,
-            } => Some(text.as_str()),
+            MessagePart::Text { text } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()

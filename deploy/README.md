@@ -244,9 +244,8 @@ CLAUDE_CODE_VERSION=2.1.104
 ```env
 AGENT_WORKSPACE_DIR=/srv/dogbot/runtime/agent-workspace
 AGENT_STATE_DIR=/srv/dogbot/runtime/agent-state
-SESSION_DB_PATH=/srv/dogbot/runtime/agent-state/runner.db
-HISTORY_DB_PATH=/srv/dogbot/runtime/agent-state/history.db
 DOGBOT_CLAUDE_PROMPT_ROOT=/srv/dogbot/runtime/agent-state/claude-prompt
+POSTGRES_DATA_DIR=/srv/dogbot/runtime/agent-state/postgres
 ```
 
 建议：
@@ -255,18 +254,43 @@ DOGBOT_CLAUDE_PROMPT_ROOT=/srv/dogbot/runtime/agent-state/claude-prompt
 - 建议把 `AGENT_WORKSPACE_DIR` 和 `AGENT_STATE_DIR` 放到同一个 `runtime/` 根目录下
 - `AGENT_STATE_DIR` 用来保存：
   - Claude 会话状态
-  - SQLite 数据库
+  - PostgreSQL 数据目录
   - 日志
   - NapCat / WeChatPadPro 状态
-- `SESSION_DB_PATH` 保存短期 Claude session 映射
-- `HISTORY_DB_PATH` 保存 history ingest 和 retrieval 基础数据
+- PostgreSQL 保存短期 Claude session 映射、文本 history、history read grants
+- 旧的 `runner.db` / `history.db` 已废弃，不做迁移
 - `DOGBOT_CLAUDE_PROMPT_ROOT` 推荐使用绝对路径，指向运行时 Claude prompt 根目录
 - 部署脚本会把仓库内 `claude-prompt/` 同步到 `DOGBOT_CLAUDE_PROMPT_ROOT`
 - `WeChatPadPro` 的 `data/mysql/redis` 目录也建议放到 `AGENT_STATE_DIR/wechatpadpro-data/`
 
 如果你改这些路径，旧会话和旧状态看起来会像“丢了”。
 
-### 5.3 平台账号隔离键
+### 5.3 PostgreSQL
+
+```env
+POSTGRES_HOST=127.0.0.1
+POSTGRES_PORT=15432
+POSTGRES_DB=dogbot
+POSTGRES_ADMIN_USER=dogbot_admin
+POSTGRES_ADMIN_PASSWORD=change-me
+POSTGRES_AGENT_READER_USER=dogbot_agent_reader
+POSTGRES_AGENT_READER_PASSWORD=change-me-reader
+POSTGRES_AGENT_READER_DATABASE_URL=postgres://dogbot_agent_reader:change-me-reader@postgres:5432/dogbot
+HISTORY_RUN_TOKEN_TTL_SECS=1800
+HISTORY_RETENTION_DAYS=180
+DOGBOT_ADMIN_ACTOR_IDS=
+```
+
+说明：
+
+- `agent-runner` 用 admin 连接初始化 schema、写入 session/history/grant
+- Claude exec 只收到 reader 连接串和短期 run token
+- 普通 run 只能读取当前会话历史
+- `DOGBOT_ADMIN_ACTOR_IDS` 中的 actor 在私聊中可获得跨会话 history 读取授权
+- 如果 Postgres 在本项目 compose 中运行，reader URL 使用内部服务地址 `postgres:5432`
+- 如果 Postgres 不在 compose 网络内运行，需要显式覆盖 `POSTGRES_AGENT_READER_DATABASE_URL`，并同步调整容器网络访问策略
+
+### 5.4 平台账号隔离键
 
 建议显式设置：
 
@@ -280,7 +304,7 @@ PLATFORM_WECHATPADPRO_ACCOUNT_ID=wechatpadpro:account:wxid_bot_1
 - 作为 `platform-account-shared` scope 的隔离键
 - 避免多个机器人账号共用同一套 platform 级上下文
 
-### 5.4 agent-runner 与 Bifrost
+### 5.5 agent-runner 与 Bifrost
 
 ```env
 AGENT_RUNNER_BIND_ADDR=0.0.0.0:8787
@@ -311,7 +335,7 @@ API_PROXY_UPSTREAM_MODEL=
 - `API_PROXY_AUTH_TOKEN` 要和 `BIFROST_UPSTREAM_API_KEY` 保持一致，用来保护本地 `bifrost -> api-proxy` 调用
 - `API_PROXY_UPSTREAM_MODEL` 可选；如果需要把容器内模型别名重写成真实上游模型名，就在这里配置
 
-### 5.5 上游配置
+### 5.6 上游配置
 
 常见切换方式：
 
@@ -597,5 +621,5 @@ curl http://127.0.0.1:8787/healthz
 
 - 健康检查
 - QQ / WeChat 平台侧手工回归
-- `history.db` 核对
+- PostgreSQL history / session 核对
 - Rust / Python 回归命令

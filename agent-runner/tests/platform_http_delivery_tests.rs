@@ -115,6 +115,7 @@ fn test_settings() -> agent_runner::config::Settings {
         database_url: "postgres://dogbot_admin:change-me@127.0.0.1:5432/dogbot".into(),
         postgres_agent_reader_user: "dogbot_agent_reader".into(),
         postgres_agent_reader_password: "change-me-reader".into(),
+        postgres_agent_reader_database_url: None,
         history_run_token_ttl_secs: 1800,
         history_retention_days: 180,
         admin_actor_ids: Vec::new(),
@@ -248,6 +249,10 @@ async fn spawn_mock_server(capture: Capture, response: Value) -> String {
 
 #[tokio::test]
 async fn wechat_message_endpoint_uses_registered_platform_adapter() {
+    let Some(database_url) = std::env::var("DOGBOT_TEST_DATABASE_URL").ok() else {
+        eprintln!("DOGBOT_TEST_DATABASE_URL unset; skipping postgres integration test");
+        return;
+    };
     let capture = Capture::default();
     let base_url = spawn_mock_server(
         capture.clone(),
@@ -255,13 +260,16 @@ async fn wechat_message_endpoint_uses_registered_platform_adapter() {
     )
     .await;
     let mut settings = test_settings();
+    settings.database_url = database_url;
     settings.wechatpadpro_base_url = base_url;
     settings.wechatpadpro_account_key = Some("test-key".into());
+    let session_id = format!("wechat-session-1:{}", uuid::Uuid::new_v4());
 
-    let store = agent_runner::session_store::SessionStore::open(&settings.session_db_path).unwrap();
+    let store = agent_runner::session_store::SessionStore::open(&settings).unwrap();
+    store.initialize_schema().unwrap();
     store
         .get_or_create_bound_session(
-            "wechat-session-1",
+            &session_id,
             "wechatpadpro",
             "wechatpadpro:account:bot",
             "wechatpadpro:private:wxid_user_1",
@@ -270,7 +278,7 @@ async fn wechat_message_endpoint_uses_registered_platform_adapter() {
 
     let app = build_test_app_with_settings(Arc::new(SuccessRunner), settings);
     let request = json!({
-        "session_id": "wechat-session-1",
+        "session_id": session_id,
         "text": "hello from outbox",
         "reply_to_message_id": null,
         "mention_user_id": null
@@ -379,6 +387,56 @@ async fn qq_ingress_group_message_uses_registered_platform_adapter_for_delivery(
     assert_eq!(path, "/send_group_msg");
     assert_eq!(body["group_id"], 5566);
     assert_eq!(body["message"], "[CQ:reply,id=99][CQ:at,qq=42] 收到");
+}
+
+#[tokio::test]
+async fn qq_ingress_converts_plain_numeric_at_text_to_native_mention() {
+    let capture = Capture::default();
+    let base_url = spawn_mock_server(
+        capture.clone(),
+        json!({"status": "ok", "data": {"message_id": 96}}),
+    )
+    .await;
+    let mut settings = test_settings();
+    settings.napcat_api_base_url = base_url;
+
+    let runner = FixedOutputRunner {
+        stdout: "请 @773768249 看一下",
+    };
+    let app = build_test_app_with_settings(Arc::new(runner), settings);
+    let payload = json!({
+        "time": 1_710_000_000,
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 5566,
+        "user_id": 42,
+        "message_id": 104,
+        "raw_message": "[CQ:at,qq=123] 帮我叫一下 773768249",
+        "message": [
+            {"type":"at","data":{"qq":"123"}},
+            {"type":"text","data":{"text":" 帮我叫一下 773768249"}}
+        ]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/platforms/qq/napcat/events")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let (path, body) = capture.last().expect("captured request");
+    assert_eq!(path, "/send_group_msg");
+    assert_eq!(
+        body["message"],
+        "[CQ:reply,id=104][CQ:at,qq=42] 请 [CQ:at,qq=773768249] 看一下"
+    );
 }
 
 #[tokio::test]

@@ -2,10 +2,11 @@ use std::fs;
 
 #[test]
 fn compose_defines_required_claude_runner_limits() {
-    let compose =
-        fs::read_to_string("../deploy/docker/docker-compose.yml")
-            .expect("failed to read compose file");
+    let compose = fs::read_to_string("../deploy/docker/docker-compose.yml")
+        .expect("failed to read compose file");
     let required = [
+        "postgres:",
+        r#"- "${POSTGRES_PORT:-15432}:5432""#,
         "image: ${CLAUDE_IMAGE_NAME:-dogbot/claude-runner:local}",
         "cpus: \"4.0\"",
         "mem_limit: 4g",
@@ -47,8 +48,8 @@ fn compose_defines_required_claude_runner_limits() {
 
 #[test]
 fn dockerfile_bootstrap_repairs_claude_state_permissions() {
-    let dockerfile = fs::read_to_string("../deploy/docker/Dockerfile")
-        .expect("failed to read dockerfile");
+    let dockerfile =
+        fs::read_to_string("../deploy/docker/Dockerfile").expect("failed to read dockerfile");
 
     let required = [
         "mkdir -p /workspace /state /state/claude /state/claude/debug",

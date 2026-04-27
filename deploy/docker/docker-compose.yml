@@ -1,4 +1,22 @@
 services:
+  postgres:
+    container_name: ${POSTGRES_CONTAINER_NAME:-dogbot-postgres}
+    image: ${POSTGRES_IMAGE:-postgres:15}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dogbot}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-dogbot_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-change-me}
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - "${POSTGRES_DATA_DIR:-/srv/dogbot/runtime/agent-state/postgres}:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ADMIN_USER:-dogbot_admin} -d ${POSTGRES_DB:-dogbot}"]
+      interval: 30s
+      timeout: 5s
+      retries: 12
+
   claude-runner:
     container_name: ${CLAUDE_CONTAINER_NAME:-claude-runner} # default name expected by agent-runner
     image: ${CLAUDE_IMAGE_NAME:-dogbot/claude-runner:local}
@@ -47,4 +65,7 @@ services:
     working_dir: /workspace
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
     command: ["/usr/local/bin/entrypoint.sh"]

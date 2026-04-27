@@ -120,21 +120,20 @@ async fn wechat_webhook_private_text_enters_run_pipeline() {
         std::process::id(),
         uuid::Uuid::new_v4()
     ));
-    let app = build_test_app_with_message_support(
-        runner.clone(),
-        Arc::new(NoopMessenger),
-        {
-            let mut settings = agent_runner::config::Settings::from_env_map(std::collections::HashMap::new())
+    let app = build_test_app_with_message_support(runner.clone(), Arc::new(NoopMessenger), {
+        let mut settings =
+            agent_runner::config::Settings::from_env_map(std::collections::HashMap::new())
                 .expect("default settings");
-            settings.workspace_dir = temp_state_dir.join("workdir").display().to_string();
-            settings.state_dir = temp_state_dir.join("state").display().to_string();
-            settings.session_db_path = temp_state_dir.join("state/runner.db").display().to_string();
-            settings.history_db_path =
-                temp_state_dir.join("state/history.db").display().to_string();
-            settings.platform_wechatpadpro_account_id = Some("wechatpadpro:account:bot".into());
-            settings
-        },
-    );
+        settings.workspace_dir = temp_state_dir.join("workdir").display().to_string();
+        settings.state_dir = temp_state_dir.join("state").display().to_string();
+        settings.session_db_path = temp_state_dir.join("state/runner.db").display().to_string();
+        settings.history_db_path = temp_state_dir
+            .join("state/history.db")
+            .display()
+            .to_string();
+        settings.platform_wechatpadpro_account_id = Some("wechatpadpro:account:bot".into());
+        settings
+    });
     let payload = serde_json::json!({
         "message": {
             "msgId": "123",

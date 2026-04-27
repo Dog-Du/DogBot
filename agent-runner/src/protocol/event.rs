@@ -5,9 +5,17 @@ use super::CanonicalMessage;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum EventKind {
-    Message { message: CanonicalMessage },
-    ReactionAdded { target_message_id: String, emoji: String },
-    ReactionRemoved { target_message_id: String, emoji: String },
+    Message {
+        message: CanonicalMessage,
+    },
+    ReactionAdded {
+        target_message_id: String,
+        emoji: String,
+    },
+    ReactionRemoved {
+        target_message_id: String,
+        emoji: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
