@@ -154,9 +154,8 @@ API_PROXY_UPSTREAM_MODEL=deepseek-v4-pro[1m]
 - [ ] 主动消息 / automation / outbox。
 - [ ] 长任务完成通知、主动状态推送、取消任务。
 - [ ] 更完整的图片链路：结构化图片发送、近期会话图片附件读取、失败降级。
-- [ ] 更完整的 Agent 内容管理和 memory 审批。
 - [ ] 支持 Codex、OpenCode 等更多 CLI Agent 后端。
-- [ ] WeChatPadPro 稳定性继续收敛，尤其是私聊推送、同步流和网络/DNS 问题。
+- [ ] WeChatPadPro 稳定性收敛，尤其是私聊推送、同步流和网络/DNS 问题。
 
 ## FAQ
 
